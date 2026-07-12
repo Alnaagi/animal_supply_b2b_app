@@ -1,57 +1,62 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../local/local_cache.dart';
 import '../models/product.dart';
 import '../remote/supabase_clients.dart';
 import 'demo_data.dart';
 
-final catalogRepositoryProvider =
-    Provider<CatalogRepository>((ref) => CatalogRepository());
+final catalogRepositoryProvider = Provider<CatalogRepository>(
+  (ref) => CatalogRepository(cache: ref.watch(localCacheProvider)),
+);
 
 class CatalogRepository {
+  CatalogRepository({LocalCache? cache}) : _cache = cache;
+
+  final LocalCache? _cache;
   final List<Product> _demoProducts = [...demoProducts];
 
   Future<List<Product>> products({String query = '', String? category}) async {
     final client = supabaseClient;
     if (client != null) {
-      final rows = await client
-          .from('products')
-          .select('*, categories(name)')
-          .order('created_at', ascending: false);
-      return rows.map<Product>((row) => Product.fromSupabase(row)).where((p) {
-        final q = query.trim().toLowerCase();
-        return (category == null || p.category == category) &&
-            (q.isEmpty ||
-                p.name.contains(q) ||
-                p.category.contains(q) ||
-                (p.nameEn?.toLowerCase().contains(q) ?? false) ||
-                p.sku.toLowerCase().contains(q) ||
-                p.brand.toLowerCase().contains(q) ||
-                p.tags.any((tag) => tag.toLowerCase().contains(q)));
-      }).toList();
+      try {
+        final rows = await client
+            .from('products')
+            .select('*, categories(name)')
+            .order('created_at', ascending: false);
+        final products =
+            rows.map<Product>((row) => Product.fromSupabase(row)).toList();
+        await _cache?.saveProducts(products);
+        return _filterProducts(products, query: query, category: category);
+      } catch (_) {
+        final cached = await _cache?.cachedProducts() ?? const <Product>[];
+        if (cached.isNotEmpty) {
+          return _filterProducts(cached, query: query, category: category);
+        }
+        rethrow;
+      }
     }
-    final q = query.trim().toLowerCase();
-    return _demoProducts.where((p) {
-      return p.active &&
-          (category == null || p.category == category) &&
-          (q.isEmpty ||
-              p.name.contains(q) ||
-              p.category.contains(q) ||
-              (p.nameEn?.toLowerCase().contains(q) ?? false) ||
-              p.sku.toLowerCase().contains(q) ||
-              p.brand.toLowerCase().contains(q) ||
-              p.tags.any((tag) => tag.toLowerCase().contains(q)));
-    }).toList();
+    final demo = _demoProducts.where((p) => p.active).toList();
+    await _cache?.saveProducts(demo);
+    return _filterProducts(demo, query: query, category: category);
   }
 
   Future<List<String>> categories() async {
     final client = supabaseClient;
     if (client != null) {
-      final rows = await client
-          .from('categories')
-          .select('name')
-          .eq('active', true)
-          .order('name');
-      return [for (final row in rows) row['name'].toString()];
+      try {
+        final rows = await client
+            .from('categories')
+            .select('name')
+            .eq('active', true)
+            .order('name');
+        return [for (final row in rows) row['name'].toString()];
+      } catch (_) {
+        final cached = await _cache?.cachedProducts() ?? const <Product>[];
+        if (cached.isNotEmpty) {
+          return cached.map((p) => p.category).toSet().toList();
+        }
+        rethrow;
+      }
     }
     return _demoProducts.map((p) => p.category).toSet().toList();
   }
@@ -59,12 +64,20 @@ class CatalogRepository {
   Future<Product?> productById(String id) async {
     final client = supabaseClient;
     if (client != null) {
-      final row = await client
-          .from('products')
-          .select('*, categories(name)')
-          .eq('id', id)
-          .maybeSingle();
-      return row == null ? null : Product.fromSupabase(row);
+      try {
+        final row = await client
+            .from('products')
+            .select('*, categories(name)')
+            .eq('id', id)
+            .maybeSingle();
+        return row == null ? null : Product.fromSupabase(row);
+      } catch (_) {
+        final cached = await _cache?.cachedProducts() ?? const <Product>[];
+        for (final product in cached) {
+          if (product.id == id) return product;
+        }
+        rethrow;
+      }
     }
     for (final product in _demoProducts) {
       if (product.id == id) return product;
@@ -98,6 +111,7 @@ class CatalogRepository {
     } else {
       _demoProducts[index] = product;
     }
+    await _cache?.saveProducts(_demoProducts.where((p) => p.active).toList());
     return product;
   }
 
@@ -114,6 +128,25 @@ class CatalogRepository {
     if (index != -1) {
       _demoProducts[index] = _demoProducts[index].copyWith(isActive: false);
     }
+    await _cache?.saveProducts(_demoProducts.where((p) => p.active).toList());
+  }
+
+  List<Product> _filterProducts(
+    List<Product> products, {
+    required String query,
+    String? category,
+  }) {
+    final q = query.trim().toLowerCase();
+    return products.where((p) {
+      return (category == null || p.category == category) &&
+          (q.isEmpty ||
+              p.name.contains(q) ||
+              p.category.contains(q) ||
+              (p.nameEn?.toLowerCase().contains(q) ?? false) ||
+              p.sku.toLowerCase().contains(q) ||
+              p.brand.toLowerCase().contains(q) ||
+              p.tags.any((tag) => tag.toLowerCase().contains(q)));
+    }).toList();
   }
 
   Future<String?> _categoryIdFor(String categoryName) async {

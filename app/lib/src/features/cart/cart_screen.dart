@@ -8,6 +8,7 @@ import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/price_text.dart';
 import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/quantity_selector.dart';
+import '../../data/models/order.dart';
 import 'cart_controller.dart';
 
 class CartScreen extends ConsumerWidget {
@@ -16,9 +17,7 @@ class CartScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final items = ref.watch(cartControllerProvider);
-    final subtotal = items.fold<double>(0, (sum, item) => sum + item.total);
-    final handling = items.isEmpty ? 0.0 : 10.0;
-    final total = subtotal + handling;
+    final pricing = CartPricingSummary.estimate(items);
     if (items.isEmpty) {
       return EmptyState(
         title: 'السلة فارغة',
@@ -79,20 +78,26 @@ class CartScreen extends ConsumerWidget {
               ]),
             ),
           ),
-        TextField(
-            decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.local_offer_outlined),
-                labelText: 'كود خصم اختياري'),
-            onChanged: (_) {}),
-        const SizedBox(height: 12),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(children: [
-              _TotalRow(label: 'الإجمالي الفرعي', value: lyd(subtotal)),
-              _TotalRow(label: 'توصيل/مناولة تقديرية', value: lyd(handling)),
+              _TotalRow(
+                  label: 'الإجمالي الفرعي التقديري',
+                  value: lyd(pricing.subtotal)),
+              _TotalRow(
+                  label: 'مناولة تقديرية', value: lyd(pricing.handlingFee)),
               const Divider(),
-              _TotalRow(label: 'الإجمالي', value: lyd(total), bold: true),
+              _TotalRow(
+                  label: 'الإجمالي التقديري',
+                  value: lyd(pricing.total),
+                  bold: true),
+              const SizedBox(height: 8),
+              const Text(
+                'يعتمد الخادم السعر النهائي حسب حسابك والمخزون ورسوم التوصيل، وسيظهر قبل تأكيد نجاح الطلب.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
             ]),
           ),
         ),
