@@ -35,12 +35,15 @@ flutter run \
 
 ## Supabase Setup
 
-1. Create a Supabase project.
-2. Run `supabase/schema.sql`.
-3. Run `supabase/rls.sql`.
-4. Run `supabase/seed.sql` after creating matching Auth users or through the Edge Functions.
-5. Create Storage bucket `product-images` and keep it private or public-read with controlled writes.
-6. Deploy functions in `supabase/functions`.
+This project is migration-first. Do not deploy only `schema.sql` or `rls.sql`.
+
+1. Create and link a Supabase project.
+2. Run `supabase db push`.
+3. Create Storage bucket `product-images` and keep writes controlled.
+4. Configure Edge Function secrets and deploy the functions listed in
+   `supabase/README.md`.
+5. Keep public Auth sign-up disabled. Customers are created only by the
+   secured admin/staff Edge Functions.
 
 ## Android APK
 
@@ -50,15 +53,21 @@ flutter build apk --debug
 flutter build apk --release
 ```
 
-See `DEPLOYMENT_ANDROID_APK.md` and `MOBILE_APK_TESTING_AND_UPDATES.md` for signing, direct download placeholders, app version checks, Shorebird OTA notes, and Android sideloading limitations.
+See `DEPLOYMENT_ANDROID_APK.md`, `DEPLOYMENT_IOS.md`, and
+`MOBILE_APK_TESTING_AND_UPDATES.md` for signing, direct download flow, app
+version checks, push setup, and platform limitations.
 
 ## MVP Limitations
 
 - Demo repositories are in-memory until Supabase credentials and remote repositories are connected.
-- Offline support includes connectivity banner, repository boundaries, and cache/outbox placeholders; full conflict-safe sync is Phase 2.
+- Offline support persists catalog/cart data and safely retries unsent orders
+  using product IDs and quantities only; the server remains authoritative for
+  prices, stock, and account status.
 - Product image upload UI is a placeholder.
 - Password reset and Auth user creation must happen via Edge Functions in production.
-- Firebase Cloud Messaging client setup requires a Firebase project and Android `google-services.json`; server-side notification scaffolding is present in Supabase functions.
+- Firebase Cloud Messaging needs a client-owned Firebase project, platform
+  configuration, APNs setup for iOS, web VAPID configuration, and a scheduled
+  Supabase dispatcher before actual push delivery is enabled.
 
 ## Admin Operations Phase
 

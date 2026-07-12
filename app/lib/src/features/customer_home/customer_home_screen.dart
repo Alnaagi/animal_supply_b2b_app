@@ -4,16 +4,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/config/app_config.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/price_text.dart';
 import '../../core/widgets/product_image_placeholder.dart';
+import '../../data/models/admin_models.dart';
 import '../../data/models/product.dart';
 import '../../data/models/order.dart';
+import '../../data/repositories/admin_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
+import '../../data/repositories/notifications_repository.dart';
 import '../../data/repositories/orders_repository.dart';
 import '../auth/auth_controller.dart';
 import '../cart/cart_controller.dart';
+import '../notifications/notification_center_sheet.dart';
 
 class CustomerHomeScreen extends ConsumerStatefulWidget {
   const CustomerHomeScreen({super.key});
@@ -23,48 +28,63 @@ class CustomerHomeScreen extends ConsumerStatefulWidget {
 }
 
 class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
-  final _bannerController = PageController();
-  Timer? _bannerTimer;
-  int _activeBanner = 0;
+  Future<List<Object>>? _homeFuture;
+  Future<int>? _unreadFuture;
+  String? _homeCustomerKey;
 
-  @override
-  void dispose() {
-    _bannerTimer?.cancel();
-    _bannerController.dispose();
-    super.dispose();
+  void _ensureHomeFuture(String customerKey) {
+    if (_homeFuture != null && _homeCustomerKey == customerKey) return;
+    _homeCustomerKey = customerKey;
+    _homeFuture = Future.wait<Object>([
+      ref.read(catalogRepositoryProvider).products(),
+      ref.read(ordersRepositoryProvider).ordersForCustomer(customerKey),
+      ref.read(adminRepositoryProvider).banners(),
+    ]);
+    _unreadFuture ??= ref.read(notificationsRepositoryProvider).unreadCount();
   }
 
-  void _startBannerTimer(int count) {
-    if (count < 2 || _bannerTimer != null) return;
-    _bannerTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (!_bannerController.hasClients || !mounted) return;
-      final next = (_activeBanner + 1) % count;
-      _bannerController.animateToPage(next,
-          duration: const Duration(milliseconds: 420),
-          curve: Curves.easeOutCubic);
-    });
+  void _reloadHome() {
+    _homeFuture = null;
+    _unreadFuture = null;
+    _homeCustomerKey = null;
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    final user = ref.watch(authControllerProvider).user!;
+    final user =
+        ref.watch(authControllerProvider.select((state) => state.user))!;
+    final customerKey = user.customerId ?? user.id;
+    _ensureHomeFuture(customerKey);
     return FutureBuilder(
-      future: Future.wait([
-        ref.read(catalogRepositoryProvider).products(),
-        ref
-            .read(ordersRepositoryProvider)
-            .ordersForCustomer(user.customerId ?? user.id),
-      ]),
+      future: _homeFuture,
       builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return EmptyState(
+            title: 'تعذر تحميل الصفحة الرئيسية',
+            message: 'تحقق من الاتصال ثم حاول مرة أخرى.',
+            icon: Icons.cloud_off_outlined,
+            action: FilledButton(
+              onPressed: _reloadHome,
+              child: const Text('إعادة المحاولة'),
+            ),
+          );
+        }
         final products = (snapshot.data?[0] ?? <Product>[]) as List<Product>;
         final orders = (snapshot.data?[1] ?? <Order>[]) as List<Order>;
+        final configuredBanners =
+            (snapshot.data?[2] ?? <AppBanner>[]) as List<AppBanner>;
         final categories =
             products.map((product) => product.category).toSet().toList();
         final top = products.where((p) => p.isTopSelling).toList();
         final offers =
             products.where((p) => p.discountPercent != null).toList();
-        final banners = _HomeBannerData.fromProducts(products);
-        _startBannerTimer(banners.length);
+        final banners = AppConfig.hasSupabase && configuredBanners.isNotEmpty
+            ? _HomeBannerData.fromAdminBanners(configuredBanners)
+            : _HomeBannerData.demo();
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -87,16 +107,25 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                   onPressed: () => context.go('/catalog'),
                   icon: const Icon(Icons.search)),
               const SizedBox(width: 6),
-              IconButton.filledTonal(
-                  onPressed: () {}, icon: const Icon(Icons.notifications_none)),
+              FutureBuilder<int>(
+                future: _unreadFuture,
+                builder: (context, snapshot) {
+                  final unread = snapshot.data ?? 0;
+                  return IconButton.filledTonal(
+                    onPressed: () => showNotificationCenter(context, ref),
+                    icon: Badge(
+                      isLabelVisible: unread > 0,
+                      label: Text(unread > 99 ? '99+' : '$unread'),
+                      child: const Icon(Icons.notifications_none),
+                    ),
+                  );
+                },
+              ),
             ]),
             const SizedBox(height: 16),
-            _OfferBannerCarousel(
-              banners: banners,
-              controller: _bannerController,
-              activeIndex: _activeBanner,
-              onChanged: (index) => setState(() => _activeBanner = index),
-            ),
+            // Owns its own PageController/timer/setState so banner ticks
+            // never rebuild product lists below.
+            _OfferBannerCarousel(banners: banners),
             const SizedBox(height: 20),
             _SectionHeader(
                 title: 'التصنيفات', onTap: () => context.go('/catalog')),
@@ -220,7 +249,29 @@ class _HomeBannerData {
   final String onTapPath;
   final String sourceUrl;
 
-  static List<_HomeBannerData> fromProducts(List<Product> products) {
+  static List<_HomeBannerData> fromAdminBanners(List<AppBanner> banners) {
+    String targetPath(AppBanner banner) => switch (banner.targetType) {
+          'category' =>
+            '/catalog?category=${Uri.encodeComponent(banner.targetValue)}',
+          'product' => '/product/${Uri.encodeComponent(banner.targetValue)}',
+          _ => '/catalog',
+        };
+
+    return [
+      for (final banner in banners)
+        _HomeBannerData(
+          title: banner.title,
+          subtitle: banner.body,
+          cta: banner.ctaText,
+          imageUrl: banner.imageUrl,
+          category: banner.targetType,
+          onTapPath: targetPath(banner),
+          sourceUrl: '',
+        ),
+    ];
+  }
+
+  static List<_HomeBannerData> demo() {
     // External demo photo URLs only. Do not copy these images into the repo.
     // Replace with client-approved Supabase Storage banners before production.
     return [
@@ -283,21 +334,61 @@ class _HomeBannerData {
   }
 }
 
-class _OfferBannerCarousel extends StatelessWidget {
-  const _OfferBannerCarousel({
-    required this.banners,
-    required this.controller,
-    required this.activeIndex,
-    required this.onChanged,
-  });
+class _OfferBannerCarousel extends StatefulWidget {
+  const _OfferBannerCarousel({required this.banners});
 
   final List<_HomeBannerData> banners;
-  final PageController controller;
-  final int activeIndex;
-  final ValueChanged<int> onChanged;
+
+  @override
+  State<_OfferBannerCarousel> createState() => _OfferBannerCarouselState();
+}
+
+class _OfferBannerCarouselState extends State<_OfferBannerCarousel> {
+  late final PageController _controller;
+  Timer? _timer;
+  int _activeIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController();
+    _startTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _OfferBannerCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.banners.length != widget.banners.length) {
+      _timer?.cancel();
+      _timer = null;
+      _activeIndex = 0;
+      _startTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _startTimer() {
+    if (widget.banners.length < 2 || _timer != null) return;
+    _timer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!_controller.hasClients || !mounted) return;
+      final next = (_activeIndex + 1) % widget.banners.length;
+      _controller.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final banners = widget.banners;
     return Column(children: [
       LayoutBuilder(
         builder: (context, constraints) {
@@ -306,12 +397,15 @@ class _OfferBannerCarousel extends StatelessWidget {
               ? 280.0
               : width >= 640
                   ? 230.0
-                  : 184.0;
+                  : 220.0;
           return SizedBox(
             height: height,
             child: PageView.builder(
-              controller: controller,
-              onPageChanged: onChanged,
+              controller: _controller,
+              onPageChanged: (index) {
+                if (_activeIndex == index) return;
+                setState(() => _activeIndex = index);
+              },
               itemCount: banners.length,
               itemBuilder: (context, index) =>
                   _OfferBannerCard(banner: banners[index]),
@@ -327,11 +421,11 @@ class _OfferBannerCarousel extends StatelessWidget {
             AnimatedContainer(
               duration: const Duration(milliseconds: 220),
               margin: const EdgeInsets.symmetric(horizontal: 3),
-              width: activeIndex == i ? 22 : 7,
+              width: _activeIndex == i ? 22 : 7,
               height: 7,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(99),
-                color: activeIndex == i
+                color: _activeIndex == i
                     ? AppTheme.green
                     : AppTheme.green.withValues(alpha: .22),
               ),
@@ -366,6 +460,8 @@ class _OfferBannerCard extends StatelessWidget {
             Image.network(
               banner.imageUrl,
               fit: BoxFit.cover,
+              gaplessPlayback: true,
+              filterQuality: FilterQuality.medium,
               webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
               loadingBuilder: (context, child, loadingProgress) {
                 if (loadingProgress == null) return child;
@@ -421,7 +517,8 @@ class _OfferBannerCard extends StatelessWidget {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 430),
                 child: Padding(
-                  padding: const EdgeInsets.all(22),
+                  padding: EdgeInsets.all(
+                      MediaQuery.sizeOf(context).width < 420 ? 16 : 22),
                   child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -438,7 +535,7 @@ class _OfferBannerCard extends StatelessWidget {
                                   fontWeight: FontWeight.w800,
                                   fontSize: 12)),
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 8),
                         Text(
                           banner.title,
                           maxLines: 2,
@@ -451,7 +548,7 @@ class _OfferBannerCard extends StatelessWidget {
                                   fontWeight: FontWeight.w900,
                                   height: 1.12),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 6),
                         Text(
                           banner.subtitle,
                           maxLines: 2,
@@ -459,7 +556,7 @@ class _OfferBannerCard extends StatelessWidget {
                           style: const TextStyle(
                               color: Colors.white, fontWeight: FontWeight.w600),
                         ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 10),
                         FilledButton.icon(
                           style: FilledButton.styleFrom(
                               backgroundColor: Colors.white,

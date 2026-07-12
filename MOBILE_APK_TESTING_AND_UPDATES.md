@@ -39,17 +39,27 @@ Use a hybrid strategy:
 
 The planned production path is Firebase Cloud Messaging:
 
-1. Admin/staff app registers an FCM token.
-2. Token is stored in `admin_device_tokens`.
-3. Customer submits an order.
-4. Supabase Edge Function `send-admin-notification` stores a notification row and is the server-side place to send FCM.
-5. Admin phone receives a push notification and opens the order detail.
+1. Each signed-in app registers its FCM token in `device_tokens`.
+2. Customer order creation atomically queues in-app notifications and
+   `notification_outbox` jobs for active admin/staff recipients.
+3. Order status changes queue an update for the customer.
+4. The scheduled `dispatch-notification-outbox` Edge Function sends Firebase
+   HTTP v1 messages, records delivery attempts, and retries temporary failures.
+5. The app opens the matching order or product when the user taps a push.
 
 No Firebase server credential should be placed in Flutter. Keep Firebase HTTP v1 credentials in Supabase Edge Function secrets only.
 
-## Current MVP State
+## Required Before Production
 
-- Admin notification table/function scaffolding exists.
-- App version/update metadata exists.
-- The app can show/open APK update links.
-- Full Firebase client setup still needs a Firebase project and Android `google-services.json`.
+- Create the Firebase project.
+- Add platform-specific Firebase configuration that is intentionally ignored by
+  Git: Android `google-services.json`, iOS `GoogleService-Info.plist`, and web
+  Firebase/VAPID values passed at build time.
+- Configure APNs in Firebase and enable Push Notifications in the client-owned
+  Apple Developer account.
+- Set `FIREBASE_SERVICE_ACCOUNT_JSON` and
+  `NOTIFICATION_DISPATCH_SECRET` only as Supabase Edge Function secrets.
+- Deploy and schedule `dispatch-notification-outbox`.
+
+Until this is configured, the app still stores in-app notification rows and
+clearly labels the push-delivery part as production-only.

@@ -17,11 +17,30 @@ build/app/outputs/flutter-apk/app-debug.apk
 
 ```bash
 flutter build apk --release
+flutter build appbundle --release
 ```
 
-## Signing Placeholder
+The signed APK is written to:
 
-Create a keystore before production release and configure `android/key.properties` and Gradle signing. Do not commit real keystore passwords.
+```text
+build/app/outputs/flutter-apk/app-release.apk
+```
+
+The Google Play bundle is written to:
+
+```text
+build/app/outputs/bundle/release/app-release.aab
+```
+
+## Signing
+
+Release signing is configured locally through ignored files:
+
+- `app/android/keystore/animal-supply-release.jks`
+- `app/android/key.properties`
+
+Follow `ANDROID_SIGNING_HANDOFF.md` before handing the project to the client.
+Never commit, send by WhatsApp, or add the keystore password to a build command.
 
 ## Download Link Settings
 
@@ -34,6 +53,15 @@ App settings include:
 
 Admin can later update these values in `app_settings` so WhatsApp invite messages point to the newest APK.
 
+For every direct-distribution update:
+
+1. Keep application ID `ly.animalsupply.b2b`.
+2. Keep the same signing certificate.
+3. Increase `version` in `app/pubspec.yaml`.
+4. Publish the file only through an HTTPS link controlled by the client.
+5. Add the matching `app_versions` row with release notes and SHA-256.
+
 ## iOS Note
 
-iOS sideloading is not equivalent to Android APK. Outside App Store requires TestFlight, enterprise signing, Apple Developer account, or a PWA alternative.
+See `DEPLOYMENT_IOS.md`. An iOS `.ipa` cannot use the Android APK download
+flow.
