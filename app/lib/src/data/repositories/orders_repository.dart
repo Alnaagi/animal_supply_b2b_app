@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/constants/order_status.dart';
 import '../models/order.dart';
+import '../models/product.dart';
 import '../remote/supabase_clients.dart';
 import 'demo_data.dart';
 
@@ -236,6 +237,85 @@ class OrdersRepository {
     return order;
   }
 
+  /// Retries a durable outbox place-order payload.
+  ///
+  /// Accepts only `client_request_id`, delivery/note text, and
+  /// `product_id`/`quantity` lines. Never trusts client prices, totals,
+  /// customer IDs, or status for the remote path.
+  Future<Order> placeOrderFromOutbox({
+    required String clientRequestId,
+    required List<Map<String, Object?>> items,
+    String deliveryAddress = '',
+    String customerNote = '',
+    String deliveryNote = '',
+    String demoCustomerId = '',
+    String demoBusinessName = '',
+  }) async {
+    final normalized = _normalizeOutboxItems(items);
+    if (clientRequestId.trim().isEmpty) {
+      throw const OrdersRepositoryException(
+        code: 'INVALID_CLIENT_REQUEST_ID',
+        message: 'تعذر تجهيز رقم آمن للطلب. حاول مرة أخرى.',
+      );
+    }
+    if (normalized.isEmpty) {
+      throw const OrdersRepositoryException(
+        code: 'EMPTY_ORDER',
+        message: 'لا يمكن إرسال طلب بدون منتجات.',
+      );
+    }
+
+    final remote = _remote;
+    if (remote != null) {
+      final body = <String, dynamic>{
+        'client_request_id': clientRequestId.trim(),
+        if (deliveryAddress.trim().isNotEmpty)
+          'delivery_address': deliveryAddress.trim(),
+        if (customerNote.trim().isNotEmpty)
+          'customer_note': customerNote.trim(),
+        if (deliveryNote.trim().isNotEmpty)
+          'delivery_note': deliveryNote.trim(),
+        'items': [
+          for (final item in normalized)
+            {
+              'product_id': item.productId,
+              'quantity': item.quantity,
+            },
+        ],
+      };
+      final response = await remote.placeOrder(body);
+      return _orderFromFunction(response);
+    }
+
+    final cartItems = [
+      for (final item in normalized)
+        CartItem(
+          product: Product(
+            id: item.productId,
+            nameAr: 'منتج مؤجل',
+            sku: item.productId,
+            category: 'مؤجل',
+            animalType: '',
+            brand: '',
+            unitSize: '',
+            basePrice: 0,
+            stockQuantity: item.quantity,
+            minOrderQty: 1,
+          ),
+          quantity: item.quantity,
+        ),
+    ];
+    return placeOrder(
+      clientRequestId: clientRequestId,
+      customerId: demoCustomerId,
+      businessName: demoBusinessName,
+      items: cartItems,
+      deliveryAddress: deliveryAddress,
+      customerNote: customerNote,
+      deliveryNote: deliveryNote,
+    );
+  }
+
   Future<Order> transitionOrderStatus(
     String orderId,
     OrderStatus status, {
@@ -339,6 +419,29 @@ class OrdersRepository {
         message: 'توجد كمية غير صالحة في السلة.',
       );
     }
+  }
+
+  static List<({String productId, int quantity})> _normalizeOutboxItems(
+    List<Map<String, Object?>> items,
+  ) {
+    final normalized = <({String productId, int quantity})>[];
+    for (final item in items) {
+      final productId = item['product_id']?.toString().trim() ?? '';
+      final quantityRaw = item['quantity'];
+      final quantity = quantityRaw is int
+          ? quantityRaw
+          : quantityRaw is num
+              ? quantityRaw.toInt()
+              : int.tryParse(quantityRaw?.toString() ?? '') ?? 0;
+      if (productId.isEmpty || quantity <= 0) {
+        throw const OrdersRepositoryException(
+          code: 'INVALID_QUANTITY',
+          message: 'توجد كمية غير صالحة في السلة.',
+        );
+      }
+      normalized.add((productId: productId, quantity: quantity));
+    }
+    return normalized;
   }
 
   static Order _orderFromFunction(OrdersFunctionResponse response) {

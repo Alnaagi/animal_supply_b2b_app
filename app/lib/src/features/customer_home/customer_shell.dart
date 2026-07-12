@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/config/app_config.dart';
 import '../../core/connectivity/connectivity_provider.dart';
 import '../../core/theme/app_theme.dart';
+import '../../data/sync/outbox_retry_coordinator.dart';
 import '../auth/auth_controller.dart';
 import '../cart/cart_controller.dart';
 
@@ -16,10 +17,16 @@ class CustomerShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final online = ref.watch(connectivityProvider).value ?? true;
-    final cartCount = ref
-        .watch(cartControllerProvider)
-        .fold<int>(0, (sum, item) => sum + item.quantity);
+    // Keep connectivity-triggered place-order outbox flush alive for customers.
+    ref.watch(outboxRetryCoordinatorProvider);
+    final online = ref.watch(
+      connectivityProvider.select((async) => async.value ?? true),
+    );
+    final cartCount = ref.watch(
+      cartControllerProvider.select(
+        (items) => items.fold<int>(0, (sum, item) => sum + item.quantity),
+      ),
+    );
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(

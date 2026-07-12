@@ -228,6 +228,32 @@ class CartController extends StateNotifier<List<CartItem>> {
     unawaited(_persistPendingRequest());
   }
 
+  /// Clears local pending state after a successful outbox flush.
+  Future<void> acknowledgeSyncedOutboxOrder({
+    required String requestId,
+    required List<({String productId, int quantity})> items,
+  }) async {
+    final submittedQuantities = {
+      for (final item in items) item.productId: item.quantity,
+    };
+    state = [
+      for (final item in state)
+        if (!submittedQuantities.containsKey(item.product.id))
+          item
+        else if (item.quantity - submittedQuantities[item.product.id]! >=
+            item.product.minOrderQuantity)
+          item.copyWith(
+            quantity: item.quantity - submittedQuantities[item.product.id]!,
+          ),
+    ];
+    if (_pendingRequestId == requestId) {
+      _pendingRequestId = null;
+      _pendingFingerprint = null;
+    }
+    await _persistCart();
+    await _persistPendingRequest();
+  }
+
   static String _fingerprint(
     List<CartItem> items, {
     required String note,
