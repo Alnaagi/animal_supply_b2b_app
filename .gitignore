@@ -1,0 +1,29 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+**/key.properties
+**/local.properties
+**/google-services.json
+**/GoogleService-Info.plist
+
+# Flutter and Android generated state
+app/.dart_tool/
+app/.flutter-plugins-dependencies
+app/build/
+app/.idea/
+app/android/.gradle/
+app/android/.kotlin/
+
+# Supabase local state
+supabase/.branches/
+supabase/.temp/
+
+# Editors and operating-system files
+.idea/
+.vscode/
+.DS_Store
+*.log
+*.swp
