@@ -29,6 +29,78 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     final auth = ref.watch(authControllerProvider);
     final authController = ref.read(authControllerProvider.notifier);
+    final theme = Theme.of(context);
+    const fieldRadius = BorderRadius.all(Radius.circular(16));
+    final loginTheme = theme.copyWith(
+      inputDecorationTheme: theme.inputDecorationTheme.copyWith(
+        filled: true,
+        fillColor: const Color(0xfff5f9f7),
+        focusColor: AppTheme.green.withValues(alpha: 0.08),
+        hoverColor: AppTheme.green.withValues(alpha: 0.04),
+        contentPadding:
+            const EdgeInsetsDirectional.fromSTEB(18, 18, 14, 18),
+        labelStyle: const TextStyle(
+          color: Color(0xff48645b),
+          fontWeight: FontWeight.w600,
+        ),
+        floatingLabelStyle: const TextStyle(
+          color: AppTheme.green,
+          fontWeight: FontWeight.w800,
+        ),
+        helperStyle: const TextStyle(
+          color: Color(0xff5d716a),
+          height: 1.4,
+        ),
+        helperMaxLines: 2,
+        hintStyle: const TextStyle(color: Color(0xff789087)),
+        prefixIconColor: AppTheme.green,
+        prefixIconConstraints: const BoxConstraints(
+          minWidth: 56,
+          minHeight: 56,
+        ),
+        border: const OutlineInputBorder(
+          borderRadius: fieldRadius,
+          borderSide: BorderSide(
+            color: Color(0xffbdd2ca),
+            width: 1.25,
+          ),
+        ),
+        enabledBorder: const OutlineInputBorder(
+          borderRadius: fieldRadius,
+          borderSide: BorderSide(
+            color: Color(0xffbdd2ca),
+            width: 1.25,
+          ),
+        ),
+        focusedBorder: const OutlineInputBorder(
+          borderRadius: fieldRadius,
+          borderSide: BorderSide(
+            color: AppTheme.green,
+            width: 2,
+          ),
+        ),
+        disabledBorder: const OutlineInputBorder(
+          borderRadius: fieldRadius,
+          borderSide: BorderSide(
+            color: Color(0xffd8e2de),
+          ),
+        ),
+        errorBorder: const OutlineInputBorder(
+          borderRadius: fieldRadius,
+          borderSide: BorderSide(
+            color: AppTheme.red,
+            width: 1.25,
+          ),
+        ),
+        focusedErrorBorder: const OutlineInputBorder(
+          borderRadius: fieldRadius,
+          borderSide: BorderSide(
+            color: AppTheme.red,
+            width: 2,
+          ),
+        ),
+      ),
+    );
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -39,7 +111,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               child: Card(
                 child: Padding(
                   padding: const EdgeInsets.all(22),
-                  child: Column(
+                  child: Theme(
+                    key: const Key('login-input-theme'),
+                    data: loginTheme,
+                    child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Container(
@@ -63,23 +138,39 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           textAlign: TextAlign.center),
                       const SizedBox(height: 20),
                       TextField(
-                          controller: inviteCode,
-                          decoration: const InputDecoration(
-                              labelText: 'رمز الدعوة / كود العميل اختياري',
-                              prefixIcon: Icon(Icons.link))),
-                      const SizedBox(height: 12),
+                        key: const Key('login-invite-field'),
+                        controller: inviteCode,
+                        enabled: !auth.loading,
+                        decoration: const InputDecoration(
+                          labelText: 'رمز الدعوة',
+                          hintText: 'أدخل الرمز المرسل من المتجر',
+                          helperText:
+                              'لأول دخول أو إعادة التعيين فقط. الحسابات المفعلة '
+                              'لا تحتاجه، ولا تضع كلمة المرور هنا.',
+                          prefixIcon: Icon(Icons.link),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
                       TextField(
-                          controller: username,
-                          decoration: const InputDecoration(
-                              labelText: 'اسم المستخدم أو الهاتف أو البريد',
-                              prefixIcon: Icon(Icons.person_outline))),
-                      const SizedBox(height: 12),
+                        key: const Key('login-username-field'),
+                        controller: username,
+                        enabled: !auth.loading,
+                        decoration: const InputDecoration(
+                          labelText: 'اسم المستخدم أو الهاتف أو البريد',
+                          prefixIcon: Icon(Icons.person_outline),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
                       TextField(
-                          controller: password,
-                          obscureText: true,
-                          decoration: const InputDecoration(
-                              labelText: 'كلمة المرور',
-                              prefixIcon: Icon(Icons.lock_outline))),
+                        key: const Key('login-password-field'),
+                        controller: password,
+                        enabled: !auth.loading,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'كلمة المرور',
+                          prefixIcon: Icon(Icons.lock_outline),
+                        ),
+                      ),
                       if (auth.error != null) ...[
                         const SizedBox(height: 12),
                         Text(auth.error!,
@@ -133,6 +224,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                         'tripoli-pets', 'Customer123!')),
                           ]),
                     ],
+                  ),
                   ),
                 ),
               ),
