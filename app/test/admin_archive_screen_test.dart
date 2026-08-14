@@ -1,4 +1,3 @@
-import 'package:animal_supply_b2b/src/data/models/admin_models.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
 import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:animal_supply_b2b/src/data/repositories/admin_repository.dart';

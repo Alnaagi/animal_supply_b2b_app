@@ -105,7 +105,26 @@ abstract interface class CatalogPagedRemoteGateway {
   });
 }
 
-class SupabaseCatalogPagedRemoteGateway implements CatalogPagedRemoteGateway {
+abstract interface class CatalogSortedPagedRemoteGateway {
+  Future<CatalogRemotePage> productsPageSorted({
+    required String query,
+    String? category,
+    String? brand,
+    String? animalType,
+    String? unitSize,
+    double? minimumPrice,
+    double? maximumPrice,
+    required String availability,
+    required bool includeInactive,
+    required String sort,
+    DateTime? snapshotAt,
+    required int offset,
+    required int limit,
+  });
+}
+
+class SupabaseCatalogPagedRemoteGateway
+    implements CatalogPagedRemoteGateway, CatalogSortedPagedRemoteGateway {
   const SupabaseCatalogPagedRemoteGateway(this.client);
 
   final SupabaseClient client;
@@ -127,6 +146,70 @@ class SupabaseCatalogPagedRemoteGateway implements CatalogPagedRemoteGateway {
     DateTime? snapshotAt,
     required int offset,
     required int limit,
+  }) {
+    return _productsPage(
+      query: query,
+      category: category,
+      brand: brand,
+      animalType: animalType,
+      unitSize: unitSize,
+      minimumPrice: minimumPrice,
+      maximumPrice: maximumPrice,
+      availability: availability,
+      includeInactive: includeInactive,
+      snapshotAt: snapshotAt,
+      offset: offset,
+      limit: limit,
+    );
+  }
+
+  @override
+  Future<CatalogRemotePage> productsPageSorted({
+    required String query,
+    String? category,
+    String? brand,
+    String? animalType,
+    String? unitSize,
+    double? minimumPrice,
+    double? maximumPrice,
+    required String availability,
+    required bool includeInactive,
+    required String sort,
+    DateTime? snapshotAt,
+    required int offset,
+    required int limit,
+  }) {
+    return _productsPage(
+      query: query,
+      category: category,
+      brand: brand,
+      animalType: animalType,
+      unitSize: unitSize,
+      minimumPrice: minimumPrice,
+      maximumPrice: maximumPrice,
+      availability: availability,
+      includeInactive: includeInactive,
+      sort: _normalizedCatalogSort(sort),
+      snapshotAt: snapshotAt,
+      offset: offset,
+      limit: limit,
+    );
+  }
+
+  Future<CatalogRemotePage> _productsPage({
+    required String query,
+    String? category,
+    String? brand,
+    String? animalType,
+    String? unitSize,
+    double? minimumPrice,
+    double? maximumPrice,
+    required String availability,
+    required bool includeInactive,
+    String? sort,
+    DateTime? snapshotAt,
+    required int offset,
+    required int limit,
   }) async {
     final response = await client.rpc(
       'catalog_products_page',
@@ -140,6 +223,7 @@ class SupabaseCatalogPagedRemoteGateway implements CatalogPagedRemoteGateway {
         'p_max_price': maximumPrice,
         'p_availability': availability,
         'p_include_inactive': includeInactive,
+        if (sort != null) 'p_sort': sort,
         'p_snapshot_at': snapshotAt?.toUtc().toIso8601String(),
         'p_offset': offset,
         'p_limit': limit,
@@ -231,6 +315,18 @@ String _normalizedAvailability(String value) {
   };
 }
 
+String _normalizedCatalogSort(String value) {
+  return switch (value.trim().toLowerCase()) {
+    'oldest' => 'oldest',
+    'name_asc' => 'name_asc',
+    'price_asc' => 'price_asc',
+    'price_desc' => 'price_desc',
+    'stock_asc' => 'stock_asc',
+    'stock_desc' => 'stock_desc',
+    _ => 'newest',
+  };
+}
+
 List<String> _distinctSorted(Iterable<String> values) {
   final result = <String>{
     for (final value in values)
@@ -258,6 +354,81 @@ List<Product> _sortProductsNewest(Iterable<Product> products) {
     return first.$1.compareTo(second.$1);
   });
   return [for (final entry in indexed) entry.$2];
+}
+
+List<Product> _sortProductsForCatalog(
+  Iterable<Product> products, {
+  required String sort,
+}) {
+  final normalizedSort = _normalizedCatalogSort(sort);
+  if (normalizedSort == 'newest') {
+    return _sortProductsNewest(products);
+  }
+  final indexed = products.toList(growable: false).indexed.toList();
+  indexed.sort((first, second) {
+    final firstProduct = first.$2;
+    final secondProduct = second.$2;
+    final comparison = switch (normalizedSort) {
+      'oldest' => _compareProductDatesOldest(firstProduct, secondProduct),
+      'name_asc' => _compareProductNames(firstProduct, secondProduct),
+      'price_asc' => firstProduct.price.compareTo(secondProduct.price),
+      'price_desc' => secondProduct.price.compareTo(firstProduct.price),
+      'stock_asc' => _compareTrackedStock(firstProduct, secondProduct),
+      'stock_desc' => _compareTrackedStock(
+          firstProduct,
+          secondProduct,
+          descending: true,
+        ),
+      _ => 0,
+    };
+    if (comparison != 0) return comparison;
+    final byName = _compareProductNames(firstProduct, secondProduct);
+    if (byName != 0) return byName;
+    final byId = firstProduct.id.compareTo(secondProduct.id);
+    return byId != 0 ? byId : first.$1.compareTo(second.$1);
+  });
+  return [for (final entry in indexed) entry.$2];
+}
+
+int _compareProductDatesOldest(Product first, Product second) {
+  final firstCreated = first.createdAt;
+  final secondCreated = second.createdAt;
+  if (firstCreated != null && secondCreated != null) {
+    return firstCreated.compareTo(secondCreated);
+  }
+  if (firstCreated != null) return -1;
+  if (secondCreated != null) return 1;
+  return 0;
+}
+
+int _compareProductNames(Product first, Product second) {
+  final byArabic = first.name.trim().toLowerCase().compareTo(
+        second.name.trim().toLowerCase(),
+      );
+  if (byArabic != 0) return byArabic;
+  final byEnglish = (first.nameEn ?? '').trim().toLowerCase().compareTo(
+        (second.nameEn ?? '').trim().toLowerCase(),
+      );
+  if (byEnglish != 0) return byEnglish;
+  final byBrand = first.brand.trim().toLowerCase().compareTo(
+        second.brand.trim().toLowerCase(),
+      );
+  if (byBrand != 0) return byBrand;
+  return first.id.compareTo(second.id);
+}
+
+int _compareTrackedStock(
+  Product first,
+  Product second, {
+  bool descending = false,
+}) {
+  if (first.stockTrackingEnabled != second.stockTrackingEnabled) {
+    return first.stockTrackingEnabled ? -1 : 1;
+  }
+  if (!first.stockTrackingEnabled) return 0;
+  final comparison =
+      first.orderableStockQuantity.compareTo(second.orderableStockQuantity);
+  return descending ? -comparison : comparison;
 }
 
 class CatalogRepository {
@@ -349,26 +520,118 @@ class CatalogRepository {
     DateTime? snapshotAt,
     int offset = 0,
     int pageSize = defaultPageSize,
+  }) {
+    return _productsPage(
+      query: query,
+      category: category,
+      brand: brand,
+      animalType: animalType,
+      unitSize: unitSize,
+      minimumPrice: minimumPrice,
+      maximumPrice: maximumPrice,
+      availability: availability,
+      includeInactive: includeInactive,
+      sort: 'newest',
+      snapshotAt: snapshotAt,
+      offset: offset,
+      pageSize: pageSize,
+      requestRemoteSort: false,
+    );
+  }
+
+  Future<CatalogPage> productsPageSorted({
+    String query = '',
+    String? category,
+    String? brand,
+    String? animalType,
+    String? unitSize,
+    double? minimumPrice,
+    double? maximumPrice,
+    String availability = 'all',
+    bool includeInactive = false,
+    String sort = 'newest',
+    DateTime? snapshotAt,
+    int offset = 0,
+    int pageSize = defaultPageSize,
+  }) {
+    return _productsPage(
+      query: query,
+      category: category,
+      brand: brand,
+      animalType: animalType,
+      unitSize: unitSize,
+      minimumPrice: minimumPrice,
+      maximumPrice: maximumPrice,
+      availability: availability,
+      includeInactive: includeInactive,
+      sort: _normalizedCatalogSort(sort),
+      snapshotAt: snapshotAt,
+      offset: offset,
+      pageSize: pageSize,
+      requestRemoteSort: true,
+    );
+  }
+
+  Future<CatalogPage> _productsPage({
+    required String query,
+    String? category,
+    String? brand,
+    String? animalType,
+    String? unitSize,
+    double? minimumPrice,
+    double? maximumPrice,
+    required String availability,
+    required bool includeInactive,
+    required String sort,
+    DateTime? snapshotAt,
+    required int offset,
+    required int pageSize,
+    required bool requestRemoteSort,
   }) async {
     final safeOffset = offset < 0 ? 0 : offset;
     final safePageSize = pageSize.clamp(1, 100).toInt();
+    final normalizedSort = _normalizedCatalogSort(sort);
     final remote = _pagedRemote;
     if (remote != null) {
       try {
-        final page = await remote.productsPage(
-          query: query.trim(),
-          category: _nonEmptyOrNull(category),
-          brand: _nonEmptyOrNull(brand),
-          animalType: _nonEmptyOrNull(animalType),
-          unitSize: _nonEmptyOrNull(unitSize),
-          minimumPrice: minimumPrice,
-          maximumPrice: maximumPrice,
-          availability: _normalizedAvailability(availability),
-          includeInactive: includeInactive,
-          snapshotAt: snapshotAt?.toUtc(),
-          offset: safeOffset,
-          limit: safePageSize,
-        );
+        final CatalogRemotePage page;
+        if (requestRemoteSort && remote is CatalogSortedPagedRemoteGateway) {
+          final sortedRemote = remote as CatalogSortedPagedRemoteGateway;
+          page = await sortedRemote.productsPageSorted(
+            query: query.trim(),
+            category: _nonEmptyOrNull(category),
+            brand: _nonEmptyOrNull(brand),
+            animalType: _nonEmptyOrNull(animalType),
+            unitSize: _nonEmptyOrNull(unitSize),
+            minimumPrice: minimumPrice,
+            maximumPrice: maximumPrice,
+            availability: _normalizedAvailability(availability),
+            includeInactive: includeInactive,
+            sort: normalizedSort,
+            snapshotAt: snapshotAt?.toUtc(),
+            offset: safeOffset,
+            limit: safePageSize,
+          );
+        } else if (requestRemoteSort) {
+          throw StateError(
+            'The configured catalog gateway does not support sorting.',
+          );
+        } else {
+          page = await remote.productsPage(
+            query: query.trim(),
+            category: _nonEmptyOrNull(category),
+            brand: _nonEmptyOrNull(brand),
+            animalType: _nonEmptyOrNull(animalType),
+            unitSize: _nonEmptyOrNull(unitSize),
+            minimumPrice: minimumPrice,
+            maximumPrice: maximumPrice,
+            availability: _normalizedAvailability(availability),
+            includeInactive: includeInactive,
+            snapshotAt: snapshotAt?.toUtc(),
+            offset: safeOffset,
+            limit: safePageSize,
+          );
+        }
         final products =
             page.rows.map(Product.fromSupabase).toList(growable: false);
         if (!includeInactive &&
@@ -405,6 +668,7 @@ class CatalogRepository {
           maximumPrice: maximumPrice,
           availability: availability,
           includeInactive: includeInactive,
+          sort: normalizedSort,
           snapshotAt: snapshotAt,
           offset: safeOffset,
           pageSize: safePageSize,
@@ -426,6 +690,7 @@ class CatalogRepository {
       maximumPrice: maximumPrice,
       availability: availability,
       includeInactive: includeInactive,
+      sort: normalizedSort,
       snapshotAt: snapshotAt,
       offset: safeOffset,
       pageSize: safePageSize,
@@ -1002,6 +1267,7 @@ class CatalogRepository {
     double? maximumPrice,
     required String availability,
     required bool includeInactive,
+    required String sort,
     DateTime? snapshotAt,
     required int offset,
     required int pageSize,
@@ -1022,9 +1288,13 @@ class CatalogRepository {
       availability: availability,
       includeInactive: includeInactive,
     );
-    final candidates = offset >= filtered.length
+    final sorted = _sortProductsForCatalog(
+      filtered,
+      sort: sort,
+    );
+    final candidates = offset >= sorted.length
         ? const <Product>[]
-        : filtered.skip(offset).take(pageSize + 1).toList(growable: false);
+        : sorted.skip(offset).take(pageSize + 1).toList(growable: false);
     final hasMore = candidates.length > pageSize;
     final page = candidates.take(pageSize).toList(growable: false);
     return CatalogPage(

@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/responsive_field_group.dart';
 import '../../data/models/product.dart';
 import '../../data/models/product_category.dart';
@@ -31,8 +32,19 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
 
   final search = TextEditingController();
   String? category;
+  String? brand;
+  String? animalType;
+  String? unitSize;
+  double? minimumPrice;
+  double? maximumPrice;
+  String availability = 'all';
   List<Product> products = const [];
   List<String> categories = const [];
+  List<String> brands = const [];
+  List<String> animalTypes = const [];
+  List<String> unitSizes = const [];
+  _AdminProductViewMode viewMode = _AdminProductViewMode.detailed;
+  _AdminProductSort sort = _AdminProductSort.newest;
   bool initialLoading = true;
   bool loadingMore = false;
   bool hasMore = false;
@@ -110,34 +122,45 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(18),
           children: [
+            TextField(
+              key: const ValueKey('admin-products-search'),
+              controller: search,
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                labelText: 'بحث باسم المنتج أو الشركة',
+              ),
+              onSubmitted: (_) => unawaited(_reloadProducts()),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 42,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  ChoiceChip(
+                    key: const ValueKey('admin-products-category-all'),
+                    label: const Text('الكل'),
+                    selected: category == null,
+                    onSelected: (_) => _selectCategory(null),
+                  ),
+                  for (final value in categories) ...[
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      key: ValueKey('admin-products-category-$value'),
+                      label: Text(value),
+                      selected: category == value,
+                      onSelected: (_) => _selectCategory(value),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
             Wrap(
               spacing: 10,
               runSpacing: 10,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                SizedBox(
-                  width: (MediaQuery.sizeOf(context).width - 72)
-                      .clamp(220.0, 360.0),
-                  child: TextField(
-                    controller: search,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      labelText: 'بحث باسم المنتج أو الشركة',
-                    ),
-                    onSubmitted: (_) => unawaited(_reloadProducts()),
-                  ),
-                ),
-                ChoiceChip(
-                  label: const Text('الكل'),
-                  selected: category == null,
-                  onSelected: (_) => _selectCategory(null),
-                ),
-                for (final value in categories.take(8))
-                  ChoiceChip(
-                    label: Text(value),
-                    selected: category == value,
-                    onSelected: (_) => _selectCategory(value),
-                  ),
                 OutlinedButton.icon(
                   key: const ValueKey('create-category-button'),
                   onPressed: _createCategory,
@@ -157,6 +180,29 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            _AdminProductsBrowseToolbar(
+              viewMode: viewMode,
+              sort: sort,
+              activeFilterCount: _activeFilterCount,
+              resultCount: products.length,
+              hasMore: hasMore,
+              onViewModeChanged: (value) {
+                if (value == viewMode) return;
+                setState(() => viewMode = value);
+              },
+              onSortChanged: _selectSort,
+              onOpenFilters: _showProductFilters,
+              onClearFilters:
+                  _activeFilterCount == 0 ? null : _clearProductFilters,
+            ),
+            if (_activeFilterCount > 0) ...[
+              const SizedBox(height: 8),
+              _AdminProductActiveFilters(
+                chips: _activeFilterChips(),
+                onClearAll: _clearProductFilters,
+              ),
+            ],
             if (pageSource == CatalogPageSource.offlineSnapshot) ...[
               const SizedBox(height: 12),
               Card(
@@ -182,53 +228,242 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                     unawaited(_reloadProducts(refreshMetadata: true)),
               )
             else if (products.isEmpty)
-              const Card(
+              Card(
+                key: const ValueKey('admin-products-empty-state'),
                 child: ListTile(
-                  leading: Icon(Icons.inventory_2_outlined),
-                  title: Text('لا توجد منتجات بهذا البحث'),
+                  leading: const Icon(Icons.inventory_2_outlined),
+                  title: const Text('لا توجد منتجات بهذه الخيارات'),
+                  subtitle: _activeFilterCount == 0
+                      ? const Text('غيّر البحث أو حدّث قاعدة البيانات.')
+                      : const Text('جرّب إزالة بعض الفلاتر لعرض نتائج أكثر.'),
+                  trailing: _activeFilterCount == 0
+                      ? null
+                      : TextButton(
+                          key: const ValueKey(
+                            'admin-products-empty-clear-filters',
+                          ),
+                          onPressed: _clearProductFilters,
+                          child: const Text('مسح'),
+                        ),
                 ),
               )
-            else ...[
-              for (final product in products)
-                Card(
-                  key: ValueKey('admin-product-card-${product.id}'),
-                  child: _AdminProductCard(
-                    product: product,
-                    onSelected: (value) async {
-                      if (value == 'edit') {
-                        _showProductForm(product);
-                      } else if (value == 'archive') {
-                        await _archiveProduct(product);
-                      } else if (value == 'restore') {
-                        await _restoreProduct(product);
-                      }
-                    },
+            else
+              _buildProductCollection(context),
+            if (!initialLoading && loadError == null && hasMore)
+              Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 20),
+                child: FilledButton.tonalIcon(
+                  key: const ValueKey('admin-products-load-more'),
+                  onPressed: loadingMore ? null : _loadMoreProducts,
+                  icon: loadingMore
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.expand_more),
+                  label: Text(
+                    loadingMore
+                        ? 'جارٍ تحميل منتجات إضافية...'
+                        : 'تحميل المزيد بنفس الفلاتر والترتيب',
                   ),
                 ),
-              if (hasMore)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4, bottom: 20),
-                  child: FilledButton.tonalIcon(
-                    key: const ValueKey('admin-products-load-more'),
-                    onPressed: loadingMore ? null : _loadMoreProducts,
-                    icon: loadingMore
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.expand_more),
-                    label: Text(
-                      loadingMore
-                          ? 'جارٍ تحميل منتجات إضافية...'
-                          : 'تحميل المزيد',
-                    ),
-                  ),
-                ),
-            ],
+              ),
           ],
         ),
       ),
     );
+  }
+
+  int get _activeFilterCount => [
+        category,
+        brand,
+        animalType,
+        unitSize,
+        minimumPrice,
+        maximumPrice,
+        availability == 'all' ? null : availability,
+      ].where((value) => value != null).length;
+
+  List<_AdminProductFilterChipData> _activeFilterChips() {
+    return [
+      if (category != null)
+        _AdminProductFilterChipData(
+          label: 'التصنيف: $category',
+          onDeleted: () => _removeProductFilter(() => category = null),
+        ),
+      if (brand != null)
+        _AdminProductFilterChipData(
+          label: 'الشركة: $brand',
+          onDeleted: () => _removeProductFilter(() => brand = null),
+        ),
+      if (animalType != null)
+        _AdminProductFilterChipData(
+          label: 'النوع: $animalType',
+          onDeleted: () => _removeProductFilter(() => animalType = null),
+        ),
+      if (unitSize != null)
+        _AdminProductFilterChipData(
+          label: 'العبوة: $unitSize',
+          onDeleted: () => _removeProductFilter(() => unitSize = null),
+        ),
+      if (availability != 'all')
+        _AdminProductFilterChipData(
+          label: 'المخزون: ${_availabilityLabel(availability)}',
+          onDeleted: () => _removeProductFilter(() => availability = 'all'),
+        ),
+      if (minimumPrice != null)
+        _AdminProductFilterChipData(
+          label: 'السعر من ${lyd(minimumPrice!)}',
+          onDeleted: () => _removeProductFilter(() => minimumPrice = null),
+        ),
+      if (maximumPrice != null)
+        _AdminProductFilterChipData(
+          label: 'السعر إلى ${lyd(maximumPrice!)}',
+          onDeleted: () => _removeProductFilter(() => maximumPrice = null),
+        ),
+    ];
+  }
+
+  void _removeProductFilter(VoidCallback change) {
+    setState(change);
+    unawaited(_reloadProducts());
+  }
+
+  void _clearProductFilters() {
+    if (_activeFilterCount == 0) return;
+    setState(() {
+      category = null;
+      brand = null;
+      animalType = null;
+      unitSize = null;
+      minimumPrice = null;
+      maximumPrice = null;
+      availability = 'all';
+    });
+    unawaited(_reloadProducts());
+  }
+
+  void _selectSort(_AdminProductSort value) {
+    if (sort == value) return;
+    setState(() => sort = value);
+    unawaited(_reloadProducts());
+  }
+
+  Future<void> _showProductFilters() async {
+    final selected = await showModalBottomSheet<_AdminProductFilterSelection>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => _AdminProductFiltersSheet(
+        categories: categories,
+        brands: brands,
+        animalTypes: animalTypes,
+        unitSizes: unitSizes,
+        initial: _AdminProductFilterSelection(
+          category: category,
+          brand: brand,
+          animalType: animalType,
+          unitSize: unitSize,
+          availability: availability,
+          minimumPrice: minimumPrice,
+          maximumPrice: maximumPrice,
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      category = selected.category;
+      brand = selected.brand;
+      animalType = selected.animalType;
+      unitSize = selected.unitSize;
+      availability = selected.availability;
+      minimumPrice = selected.minimumPrice;
+      maximumPrice = selected.maximumPrice;
+    });
+    await _reloadProducts();
+  }
+
+  Widget _buildProductCollection(BuildContext context) {
+    Future<void> onSelected(Product product, String value) =>
+        _handleProductAction(product, value);
+    return switch (viewMode) {
+      _AdminProductViewMode.detailed => Column(
+          key: const ValueKey('admin-products-results'),
+          children: [
+            for (final product in products)
+              Card(
+                key: ValueKey('admin-product-card-${product.id}'),
+                child: _AdminProductCard(
+                  product: product,
+                  onSelected: (value) => onSelected(product, value),
+                ),
+              ),
+          ],
+        ),
+      _AdminProductViewMode.compact => Column(
+          key: const ValueKey('admin-products-results'),
+          children: [
+            for (final product in products)
+              Card(
+                key: ValueKey('admin-product-card-${product.id}'),
+                child: _AdminProductCompactRow(
+                  key: ValueKey('admin-product-compact-${product.id}'),
+                  product: product,
+                  onTap: () => _showProductForm(product),
+                  onSelected: (value) => onSelected(product, value),
+                ),
+              ),
+          ],
+        ),
+      _AdminProductViewMode.grid => LayoutBuilder(
+          key: const ValueKey('admin-products-results'),
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            final columns = width >= 1180
+                ? 4
+                : width >= 850
+                    ? 3
+                    : 2;
+            final childAspectRatio = width < 520 ? .82 : 1.32;
+            return GridView.builder(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: products.length,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                childAspectRatio: childAspectRatio,
+              ),
+              itemBuilder: (context, index) {
+                final product = products[index];
+                return Card(
+                  key: ValueKey('admin-product-card-${product.id}'),
+                  margin: EdgeInsets.zero,
+                  clipBehavior: Clip.antiAlias,
+                  child: _AdminProductGridTile(
+                    key: ValueKey('admin-product-grid-${product.id}'),
+                    product: product,
+                    onTap: () => _showProductForm(product),
+                    onSelected: (value) => onSelected(product, value),
+                  ),
+                );
+              },
+            );
+          },
+        ),
+    };
+  }
+
+  Future<void> _handleProductAction(Product product, String value) async {
+    if (value == 'edit') {
+      await _showProductForm(product);
+    } else if (value == 'archive') {
+      await _archiveProduct(product);
+    } else if (value == 'restore') {
+      await _restoreProduct(product);
+    }
   }
 
   void _selectCategory(String? value) {
@@ -239,17 +474,48 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
 
   Future<CatalogPage> _loadProductsPage({
     required String? categoryFilter,
+    required String? brandFilter,
+    required String? animalTypeFilter,
+    required String? unitSizeFilter,
+    required double? minimumPriceFilter,
+    required double? maximumPriceFilter,
+    required String availabilityFilter,
+    required _AdminProductSort sortOrder,
     DateTime? pageSnapshot,
     int offset = 0,
   }) {
-    return ref.read(catalogRepositoryProvider).productsPage(
-          query: search.text,
-          category: categoryFilter,
-          includeInactive: true,
-          snapshotAt: pageSnapshot,
-          offset: offset,
-          pageSize: _pageSize,
-        );
+    final repository = ref.read(catalogRepositoryProvider);
+    if (sortOrder == _AdminProductSort.newest) {
+      return repository.productsPage(
+        query: search.text,
+        category: categoryFilter,
+        brand: brandFilter,
+        animalType: animalTypeFilter,
+        unitSize: unitSizeFilter,
+        minimumPrice: minimumPriceFilter,
+        maximumPrice: maximumPriceFilter,
+        availability: availabilityFilter,
+        includeInactive: true,
+        snapshotAt: pageSnapshot,
+        offset: offset,
+        pageSize: _pageSize,
+      );
+    }
+    return repository.productsPageSorted(
+      query: search.text,
+      category: categoryFilter,
+      brand: brandFilter,
+      animalType: animalTypeFilter,
+      unitSize: unitSizeFilter,
+      minimumPrice: minimumPriceFilter,
+      maximumPrice: maximumPriceFilter,
+      availability: availabilityFilter,
+      includeInactive: true,
+      sort: sortOrder.queryValue,
+      snapshotAt: pageSnapshot,
+      offset: offset,
+      pageSize: _pageSize,
+    );
   }
 
   Future<void> _reloadProducts({bool refreshMetadata = false}) async {
@@ -272,18 +538,42 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
           shouldLoadMetadata ? await _loadAdminFilterOptionsSafely() : null;
       if (!mounted || revision != loadRevision) return;
       var resolvedCategory = category;
-      if (refreshMetadata &&
-          options != null &&
-          resolvedCategory != null &&
-          !options.categories.contains(resolvedCategory)) {
-        resolvedCategory = null;
+      var resolvedBrand = brand;
+      var resolvedAnimalType = animalType;
+      var resolvedUnitSize = unitSize;
+      if (refreshMetadata && options != null) {
+        if (resolvedCategory != null &&
+            !options.categories.contains(resolvedCategory)) {
+          resolvedCategory = null;
+        }
+        if (resolvedBrand != null && !options.brands.contains(resolvedBrand)) {
+          resolvedBrand = null;
+        }
+        if (resolvedAnimalType != null &&
+            !options.animalTypes.contains(resolvedAnimalType)) {
+          resolvedAnimalType = null;
+        }
+        if (resolvedUnitSize != null &&
+            !options.unitSizes.contains(resolvedUnitSize)) {
+          resolvedUnitSize = null;
+        }
       }
       final page = await _loadProductsPage(
         categoryFilter: resolvedCategory,
+        brandFilter: resolvedBrand,
+        animalTypeFilter: resolvedAnimalType,
+        unitSizeFilter: resolvedUnitSize,
+        minimumPriceFilter: minimumPrice,
+        maximumPriceFilter: maximumPrice,
+        availabilityFilter: availability,
+        sortOrder: sort,
       );
       if (!mounted || revision != loadRevision) return;
       setState(() {
         category = resolvedCategory;
+        brand = resolvedBrand;
+        animalType = resolvedAnimalType;
+        unitSize = resolvedUnitSize;
         products = page.products
             .where(
               (product) =>
@@ -300,6 +590,9 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
             options.categories,
             category,
           );
+          brands = options.brands;
+          animalTypes = options.animalTypes;
+          unitSizes = options.unitSizes;
           metadataLoaded = true;
         }
         initialLoading = false;
@@ -331,6 +624,13 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     try {
       final page = await _loadProductsPage(
         categoryFilter: category,
+        brandFilter: brand,
+        animalTypeFilter: animalType,
+        unitSizeFilter: unitSize,
+        minimumPriceFilter: minimumPrice,
+        maximumPriceFilter: maximumPrice,
+        availabilityFilter: availability,
+        sortOrder: sort,
         pageSnapshot: pageSnapshot,
         offset: nextOffset,
       );
@@ -1306,6 +1606,655 @@ int? _parseLocalizedInt(String value) {
   return int.tryParse(normalized);
 }
 
+enum _AdminProductViewMode {
+  detailed,
+  compact,
+  grid,
+}
+
+enum _AdminProductSort {
+  newest('newest', 'الأحدث أولاً', Icons.schedule),
+  oldest('oldest', 'الأقدم أولاً', Icons.history),
+  nameAscending('name_asc', 'الاسم: أ–ي', Icons.sort_by_alpha),
+  priceAscending('price_asc', 'السعر: الأقل أولاً', Icons.south),
+  priceDescending('price_desc', 'السعر: الأعلى أولاً', Icons.north),
+  stockAscending(
+      'stock_asc', 'المخزون: الأقل أولاً', Icons.inventory_2_outlined),
+  stockDescending(
+    'stock_desc',
+    'المخزون: الأعلى أولاً',
+    Icons.inventory_2,
+  );
+
+  const _AdminProductSort(this.queryValue, this.label, this.icon);
+
+  final String queryValue;
+  final String label;
+  final IconData icon;
+}
+
+String _availabilityLabel(String value) => switch (value) {
+      'in_stock' => 'متاح للطلب',
+      'low_stock' => 'منخفض',
+      'out_of_stock' => 'غير متاح',
+      _ => 'الكل',
+    };
+
+class _AdminProductFilterSelection {
+  const _AdminProductFilterSelection({
+    this.category,
+    this.brand,
+    this.animalType,
+    this.unitSize,
+    this.availability = 'all',
+    this.minimumPrice,
+    this.maximumPrice,
+  });
+
+  final String? category;
+  final String? brand;
+  final String? animalType;
+  final String? unitSize;
+  final String availability;
+  final double? minimumPrice;
+  final double? maximumPrice;
+}
+
+class _AdminProductFilterChipData {
+  const _AdminProductFilterChipData({
+    required this.label,
+    required this.onDeleted,
+  });
+
+  final String label;
+  final VoidCallback onDeleted;
+}
+
+class _AdminProductsBrowseToolbar extends StatelessWidget {
+  const _AdminProductsBrowseToolbar({
+    required this.viewMode,
+    required this.sort,
+    required this.activeFilterCount,
+    required this.resultCount,
+    required this.hasMore,
+    required this.onViewModeChanged,
+    required this.onSortChanged,
+    required this.onOpenFilters,
+    required this.onClearFilters,
+  });
+
+  final _AdminProductViewMode viewMode;
+  final _AdminProductSort sort;
+  final int activeFilterCount;
+  final int resultCount;
+  final bool hasMore;
+  final ValueChanged<_AdminProductViewMode> onViewModeChanged;
+  final ValueChanged<_AdminProductSort> onSortChanged;
+  final VoidCallback onOpenFilters;
+  final VoidCallback? onClearFilters;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Wrap(
+          key: const ValueKey('admin-products-view-selector'),
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            OutlinedButton.icon(
+              key: const ValueKey('admin-products-filter-button'),
+              onPressed: onOpenFilters,
+              icon: Badge(
+                isLabelVisible: activeFilterCount > 0,
+                label: Text('$activeFilterCount'),
+                child: const Icon(Icons.tune),
+              ),
+              label: const Text('فلترة'),
+            ),
+            PopupMenuButton<_AdminProductSort>(
+              key: const ValueKey('admin-products-sort-button'),
+              tooltip: 'ترتيب المنتجات',
+              onSelected: onSortChanged,
+              itemBuilder: (context) => [
+                for (final option in _AdminProductSort.values)
+                  PopupMenuItem(
+                    key: ValueKey(
+                      'admin-products-sort-${option.queryValue}',
+                    ),
+                    value: option,
+                    child: Row(
+                      children: [
+                        Icon(option.icon, size: 19),
+                        const SizedBox(width: 9),
+                        Expanded(child: Text(option.label)),
+                        if (option == sort)
+                          Icon(
+                            Icons.check,
+                            color: colorScheme.primary,
+                            size: 19,
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+              child: _AdminToolbarPill(
+                icon: sort.icon,
+                label: sort.label,
+              ),
+            ),
+            _AdminProductViewSelector(
+              viewMode: viewMode,
+              onChanged: onViewModeChanged,
+            ),
+            Text(
+              hasMore ? '$resultCount محمّل + المزيد' : '$resultCount منتج',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            if (onClearFilters != null)
+              TextButton.icon(
+                key: const ValueKey('clear-admin-product-filters'),
+                onPressed: onClearFilters,
+                icon: const Icon(Icons.filter_alt_off_outlined, size: 18),
+                label: const Text('مسح الفلاتر'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminToolbarPill extends StatelessWidget {
+  const _AdminToolbarPill({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outline),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Padding(
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 10, 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18),
+            const SizedBox(width: 7),
+            Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.arrow_drop_down, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminProductViewSelector extends StatelessWidget {
+  const _AdminProductViewSelector({
+    required this.viewMode,
+    required this.onChanged,
+  });
+
+  final _AdminProductViewMode viewMode;
+  final ValueChanged<_AdminProductViewMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest
+            .withValues(alpha: .6),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _AdminProductViewButton(
+            key: const ValueKey('admin-products-view-detailed'),
+            icon: Icons.view_agenda_outlined,
+            tooltip: 'عرض تفصيلي',
+            selected: viewMode == _AdminProductViewMode.detailed,
+            onPressed: () => onChanged(_AdminProductViewMode.detailed),
+          ),
+          _AdminProductViewButton(
+            key: const ValueKey('admin-products-view-compact'),
+            icon: Icons.view_list_outlined,
+            tooltip: 'عرض مختصر',
+            selected: viewMode == _AdminProductViewMode.compact,
+            onPressed: () => onChanged(_AdminProductViewMode.compact),
+          ),
+          _AdminProductViewButton(
+            key: const ValueKey('admin-products-view-grid'),
+            icon: Icons.grid_view_outlined,
+            tooltip: 'عرض شبكي',
+            selected: viewMode == _AdminProductViewMode.grid,
+            onPressed: () => onChanged(_AdminProductViewMode.grid),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminProductViewButton extends StatelessWidget {
+  const _AdminProductViewButton({
+    required this.icon,
+    required this.tooltip,
+    required this.selected,
+    required this.onPressed,
+    super.key,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      isSelected: selected,
+      selectedIcon: Icon(icon),
+      icon: Icon(icon),
+      style: selected
+          ? IconButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              foregroundColor: Theme.of(context).colorScheme.onPrimary,
+            )
+          : null,
+    );
+  }
+}
+
+class _AdminProductActiveFilters extends StatelessWidget {
+  const _AdminProductActiveFilters({
+    required this.chips,
+    required this.onClearAll,
+  });
+
+  final List<_AdminProductFilterChipData> chips;
+  final VoidCallback onClearAll;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      key: const ValueKey('admin-products-active-filters'),
+      spacing: 7,
+      runSpacing: 7,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final chip in chips)
+          InputChip(
+            label: Text(chip.label),
+            onDeleted: chip.onDeleted,
+            deleteIcon: const Icon(Icons.close, size: 17),
+          ),
+        TextButton(
+          onPressed: onClearAll,
+          child: const Text('مسح الكل'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdminProductFiltersSheet extends StatefulWidget {
+  const _AdminProductFiltersSheet({
+    required this.categories,
+    required this.brands,
+    required this.animalTypes,
+    required this.unitSizes,
+    required this.initial,
+  });
+
+  final List<String> categories;
+  final List<String> brands;
+  final List<String> animalTypes;
+  final List<String> unitSizes;
+  final _AdminProductFilterSelection initial;
+
+  @override
+  State<_AdminProductFiltersSheet> createState() =>
+      _AdminProductFiltersSheetState();
+}
+
+class _AdminProductFiltersSheetState extends State<_AdminProductFiltersSheet> {
+  late String? category = widget.initial.category;
+  late String? brand = widget.initial.brand;
+  late String? animalType = widget.initial.animalType;
+  late String? unitSize = widget.initial.unitSize;
+  late String availability = widget.initial.availability;
+  late final TextEditingController minimumPrice = TextEditingController(
+    text: widget.initial.minimumPrice?.toStringAsFixed(2) ?? '',
+  );
+  late final TextEditingController maximumPrice = TextEditingController(
+    text: widget.initial.maximumPrice?.toStringAsFixed(2) ?? '',
+  );
+  String? validationMessage;
+
+  @override
+  void dispose() {
+    minimumPrice.dispose();
+    maximumPrice.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: keyboardInset),
+      child: SizedBox(
+        key: const ValueKey('admin-products-filter-sheet'),
+        height: MediaQuery.sizeOf(context).height * .88,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(18, 14, 10, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.tune),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      'فلترة المنتجات',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w900,
+                          ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'إغلاق',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.all(18),
+                children: [
+                  _AdminFilterDropdown(
+                    key: const ValueKey('admin-products-filter-category'),
+                    label: 'التصنيف',
+                    allLabel: 'كل التصنيفات',
+                    value: category,
+                    values: _withSelectedFilterValue(
+                      widget.categories,
+                      category,
+                    ),
+                    onChanged: (value) => setState(() => category = value),
+                  ),
+                  const SizedBox(height: 10),
+                  _AdminFilterDropdown(
+                    key: const ValueKey('admin-products-filter-brand'),
+                    label: 'الشركة / العلامة',
+                    allLabel: 'كل الشركات',
+                    value: brand,
+                    values: _withSelectedFilterValue(widget.brands, brand),
+                    onChanged: (value) => setState(() => brand = value),
+                  ),
+                  const SizedBox(height: 10),
+                  _AdminFilterDropdown(
+                    key: const ValueKey('admin-products-filter-animal-type'),
+                    label: 'نوع الحيوان',
+                    allLabel: 'كل الأنواع',
+                    value: animalType,
+                    values: _withSelectedFilterValue(
+                      widget.animalTypes,
+                      animalType,
+                    ),
+                    onChanged: (value) => setState(() => animalType = value),
+                  ),
+                  const SizedBox(height: 10),
+                  _AdminFilterDropdown(
+                    key: const ValueKey('admin-products-filter-unit-size'),
+                    label: 'الحجم / العبوة',
+                    allLabel: 'كل الأحجام',
+                    value: unitSize,
+                    values: _withSelectedFilterValue(
+                      widget.unitSizes,
+                      unitSize,
+                    ),
+                    onChanged: (value) => setState(() => unitSize = value),
+                  ),
+                  const SizedBox(height: 10),
+                  KeyedSubtree(
+                    key: const ValueKey(
+                      'admin-products-filter-availability',
+                    ),
+                    child: DropdownButtonFormField<String>(
+                      key: ValueKey(
+                        'admin-products-filter-availability-$availability',
+                      ),
+                      initialValue: availability,
+                      isExpanded: true,
+                      decoration:
+                          const InputDecoration(labelText: 'حالة المخزون'),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'all',
+                          child: Text('كل حالات المخزون'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'in_stock',
+                          child: Text('متاح للطلب'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'low_stock',
+                          child: Text('مخزون منخفض'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'out_of_stock',
+                          child: Text('غير متاح للطلب'),
+                        ),
+                      ],
+                      onChanged: (value) => setState(
+                        () => availability = value ?? 'all',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  ResponsiveFieldGroup(
+                    children: [
+                      TextField(
+                        key: const ValueKey(
+                          'admin-products-filter-minimum-price',
+                        ),
+                        controller: minimumPrice,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration:
+                            const InputDecoration(labelText: 'أقل سعر جملة'),
+                      ),
+                      TextField(
+                        key: const ValueKey(
+                          'admin-products-filter-maximum-price',
+                        ),
+                        controller: maximumPrice,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration:
+                            const InputDecoration(labelText: 'أعلى سعر جملة'),
+                      ),
+                    ],
+                  ),
+                  if (validationMessage != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      validationMessage!,
+                      key: const ValueKey(
+                        'admin-products-filter-validation',
+                      ),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextButton.icon(
+                      key: const ValueKey(
+                        'admin-products-reset-filter-draft',
+                      ),
+                      onPressed: _reset,
+                      icon: const Icon(Icons.restart_alt),
+                      label: const Text('إعادة ضبط'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton.icon(
+                      key: const ValueKey('admin-products-apply-filters'),
+                      onPressed: _apply,
+                      icon: const Icon(Icons.check),
+                      label: const Text('تطبيق الفلاتر'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _reset() {
+    setState(() {
+      category = null;
+      brand = null;
+      animalType = null;
+      unitSize = null;
+      availability = 'all';
+      minimumPrice.clear();
+      maximumPrice.clear();
+      validationMessage = null;
+    });
+  }
+
+  void _apply() {
+    final minimumText = minimumPrice.text.trim();
+    final maximumText = maximumPrice.text.trim();
+    final parsedMinimum =
+        minimumText.isEmpty ? null : _parseLocalizedDouble(minimumText);
+    final parsedMaximum =
+        maximumText.isEmpty ? null : _parseLocalizedDouble(maximumText);
+    if ((minimumText.isNotEmpty &&
+            (parsedMinimum == null ||
+                !parsedMinimum.isFinite ||
+                parsedMinimum < 0)) ||
+        (maximumText.isNotEmpty &&
+            (parsedMaximum == null ||
+                !parsedMaximum.isFinite ||
+                parsedMaximum < 0))) {
+      setState(() {
+        validationMessage = 'أدخل نطاق سعر صحيحاً لا يقل عن صفر.';
+      });
+      return;
+    }
+    if (parsedMinimum != null &&
+        parsedMaximum != null &&
+        parsedMinimum > parsedMaximum) {
+      setState(() {
+        validationMessage = 'أقل سعر يجب ألا يكون أكبر من أعلى سعر.';
+      });
+      return;
+    }
+    Navigator.pop(
+      context,
+      _AdminProductFilterSelection(
+        category: category,
+        brand: brand,
+        animalType: animalType,
+        unitSize: unitSize,
+        availability: availability,
+        minimumPrice: parsedMinimum,
+        maximumPrice: parsedMaximum,
+      ),
+    );
+  }
+}
+
+class _AdminFilterDropdown extends StatelessWidget {
+  const _AdminFilterDropdown({
+    required this.label,
+    required this.allLabel,
+    required this.value,
+    required this.values,
+    required this.onChanged,
+    super.key,
+  });
+
+  final String label;
+  final String allLabel;
+  final String? value;
+  final List<String> values;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String?>(
+      key: ValueKey('$label-${value ?? 'all'}'),
+      initialValue: value,
+      isExpanded: true,
+      decoration: InputDecoration(labelText: label),
+      items: [
+        DropdownMenuItem(value: null, child: Text(allLabel)),
+        for (final option in values)
+          DropdownMenuItem(value: option, child: Text(option)),
+      ],
+      onChanged: onChanged,
+    );
+  }
+}
+
+List<String> _withSelectedFilterValue(
+  Iterable<String> values,
+  String? selected,
+) {
+  return <String>{
+    if (selected?.trim().isNotEmpty == true) selected!.trim(),
+    for (final value in values)
+      if (value.trim().isNotEmpty) value.trim(),
+  }.toList()
+    ..sort();
+}
+
 class _AdminProductCard extends StatelessWidget {
   const _AdminProductCard({
     required this.product,
@@ -1402,32 +2351,9 @@ class _AdminProductCard extends StatelessWidget {
                   ],
                 ),
               ),
-              PopupMenuButton<String>(
-                key: ValueKey('admin-product-menu-${product.id}'),
-                tooltip: 'خيارات المنتج',
-                padding: EdgeInsets.zero,
-                iconSize: 22,
-                constraints: const BoxConstraints.tightFor(
-                  width: 40,
-                  height: 40,
-                ),
-                onSelected: (value) => unawaited(onSelected(value)),
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: 'edit',
-                    child: Text('تعديل'),
-                  ),
-                  if (product.isArchived)
-                    const PopupMenuItem(
-                      value: 'restore',
-                      child: Text('استعادة ونشر المنتج'),
-                    )
-                  else
-                    const PopupMenuItem(
-                      value: 'archive',
-                      child: Text('أرشفة المنتج'),
-                    ),
-                ],
+              _AdminProductMenu(
+                product: product,
+                onSelected: onSelected,
               ),
             ],
           ),
@@ -1554,6 +2480,289 @@ class _AdminProductCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _AdminProductCompactRow extends StatelessWidget {
+  const _AdminProductCompactRow({
+    required this.product,
+    required this.onTap,
+    required this.onSelected,
+    super.key,
+  });
+
+  final Product product;
+  final VoidCallback onTap;
+  final Future<void> Function(String value) onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final stateColor = _adminProductStateColor(product);
+    return Semantics(
+      button: true,
+      label: 'فتح تعديل ${product.name}',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(10, 8, 4, 8),
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: stateColor.withValues(alpha: .12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.inventory_2_outlined,
+                  color: stateColor,
+                  size: 19,
+                ),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        height: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        if (product.brand.trim().isNotEmpty) product.brand,
+                        if (product.category.trim().isNotEmpty)
+                          product.category,
+                      ].join(' • '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey.shade600,
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 2,
+                      children: [
+                        Text(
+                          lyd(product.price),
+                          style: const TextStyle(
+                            color: AppTheme.darkGreen,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          product.stockTrackingEnabled
+                              ? 'المتاح ${product.orderableStockQuantity}'
+                              : 'المخزون غير متتبع',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                        Text(
+                          _adminProductStateLabel(product),
+                          style: TextStyle(
+                            color: stateColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              _AdminProductMenu(
+                product: product,
+                onSelected: onSelected,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminProductGridTile extends StatelessWidget {
+  const _AdminProductGridTile({
+    required this.product,
+    required this.onTap,
+    required this.onSelected,
+    super.key,
+  });
+
+  final Product product;
+  final VoidCallback onTap;
+  final Future<void> Function(String value) onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final stateColor = _adminProductStateColor(product);
+    final textTheme = Theme.of(context).textTheme;
+    return Semantics(
+      button: true,
+      label: 'فتح تعديل ${product.name}',
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(9),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ProductImagePlaceholder(
+                    productId: product.id,
+                    category: product.category,
+                    imageUrl: product.imageUrl,
+                    semanticLabel: 'صورة ${product.name}',
+                    size: 52,
+                  ),
+                  const Spacer(),
+                  _AdminProductMenu(
+                    product: product,
+                    onSelected: onSelected,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 7),
+              Text(
+                product.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  height: 1.2,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                product.brand.trim().isEmpty
+                    ? product.category
+                    : '${product.brand} • ${product.category}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.shade600,
+                  fontSize: 10.5,
+                ),
+              ),
+              const Spacer(),
+              Row(
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: stateColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      _adminProductStateLabel(product),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: stateColor,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    product.stockTrackingEnabled
+                        ? 'متاح ${product.orderableStockQuantity}'
+                        : 'غير متتبع',
+                    style: const TextStyle(fontSize: 10.5),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 5),
+              Text(
+                lyd(product.price),
+                style: textTheme.bodyMedium?.copyWith(
+                  color: AppTheme.darkGreen,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminProductMenu extends StatelessWidget {
+  const _AdminProductMenu({
+    required this.product,
+    required this.onSelected,
+  });
+
+  final Product product;
+  final Future<void> Function(String value) onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      key: ValueKey('admin-product-menu-${product.id}'),
+      tooltip: 'خيارات المنتج',
+      padding: EdgeInsets.zero,
+      iconSize: 22,
+      constraints: const BoxConstraints.tightFor(
+        width: 40,
+        height: 40,
+      ),
+      onSelected: (value) => unawaited(onSelected(value)),
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          key: ValueKey('admin-product-edit-${product.id}'),
+          value: 'edit',
+          child: const Text('تعديل'),
+        ),
+        if (product.isArchived)
+          PopupMenuItem(
+            key: ValueKey('admin-product-restore-${product.id}'),
+            value: 'restore',
+            child: const Text('استعادة ونشر المنتج'),
+          )
+        else
+          PopupMenuItem(
+            key: ValueKey('admin-product-archive-${product.id}'),
+            value: 'archive',
+            child: const Text('أرشفة المنتج'),
+          ),
+      ],
+    );
+  }
+}
+
+String _adminProductStateLabel(Product product) {
+  if (product.isArchived) return 'مؤرشف';
+  if (!product.active) return 'مخفي';
+  if (!product.stockTrackingEnabled) return 'ظاهر • غير متتبع';
+  if (!product.isOrderable) return 'غير متاح';
+  if (product.lowStock) return 'مخزون منخفض';
+  return 'ظاهر ومتاح';
+}
+
+Color _adminProductStateColor(Product product) {
+  if (product.isArchived || !product.active) return Colors.blueGrey;
+  if (!product.stockTrackingEnabled) return Colors.blueGrey;
+  if (!product.isOrderable) return AppTheme.red;
+  if (product.lowStock) return AppTheme.orange;
+  return AppTheme.green;
 }
 
 class _AdminProductInfoPill extends StatelessWidget {
