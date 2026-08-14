@@ -2,9 +2,12 @@ import 'dart:async';
 
 import 'package:animal_supply_b2b/src/core/notifications/new_order_alert_sound.dart';
 import 'package:animal_supply_b2b/src/core/constants/order_status.dart';
+import 'package:animal_supply_b2b/src/core/utils/formatters.dart';
+import 'package:animal_supply_b2b/src/core/widgets/product_image_placeholder.dart';
 import 'package:animal_supply_b2b/src/data/models/app_notification.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
 import 'package:animal_supply_b2b/src/data/models/order.dart';
+import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:animal_supply_b2b/src/data/repositories/notifications_repository.dart';
 import 'package:animal_supply_b2b/src/data/repositories/orders_repository.dart';
 import 'package:animal_supply_b2b/src/features/admin_orders/admin_orders_screen.dart';
@@ -258,6 +261,256 @@ void main() {
     await _flushImmediateWork(tester);
     expect(orders.pageCalls, callsBeforeRefresh + 1);
   });
+
+  testWidgets(
+    'expanded order shows a wide invoice with snapshot product details',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(646, 838));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final orders = _MutableOrdersRepository([_invoiceOrder()]);
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+
+      final orderTitle = find.text('طلب INV-1001');
+      await tester.ensureVisible(orderTitle);
+      await tester.tap(orderTitle);
+      await tester.pumpAndSettle();
+
+      final invoice = find.byKey(
+        const ValueKey('admin-order-invoice-invoice-order'),
+      );
+      final line = find.byKey(
+        const ValueKey('admin-invoice-line-cat-001-0'),
+      );
+
+      expect(invoice, findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-items-wide-invoice-order'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-items-compact-invoice-order'),
+        ),
+        findsNothing,
+      );
+      expect(find.descendant(of: invoice, matching: find.text('الصنف')),
+          findsOneWidget);
+      expect(find.descendant(of: invoice, matching: find.text('الكمية')),
+          findsOneWidget);
+      expect(
+        find.descendant(of: invoice, matching: find.text('سعر الوحدة')),
+        findsOneWidget,
+      );
+      expect(find.descendant(of: invoice, matching: find.text('الإجمالي')),
+          findsOneWidget);
+      expect(
+        find.descendant(
+          of: line,
+          matching: find.text('اسم المنتج وقت الطلب'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('الاسم الحالي في الكتالوج'), findsNothing);
+      expect(
+        find.descendant(
+          of: line,
+          matching: find.text('كيس 2 كجم'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text('SNAP-SKU')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text('3')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text(lyd(12.5))),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text(lyd(37.5))),
+        findsOneWidget,
+      );
+
+      final imageFinder = find.descendant(
+        of: line,
+        matching: find.byType(ProductImagePlaceholder),
+      );
+      expect(imageFinder, findsOneWidget);
+      final image = tester.widget<ProductImagePlaceholder>(imageFinder);
+      expect(image.productId, 'cat-001');
+      expect(image.semanticLabel, 'صورة اسم المنتج وقت الطلب');
+      final productName = tester.widget<Text>(
+        find.descendant(
+          of: line,
+          matching: find.text('اسم المنتج وقت الطلب'),
+        ),
+      );
+      expect(productName.maxLines, isNull);
+      expect(productName.overflow, isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'expanded order uses the compact invoice layout on mobile',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final orders = _MutableOrdersRepository([_invoiceOrder()]);
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+
+      final orderTitle = find.text('طلب INV-1001');
+      await tester.ensureVisible(orderTitle);
+      await tester.tap(orderTitle);
+      await tester.pumpAndSettle();
+
+      final compact = find.byKey(
+        const ValueKey('admin-order-items-compact-invoice-order'),
+      );
+      final line = find.byKey(
+        const ValueKey('admin-invoice-line-cat-001-0'),
+      );
+
+      expect(compact, findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-items-wide-invoice-order'),
+        ),
+        findsNothing,
+      );
+      expect(Directionality.of(tester.element(compact)), TextDirection.rtl);
+      expect(
+        find.descendant(
+          of: line,
+          matching: find.text('اسم المنتج وقت الطلب'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text('الكمية')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text('سعر الوحدة')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text('الإجمالي')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text('3')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text(lyd(12.5))),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text(lyd(37.5))),
+        findsOneWidget,
+      );
+      expect(tester.getRect(compact).width, lessThanOrEqualTo(390));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'wide invoice handles long details and large values with scaled text',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(646, 838));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final orders = _MutableOrdersRepository([
+        _invoiceOrder(
+          productName:
+              'اسم منتج عربي طويل جداً يجب أن يظهر كاملاً داخل تفاصيل الفاتورة',
+          productSku: 'SNAP-SKU-VERY-LONG-1234567890',
+          quantity: 1000000,
+          unitPrice: 1234567.89,
+          lineTotal: 1234567890000,
+        ),
+      ]);
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+        textScaler: const TextScaler.linear(1.2),
+      );
+      await tester.pumpAndSettle();
+
+      final orderTitle = find.text('طلب INV-1001');
+      await tester.ensureVisible(orderTitle);
+      await tester.tap(orderTitle);
+      await tester.pumpAndSettle();
+
+      final line = find.byKey(
+        const ValueKey('admin-invoice-line-cat-001-0'),
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-items-wide-invoice-order'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: line,
+          matching: find.text(
+            'اسم منتج عربي طويل جداً يجب أن يظهر كاملاً داخل تفاصيل الفاتورة',
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: line,
+          matching: find.text('SNAP-SKU-VERY-LONG-1234567890'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text('1000000')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text(lyd(1234567.89))),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: line, matching: find.text(lyd(1234567890000))),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 Future<void> _pumpOrdersScreen(
@@ -266,6 +519,7 @@ Future<void> _pumpOrdersScreen(
   required _MutableNotificationsRepository notifications,
   required _FakeNewOrderAlertSound sound,
   required Duration autoRefreshInterval,
+  TextScaler textScaler = TextScaler.noScaling,
 }) async {
   final router = GoRouter(
     initialLocation: '/admin/orders',
@@ -298,9 +552,12 @@ Future<void> _pumpOrdersScreen(
       ],
       child: MaterialApp.router(
         routerConfig: router,
-        builder: (context, child) => Directionality(
-          textDirection: TextDirection.rtl,
-          child: child!,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: child!,
+          ),
         ),
       ),
     ),
@@ -404,3 +661,50 @@ Order _order(String id) => Order(
       items: const [],
       createdAt: DateTime.utc(2026, 8, 14, 12),
     );
+
+Order _invoiceOrder({
+  String productName = 'اسم المنتج وقت الطلب',
+  String productSku = 'SNAP-SKU',
+  int quantity = 3,
+  double unitPrice = 12.5,
+  double lineTotal = 37.5,
+}) {
+  const currentProduct = Product(
+    id: 'cat-001',
+    nameAr: 'الاسم الحالي في الكتالوج',
+    sku: 'CURRENT-SKU',
+    category: 'قطط',
+    animalType: 'قطط',
+    brand: 'اختبار',
+    unitSize: '2 كجم',
+    packageSize: 'كيس 2 كجم',
+    basePrice: 18,
+    stockQuantity: 10,
+    minOrderQty: 1,
+  );
+  final orderItem = OrderItem(
+    id: 'invoice-item',
+    productId: 'cat-001',
+    productName: productName,
+    productSku: productSku,
+    unitSize: '2 كجم',
+    packageLabel: 'كيس 2 كجم',
+    quantity: quantity,
+    unitPrice: unitPrice,
+    lineTotal: lineTotal,
+    product: currentProduct,
+  );
+  return Order(
+    id: 'invoice-order',
+    orderNumber: 'INV-1001',
+    customerId: 'customer-test',
+    businessName: 'متجر الاختبار',
+    status: OrderStatus.pending,
+    items: [orderItem],
+    createdAt: DateTime.utc(2026, 8, 14, 12),
+    subtotal: lineTotal,
+    deliveryFee: 2,
+    handlingFee: 4,
+    total: lineTotal + 6,
+  );
+}

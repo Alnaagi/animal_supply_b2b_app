@@ -10,6 +10,7 @@ import '../../core/constants/order_status.dart';
 import '../../core/notifications/new_order_alert_sound.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/status_chip.dart';
 import '../../data/models/order.dart';
 import '../../data/repositories/notifications_repository.dart';
@@ -883,32 +884,7 @@ class _AdminOrderCard extends StatelessWidget {
               title: const Text('عنوان التسليم'),
               subtitle: Text(order.deliveryAddress),
             ),
-          const Divider(height: 1),
-          for (final item in order.items)
-            ListTile(
-              title: Text(item.productName),
-              subtitle: Text(
-                [
-                  if (item.productSku.isNotEmpty) item.productSku,
-                  if (item.packageLabel.isNotEmpty) item.packageLabel,
-                ].join(' • '),
-              ),
-              trailing: Text(
-                '${item.quantity} × ${lyd(item.unitPrice)}\n${lyd(item.lineTotal)}',
-                textAlign: TextAlign.end,
-              ),
-            ),
-          const Divider(height: 1),
-          _AdminTotalRow(label: 'الإجمالي الفرعي', amount: order.subtotal),
-          if (order.deliveryFee > 0)
-            _AdminTotalRow(label: 'التوصيل', amount: order.deliveryFee),
-          if (order.handlingFee > 0)
-            _AdminTotalRow(label: 'المناولة', amount: order.handlingFee),
-          _AdminTotalRow(
-            label: 'الإجمالي المعتمد',
-            amount: order.total,
-            bold: true,
-          ),
+          _AdminOrderInvoice(order: order),
           ListTile(
             title: const Text('ملاحظة العميل'),
             subtitle: Text(
@@ -975,27 +951,491 @@ class _AdminOrderCard extends StatelessWidget {
   }
 }
 
-class _AdminTotalRow extends StatelessWidget {
-  const _AdminTotalRow({
+class _AdminOrderInvoice extends StatelessWidget {
+  const _AdminOrderInvoice({required this.order});
+
+  final Order order;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final itemCountLabel =
+        order.items.length == 1 ? 'صنف واحد' : '${order.items.length} أصناف';
+
+    return Container(
+      key: ValueKey('admin-order-invoice-${order.id}'),
+      margin: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            color: scheme.primary.withValues(alpha: .08),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.receipt_long_outlined,
+                  size: 20,
+                  color: scheme.primary,
+                ),
+                const SizedBox(width: 7),
+                const Expanded(
+                  child: Text(
+                    'تفاصيل الفاتورة',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: scheme.surface,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    itemCountLabel,
+                    style: TextStyle(
+                      color: scheme.primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (order.items.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(14),
+              child: Text(
+                'لا توجد أصناف مسجلة في هذا الطلب.',
+                textAlign: TextAlign.center,
+              ),
+            )
+          else
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final enlargedText =
+                    MediaQuery.textScalerOf(context).scale(1) >= 1.3;
+                return constraints.maxWidth >= 560 && !enlargedText
+                    ? _AdminInvoiceWideTable(
+                        key: ValueKey(
+                          'admin-order-items-wide-${order.id}',
+                        ),
+                        items: order.items,
+                      )
+                    : _AdminInvoiceCompactList(
+                        key: ValueKey(
+                          'admin-order-items-compact-${order.id}',
+                        ),
+                        items: order.items,
+                      );
+              },
+            ),
+          Divider(height: 1, color: scheme.outlineVariant),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                _AdminInvoiceTotalRow(
+                  label: 'الإجمالي الفرعي',
+                  amount: order.subtotal,
+                ),
+                if (order.deliveryFee > 0)
+                  _AdminInvoiceTotalRow(
+                    label: 'التوصيل',
+                    amount: order.deliveryFee,
+                  ),
+                if (order.handlingFee > 0)
+                  _AdminInvoiceTotalRow(
+                    label: 'المناولة',
+                    amount: order.handlingFee,
+                  ),
+                const SizedBox(height: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: .08),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: _AdminInvoiceTotalRow(
+                    label: 'الإجمالي المعتمد',
+                    amount: order.total,
+                    bold: true,
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminInvoiceWideTable extends StatelessWidget {
+  const _AdminInvoiceWideTable({required this.items, super.key});
+
+  final List<OrderLine> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final headerStyle = TextStyle(
+      color: scheme.onSurfaceVariant,
+      fontSize: 11,
+      fontWeight: FontWeight.w800,
+    );
+
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          color: scheme.surfaceContainerHighest.withValues(alpha: .45),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 5,
+                child: Semantics(
+                  header: true,
+                  child: Text('الصنف', style: headerStyle),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    'الكمية',
+                    textAlign: TextAlign.center,
+                    style: headerStyle,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    'سعر الوحدة',
+                    textAlign: TextAlign.center,
+                    style: headerStyle,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    'الإجمالي',
+                    textAlign: TextAlign.center,
+                    style: headerStyle,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (var index = 0; index < items.length; index++)
+          Container(
+            key: ValueKey(
+              'admin-invoice-line-${items[index].productId}-$index',
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            decoration: BoxDecoration(
+              border: index == items.length - 1
+                  ? null
+                  : Border(
+                      bottom: BorderSide(color: scheme.outlineVariant),
+                    ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  flex: 5,
+                  child:
+                      _AdminInvoiceProduct(item: items[index], imageSize: 48),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Semantics(
+                    label: 'الكمية ${items[index].quantity}',
+                    excludeSemantics: true,
+                    child: Text(
+                      '${items[index].quantity}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Semantics(
+                    label: 'سعر الوحدة ${lyd(items[index].unitPrice)}',
+                    excludeSemantics: true,
+                    child: Text(
+                      lyd(items[index].unitPrice),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Semantics(
+                    label: 'إجمالي الصنف ${lyd(items[index].lineTotal)}',
+                    excludeSemantics: true,
+                    child: Text(
+                      lyd(items[index].lineTotal),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _AdminInvoiceCompactList extends StatelessWidget {
+  const _AdminInvoiceCompactList({required this.items, super.key});
+
+  final List<OrderLine> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        for (var index = 0; index < items.length; index++)
+          Container(
+            key: ValueKey(
+              'admin-invoice-line-${items[index].productId}-$index',
+            ),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              border: index == items.length - 1
+                  ? null
+                  : Border(
+                      bottom: BorderSide(color: scheme.outlineVariant),
+                    ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _AdminInvoiceProduct(item: items[index], imageSize: 56),
+                const SizedBox(height: 9),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                  decoration: BoxDecoration(
+                    color:
+                        scheme.surfaceContainerHighest.withValues(alpha: .45),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _AdminInvoiceMetric(
+                          label: 'الكمية',
+                          value: '${items[index].quantity}',
+                        ),
+                      ),
+                      _AdminInvoiceMetricDivider(color: scheme.outlineVariant),
+                      Expanded(
+                        child: _AdminInvoiceMetric(
+                          label: 'سعر الوحدة',
+                          value: lyd(items[index].unitPrice),
+                        ),
+                      ),
+                      _AdminInvoiceMetricDivider(color: scheme.outlineVariant),
+                      Expanded(
+                        child: _AdminInvoiceMetric(
+                          label: 'الإجمالي',
+                          value: lyd(items[index].lineTotal),
+                          bold: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _AdminInvoiceProduct extends StatelessWidget {
+  const _AdminInvoiceProduct({
+    required this.item,
+    required this.imageSize,
+  });
+
+  final OrderLine item;
+  final double imageSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final packageLabel = item.packageLabel.trim();
+    final productSku = item.productSku.trim();
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ProductImagePlaceholder(
+          category: item.product.category,
+          productId: item.productId,
+          imageUrl: item.product.imageUrl,
+          semanticLabel: 'صورة ${item.productName}',
+          size: imageSize,
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                item.productName,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                  height: 1.25,
+                ),
+              ),
+              if (packageLabel.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Text(
+                  packageLabel,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 11,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+              if (productSku.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  productSku,
+                  textDirection: TextDirection.ltr,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 11,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdminInvoiceMetric extends StatelessWidget {
+  const _AdminInvoiceMetric({
+    required this.label,
+    required this.value,
+    this.bold = false,
+  });
+
+  final String label;
+  final String value;
+  final bool bold;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: '$label $value',
+      excludeSemantics: true,
+      child: Column(
+        children: [
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: bold ? FontWeight.w900 : FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminInvoiceMetricDivider extends StatelessWidget {
+  const _AdminInvoiceMetricDivider({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 34,
+      margin: const EdgeInsets.symmetric(horizontal: 3),
+      color: color,
+    );
+  }
+}
+
+class _AdminInvoiceTotalRow extends StatelessWidget {
+  const _AdminInvoiceTotalRow({
     required this.label,
     required this.amount,
     this.bold = false,
+    this.padding = const EdgeInsets.symmetric(vertical: 3),
   });
 
   final String label;
   final double amount;
   final bool bold;
+  final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
-    final style =
-        TextStyle(fontWeight: bold ? FontWeight.w900 : FontWeight.normal);
+    final style = TextStyle(
+      fontWeight: bold ? FontWeight.w900 : FontWeight.w600,
+      fontSize: bold ? 14 : 12,
+    );
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+      padding: padding,
       child: Row(
         children: [
-          Text(label, style: style),
-          const Spacer(),
+          Expanded(child: Text(label, style: style)),
+          const SizedBox(width: 10),
           Text(lyd(amount), style: style),
         ],
       ),
