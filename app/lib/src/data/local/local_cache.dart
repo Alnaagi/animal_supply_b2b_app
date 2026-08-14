@@ -397,6 +397,8 @@ class LocalCache {
         'isFeatured': product.isFeatured,
         'isTopSelling': product.isTopSelling,
         'archivedAt': product.archivedAt?.toIso8601String(),
+        'archivedByCategoryId': product.archivedByCategoryId,
+        'activeBeforeCategoryArchive': product.activeBeforeCategoryArchive,
         'createdAt': product.createdAt?.toIso8601String(),
         'updatedAt': product.updatedAt?.toIso8601String(),
         'packageOptions': product.packageOptions,
@@ -436,6 +438,8 @@ class LocalCache {
       isFeatured: json['isFeatured'] == true,
       isTopSelling: json['isTopSelling'] == true,
       archivedAt: DateTime.tryParse(json['archivedAt']?.toString() ?? ''),
+      archivedByCategoryId: json['archivedByCategoryId']?.toString(),
+      activeBeforeCategoryArchive: json['activeBeforeCategoryArchive'] as bool?,
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
       packageOptions: [

@@ -91,7 +91,12 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
               else
                 for (final customer in customers)
                   Card(
+                    key: ValueKey(
+                      'admin-customer-card-${customer.id}',
+                    ),
+                    clipBehavior: Clip.antiAlias,
                     child: ListTile(
+                      onTap: () => _showCustomerForm(customer),
                       leading: CircleAvatar(
                           backgroundColor:
                               customer.active ? AppTheme.green : AppTheme.red,
@@ -104,6 +109,9 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
                           '${customer.username} • ${customer.city} ${customer.area} • ${customer.priceGroup}\nرصيد: ${lyd(customer.outstandingBalance)} • حد ائتمان: ${lyd(customer.creditLimit)}'),
                       isThreeLine: true,
                       trailing: PopupMenuButton<String>(
+                        key: ValueKey(
+                          'admin-customer-menu-${customer.id}',
+                        ),
                         onSelected: (value) =>
                             _handleCustomerAction(value, customer),
                         itemBuilder: (context) => [

@@ -123,6 +123,11 @@ class _AdminNav extends StatelessWidget {
               icon: Icons.receipt_long_outlined,
               label: 'الطلبات'),
           _NavTile(
+              path: '/admin/archive',
+              current: current,
+              icon: Icons.archive_outlined,
+              label: 'الأرشيف'),
+          _NavTile(
               path: '/admin/settings',
               current: current,
               icon: Icons.settings_outlined,

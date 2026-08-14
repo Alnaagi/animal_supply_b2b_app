@@ -9,6 +9,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/responsive_field_group.dart';
 import '../../data/models/product.dart';
+import '../../data/models/product_category.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
 
@@ -84,6 +85,21 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
       title: 'إدارة المنتجات',
       actions: [
         IconButton(
+          key: const ValueKey('refresh-admin-products-button'),
+          onPressed: initialLoading
+              ? null
+              : () => unawaited(
+                    _reloadProducts(refreshMetadata: true),
+                  ),
+          icon: initialLoading
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.refresh),
+          tooltip: 'تحديث المنتجات والتصنيفات',
+        ),
+        IconButton(
             onPressed: () => _showProductForm(),
             icon: const Icon(Icons.add_box),
             tooltip: 'منتج جديد')
@@ -122,6 +138,18 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                     selected: category == value,
                     onSelected: (_) => _selectCategory(value),
                   ),
+                OutlinedButton.icon(
+                  key: const ValueKey('create-category-button'),
+                  onPressed: _createCategory,
+                  icon: const Icon(Icons.create_new_folder_outlined),
+                  label: const Text('تصنيف جديد'),
+                ),
+                OutlinedButton.icon(
+                  key: const ValueKey('manage-categories-button'),
+                  onPressed: _showCategoryManager,
+                  icon: const Icon(Icons.settings_outlined),
+                  label: const Text('إدارة التصنيفات'),
+                ),
                 FilledButton.icon(
                   onPressed: () => _showProductForm(),
                   icon: const Icon(Icons.add),
@@ -163,18 +191,20 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
             else ...[
               for (final product in products)
                 Card(
-                    child: _AdminProductCard(
-                  product: product,
-                  onSelected: (value) async {
-                    if (value == 'edit') {
-                      _showProductForm(product);
-                    } else if (value == 'archive') {
-                      await _archiveProduct(product);
-                    } else if (value == 'restore') {
-                      await _restoreProduct(product);
-                    }
-                  },
-                )),
+                  key: ValueKey('admin-product-card-${product.id}'),
+                  child: _AdminProductCard(
+                    product: product,
+                    onSelected: (value) async {
+                      if (value == 'edit') {
+                        _showProductForm(product);
+                      } else if (value == 'archive') {
+                        await _archiveProduct(product);
+                      } else if (value == 'restore') {
+                        await _restoreProduct(product);
+                      }
+                    },
+                  ),
+                ),
               if (hasMore)
                 Padding(
                   padding: const EdgeInsets.only(top: 4, bottom: 20),
@@ -208,12 +238,13 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
   }
 
   Future<CatalogPage> _loadProductsPage({
+    required String? categoryFilter,
     DateTime? pageSnapshot,
     int offset = 0,
   }) {
     return ref.read(catalogRepositoryProvider).productsPage(
           query: search.text,
-          category: category,
+          category: categoryFilter,
           includeInactive: true,
           snapshotAt: pageSnapshot,
           offset: offset,
@@ -236,15 +267,29 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
       });
     }
     final shouldLoadMetadata = refreshMetadata || !metadataLoaded;
-    final optionsFuture = shouldLoadMetadata
-        ? _loadAdminFilterOptionsSafely()
-        : Future<CatalogFilterOptions?>.value(null);
     try {
-      final page = await _loadProductsPage();
-      final options = await optionsFuture;
+      final options =
+          shouldLoadMetadata ? await _loadAdminFilterOptionsSafely() : null;
+      if (!mounted || revision != loadRevision) return;
+      var resolvedCategory = category;
+      if (refreshMetadata &&
+          options != null &&
+          resolvedCategory != null &&
+          !options.categories.contains(resolvedCategory)) {
+        resolvedCategory = null;
+      }
+      final page = await _loadProductsPage(
+        categoryFilter: resolvedCategory,
+      );
       if (!mounted || revision != loadRevision) return;
       setState(() {
-        products = page.products;
+        category = resolvedCategory;
+        products = page.products
+            .where(
+              (product) =>
+                  !product.isArchived || product.archivedByCategoryId == null,
+            )
+            .toList(growable: false);
         hasMore = page.hasMore;
         nextOffset = page.nextOffset;
         snapshotAt = page.snapshotAt;
@@ -260,7 +305,6 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
         initialLoading = false;
       });
     } catch (error) {
-      await optionsFuture;
       if (!mounted || revision != loadRevision) return;
       setState(() {
         loadError = error;
@@ -286,6 +330,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     setState(() => loadingMore = true);
     try {
       final page = await _loadProductsPage(
+        categoryFilter: category,
         pageSnapshot: pageSnapshot,
         offset: nextOffset,
       );
@@ -293,7 +338,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
       setState(() {
         products = _deduplicateAdminProducts([
           ...products,
-          ...page.products,
+          ...page.products.where(
+            (product) =>
+                !product.isArchived || product.archivedByCategoryId == null,
+          ),
         ]);
         hasMore = page.hasMore;
         nextOffset = page.nextOffset;
@@ -311,6 +359,363 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _createCategory() async {
+    final created = await _promptAndCreateCategory();
+    if (created == null || !mounted) return;
+    await _reloadProducts(refreshMetadata: true);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تم إنشاء تصنيف «${created.name}».')),
+    );
+  }
+
+  Future<ProductCategory?> _promptAndCreateCategory() async {
+    final controller = TextEditingController();
+    String? validationMessage;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final capturedThemes = InheritedTheme.capture(
+      from: context,
+      to: navigator.context,
+    );
+    final dialogRoute = DialogRoute<String>(
+      context: context,
+      themes: capturedThemes,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('إنشاء تصنيف جديد'),
+          content: SizedBox(
+            width: 420,
+            child: TextField(
+              key: const ValueKey('new-category-name-field'),
+              controller: controller,
+              autofocus: true,
+              maxLength: 120,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) {
+                final value = controller.text.trim();
+                if (value.isEmpty) {
+                  setDialogState(
+                    () => validationMessage = 'أدخل اسم التصنيف.',
+                  );
+                  return;
+                }
+                Navigator.pop(context, value);
+              },
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.category_outlined),
+                labelText: 'اسم التصنيف',
+                helperText: 'سيظهر في اختيار التصنيف عند إضافة المنتجات.',
+                errorText: validationMessage,
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton.icon(
+              key: const ValueKey('save-category-button'),
+              onPressed: () {
+                final value = controller.text.trim();
+                if (value.isEmpty) {
+                  setDialogState(
+                    () => validationMessage = 'أدخل اسم التصنيف.',
+                  );
+                  return;
+                }
+                Navigator.pop(context, value);
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('إنشاء التصنيف'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final name = await navigator.push(dialogRoute);
+    await dialogRoute.completed;
+    controller.dispose();
+    if (name == null || !mounted) return null;
+    try {
+      return await ref.read(catalogRepositoryProvider).createCategory(name);
+    } on CategoryArchivedException {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'يوجد تصنيف مؤرشف بهذا الاسم. استعده من قسم «الأرشيف».',
+          ),
+        ),
+      );
+      return null;
+    } catch (_) {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'تعذر إنشاء التصنيف. تحقق من الاسم والاتصال وحاول مجدداً.',
+          ),
+        ),
+      );
+      return null;
+    }
+  }
+
+  Future<void> _showCategoryManager() async {
+    final repository = ref.read(catalogRepositoryProvider);
+    late List<ProductCategory> managedCategories;
+    try {
+      managedCategories = await repository.productCategories();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'تعذر تحميل التصنيفات. تحقق من الاتصال وحاول مجدداً.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    String? busyCategoryId;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.settings_outlined),
+              SizedBox(width: 8),
+              Expanded(child: Text('إدارة التصنيفات')),
+            ],
+          ),
+          content: SizedBox(
+            width: 560,
+            height: 430,
+            child: managedCategories.isEmpty
+                ? const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.category_outlined,
+                          size: 48,
+                          color: Colors.grey,
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          'لا توجد تصنيفات نشطة',
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.separated(
+                    itemCount: managedCategories.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final item = managedCategories[index];
+                      final busy = busyCategoryId == item.id;
+                      return ListTile(
+                        key: ValueKey('managed-category-${item.id}'),
+                        leading: CircleAvatar(
+                          backgroundColor:
+                              AppTheme.green.withValues(alpha: .12),
+                          foregroundColor: AppTheme.green,
+                          child: const Icon(Icons.category_outlined),
+                        ),
+                        title: Text(
+                          item.name,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        subtitle: Text(
+                          item.productCount == 0
+                              ? 'لا توجد منتجات مرتبطة'
+                              : '${item.productCount} منتج مرتبط',
+                        ),
+                        trailing: busy
+                            ? const SizedBox.square(
+                                dimension: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : IconButton(
+                                key: ValueKey(
+                                  'archive-category-${item.id}',
+                                ),
+                                tooltip: 'أرشفة التصنيف ومنتجاته',
+                                onPressed: () async {
+                                  final confirmed =
+                                      await _confirmCategoryArchive(item);
+                                  if (!confirmed ||
+                                      !mounted ||
+                                      !dialogContext.mounted) {
+                                    return;
+                                  }
+                                  setDialogState(
+                                    () => busyCategoryId = item.id,
+                                  );
+                                  try {
+                                    await repository.archiveCategory(item.id);
+                                  } catch (_) {
+                                    if (!mounted || !dialogContext.mounted) {
+                                      return;
+                                    }
+                                    setDialogState(
+                                      () => busyCategoryId = null,
+                                    );
+                                    ScaffoldMessenger.of(this.context)
+                                        .showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'تعذر أرشفة التصنيف. '
+                                          'تحقق من الاتصال وحاول مجدداً.',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  var categoryRefreshFailed = false;
+                                  try {
+                                    managedCategories =
+                                        await repository.productCategories();
+                                  } catch (_) {
+                                    categoryRefreshFailed = true;
+                                    managedCategories = managedCategories
+                                        .where(
+                                          (category) => category.id != item.id,
+                                        )
+                                        .toList(growable: false);
+                                  }
+                                  if (!mounted || !dialogContext.mounted) {
+                                    return;
+                                  }
+                                  if (category == item.name) {
+                                    setState(() => category = null);
+                                  }
+                                  setDialogState(
+                                    () => busyCategoryId = null,
+                                  );
+                                  await _reloadProducts(
+                                    refreshMetadata: true,
+                                  );
+                                  if (!mounted) return;
+                                  final refreshNotice = categoryRefreshFailed
+                                      ? ' تمت الأرشفة، لكن تعذر تحديث قائمة '
+                                          'التصنيفات بالكامل الآن.'
+                                      : '';
+                                  ScaffoldMessenger.of(this.context)
+                                      .showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'تمت أرشفة «${item.name}» ومنتجاته. '
+                                        'يمكنك استعادتها من الأرشيف.'
+                                        '$refreshNotice',
+                                      ),
+                                    ),
+                                  );
+                                },
+                                icon: Icon(
+                                  Icons.archive_outlined,
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                              ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: busyCategoryId == null
+                  ? () => Navigator.pop(dialogContext)
+                  : null,
+              child: const Text('إغلاق'),
+            ),
+            FilledButton.tonalIcon(
+              key: const ValueKey('manager-create-category-button'),
+              onPressed: busyCategoryId != null
+                  ? null
+                  : () async {
+                      final created = await _promptAndCreateCategory();
+                      if (created == null ||
+                          !mounted ||
+                          !dialogContext.mounted) {
+                        return;
+                      }
+                      var categoryRefreshFailed = false;
+                      try {
+                        managedCategories =
+                            await repository.productCategories();
+                      } catch (_) {
+                        categoryRefreshFailed = true;
+                        managedCategories = _withManagedCategory(
+                          managedCategories,
+                          created,
+                        );
+                      }
+                      if (!dialogContext.mounted) return;
+                      setDialogState(() {});
+                      await _reloadProducts(refreshMetadata: true);
+                      if (!mounted) return;
+                      final refreshNotice = categoryRefreshFailed
+                          ? ' تم الإنشاء، لكن تعذر تحديث قائمة التصنيفات '
+                              'بالكامل الآن.'
+                          : '';
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'تم إنشاء تصنيف «${created.name}».'
+                            '$refreshNotice',
+                          ),
+                        ),
+                      );
+                    },
+              icon: const Icon(Icons.create_new_folder_outlined),
+              label: const Text('تصنيف جديد'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _confirmCategoryArchive(ProductCategory category) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('تأكيد أرشفة التصنيف'),
+            content: Text(
+              'ستتم أرشفة «${category.name}» وكل المنتجات التابعة له '
+              '(${category.productCount}). لن تظهر للعملاء، وستبقى البيانات '
+              'والطلبات محفوظة ويمكن استعادتها من قسم «الأرشيف».',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton.icon(
+                key: const ValueKey('confirm-archive-category-button'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError,
+                ),
+                onPressed: () => Navigator.pop(context, true),
+                icon: const Icon(Icons.archive_outlined),
+                label: const Text('أرشفة التصنيف ومنتجاته'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<void> _showProductForm([Product? product]) async {
@@ -854,6 +1259,18 @@ List<String> _withSelectedCategory(
   return result;
 }
 
+List<ProductCategory> _withManagedCategory(
+  Iterable<ProductCategory> values,
+  ProductCategory added,
+) {
+  final result = <ProductCategory>[
+    for (final category in values)
+      if (category.id != added.id) category,
+    added,
+  ]..sort((first, second) => first.name.compareTo(second.name));
+  return result;
+}
+
 List<Product> _deduplicateAdminProducts(Iterable<Product> source) {
   final seen = <String>{};
   return [
@@ -900,110 +1317,321 @@ class _AdminProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final stockLabel = product.stockTrackingEnabled
-        ? 'المخزون ${product.stockQuantity} • '
-            'المتاح ${product.orderableStockQuantity}'
-            '${product.reservedQuantity > 0 ? ' • محجوز ${product.reservedQuantity}' : ''}'
-        : 'المخزون غير متتبع';
     final visibilityLabel = product.isArchived
         ? 'مؤرشف'
         : product.active
             ? 'ظاهر للعملاء'
             : 'مخفي عن العملاء';
+    final visibilityIcon = product.isArchived
+        ? Icons.archive_outlined
+        : product.active
+            ? Icons.visibility_outlined
+            : Icons.visibility_off_outlined;
+    final visibilityColor = product.isArchived || !product.active
+        ? Colors.blueGrey
+        : AppTheme.green;
+    final availabilityLabel = !product.stockTrackingEnabled
+        ? 'المخزون غير متتبع'
+        : !product.isOrderable
+            ? 'غير متاح للطلب'
+            : product.lowStock
+                ? 'مخزون منخفض'
+                : 'متاح للطلب';
+    final availabilityColor = !product.stockTrackingEnabled
+        ? Colors.blueGrey
+        : !product.isOrderable
+            ? AppTheme.red
+            : product.lowStock
+                ? AppTheme.orange
+                : AppTheme.green;
+    final quantityVisibilityLabel =
+        product.stockTrackingEnabled && product.showStockQuantityToCustomers
+            ? 'العدد للعملاء: ظاهر'
+            : 'العدد للعملاء: مخفي';
+    final accentColor = product.isArchived || !product.active
+        ? Colors.blueGrey
+        : availabilityColor;
+    final textTheme = Theme.of(context).textTheme;
+
     return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
+      padding: const EdgeInsets.all(10),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
-            backgroundColor: !product.isOrderable
-                ? AppTheme.red
-                : product.lowStock
-                    ? AppTheme.orange
-                    : AppTheme.green,
-            child: const Icon(Icons.inventory_2, color: Colors.white),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: .13),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.inventory_2_outlined,
+                  size: 20,
+                  color: accentColor,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        product.name,
-                        style: const TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                    ),
-                    PopupMenuButton<String>(
-                      onSelected: (value) => unawaited(onSelected(value)),
-                      itemBuilder: (context) => [
-                        const PopupMenuItem(
-                          value: 'edit',
-                          child: Text('تعديل'),
-                        ),
-                        if (product.isArchived)
-                          const PopupMenuItem(
-                            value: 'restore',
-                            child: Text('استعادة ونشر المنتج'),
-                          )
-                        else
-                          const PopupMenuItem(
-                            value: 'archive',
-                            child: Text('أرشفة المنتج'),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-                if (product.brand.trim().isNotEmpty)
-                  Text(
-                    product.brand,
-                    style: const TextStyle(color: Colors.grey),
-                  ),
-                const SizedBox(height: 6),
-                Text(stockLabel),
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    Text('أقل طلب جملة ${product.minOrderQty}'),
-                    if (product.unitsPerBoxLabel != null)
-                      Text(product.unitsPerBoxLabel!),
-                    Text(visibilityLabel),
-                    if (product.stockTrackingEnabled)
-                      Text(
-                        product.hideWhenOutOfStock
-                            ? 'يختفي عند النفاد'
-                            : 'يبقى ظاهراً عند النفاد',
-                      ),
                     Text(
-                      product.stockTrackingEnabled &&
-                              product.showStockQuantityToCustomers
-                          ? 'الكمية ظاهرة للعملاء'
-                          : 'الكمية مخفية عن العملاء',
+                      product.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        height: 1.25,
+                      ),
                     ),
+                    if (product.brand.trim().isNotEmpty)
+                      Text(
+                        product.brand,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: Colors.grey.shade600,
+                          fontSize: 11,
+                          height: 1.2,
+                        ),
+                      ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'سعر الجملة: ${lyd(product.price)}',
-                  style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              PopupMenuButton<String>(
+                key: ValueKey('admin-product-menu-${product.id}'),
+                tooltip: 'خيارات المنتج',
+                padding: EdgeInsets.zero,
+                iconSize: 22,
+                constraints: const BoxConstraints.tightFor(
+                  width: 40,
+                  height: 40,
                 ),
-                if (product.retailUnitPrice != null)
-                  Text(
-                    'سعر بيع الوحدة المقترح: '
-                    '${lyd(product.retailUnitPrice!)}',
-                    style: const TextStyle(color: Colors.grey),
+                onSelected: (value) => unawaited(onSelected(value)),
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Text('تعديل'),
                   ),
+                  if (product.isArchived)
+                    const PopupMenuItem(
+                      value: 'restore',
+                      child: Text('استعادة ونشر المنتج'),
+                    )
+                  else
+                    const PopupMenuItem(
+                      value: 'archive',
+                      child: Text('أرشفة المنتج'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              _AdminProductInfoPill(
+                key: ValueKey('admin-product-publish-state-${product.id}'),
+                icon: visibilityIcon,
+                label: visibilityLabel,
+                color: visibilityColor,
+              ),
+              _AdminProductInfoPill(
+                key: ValueKey('admin-product-availability-${product.id}'),
+                icon: product.stockTrackingEnabled
+                    ? Icons.check_circle_outline
+                    : Icons.sync_disabled_outlined,
+                label: availabilityLabel,
+                color: availabilityColor,
+              ),
+              _AdminProductInfoPill(
+                key: ValueKey('admin-product-customer-quantity-${product.id}'),
+                icon: product.stockTrackingEnabled &&
+                        product.showStockQuantityToCustomers
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+                label: quantityVisibilityLabel,
+                color: product.stockTrackingEnabled &&
+                        product.showStockQuantityToCustomers
+                    ? AppTheme.green
+                    : Colors.blueGrey,
+              ),
+              if (product.stockTrackingEnabled)
+                _AdminProductInfoPill(
+                  key: ValueKey(
+                    'admin-product-out-of-stock-behavior-${product.id}',
+                  ),
+                  icon: product.hideWhenOutOfStock
+                      ? Icons.hide_source_outlined
+                      : Icons.public_outlined,
+                  label: product.hideWhenOutOfStock
+                      ? 'يختفي عند النفاد'
+                      : 'يبقى ظاهراً عند النفاد',
+                  color: Colors.blueGrey,
+                ),
+              if (product.unitsPerBox != null && product.unitsPerBox! > 0)
+                _AdminProductInfoPill(
+                  key: ValueKey('admin-product-box-units-${product.id}'),
+                  icon: Icons.inventory_outlined,
+                  label: '${product.unitsPerBox} في الصندوق',
+                  color: Colors.blueGrey,
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Container(
+            key: ValueKey('admin-product-stock-${product.id}'),
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: Theme.of(context)
+                  .colorScheme
+                  .primaryContainer
+                  .withValues(alpha: .32),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Wrap(
+              spacing: 14,
+              runSpacing: 3,
+              children: [
+                _AdminProductMetric(
+                  icon: Icons.inventory_2_outlined,
+                  label: 'المخزون',
+                  value: '${product.stockQuantity}',
+                ),
+                if (product.stockTrackingEnabled)
+                  _AdminProductMetric(
+                    icon: Icons.done_all,
+                    label: 'المتاح',
+                    value: '${product.orderableStockQuantity}',
+                  ),
+                if (product.reservedQuantity > 0)
+                  _AdminProductMetric(
+                    icon: Icons.lock_clock_outlined,
+                    label: 'محجوز',
+                    value: '${product.reservedQuantity}',
+                  ),
+                _AdminProductMetric(
+                  key: ValueKey('admin-product-moq-${product.id}'),
+                  icon: Icons.shopping_cart_checkout_outlined,
+                  label: 'أقل طلب',
+                  value: '${product.minOrderQty}',
+                ),
               ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            key: ValueKey('admin-product-prices-${product.id}'),
+            spacing: 16,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                'سعر الجملة ${lyd(product.price)}',
+                style: textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.darkGreen,
+                ),
+              ),
+              if (product.retailUnitPrice != null)
+                Text(
+                  'بيع الوحدة المقترح ${lyd(product.retailUnitPrice!)}',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: Colors.grey.shade600,
+                    fontSize: 11,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminProductInfoPill extends StatelessWidget {
+  const _AdminProductInfoPill({
+    required this.icon,
+    required this.label,
+    required this.color,
+    super.key,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _AdminProductMetric extends StatelessWidget {
+  const _AdminProductMetric({
+    required this.icon,
+    required this.label,
+    required this.value,
+    super.key,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          icon,
+          size: 14,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        const SizedBox(width: 4),
+        Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(text: '$label '),
+              TextSpan(
+                text: value,
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ],
+          ),
+          style: const TextStyle(fontSize: 11, height: 1.25),
+        ),
+      ],
     );
   }
 }

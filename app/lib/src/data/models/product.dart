@@ -30,6 +30,8 @@ class Product {
     this.isFeatured = false,
     this.isTopSelling = false,
     this.archivedAt,
+    this.archivedByCategoryId,
+    this.activeBeforeCategoryArchive,
     this.createdAt,
     this.updatedAt,
     this.packageOptions = const [],
@@ -66,6 +68,8 @@ class Product {
   final bool isFeatured;
   final bool isTopSelling;
   final DateTime? archivedAt;
+  final String? archivedByCategoryId;
+  final bool? activeBeforeCategoryArchive;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final List<String> packageOptions;
@@ -147,6 +151,10 @@ class Product {
     bool? isTopSelling,
     DateTime? archivedAt,
     bool clearArchivedAt = false,
+    String? archivedByCategoryId,
+    bool clearArchivedByCategoryId = false,
+    bool? activeBeforeCategoryArchive,
+    bool clearActiveBeforeCategoryArchive = false,
     DateTime? createdAt,
     DateTime? updatedAt,
     List<String>? packageOptions,
@@ -185,6 +193,12 @@ class Product {
       isFeatured: isFeatured ?? this.isFeatured,
       isTopSelling: isTopSelling ?? this.isTopSelling,
       archivedAt: clearArchivedAt ? null : archivedAt ?? this.archivedAt,
+      archivedByCategoryId: clearArchivedByCategoryId
+          ? null
+          : archivedByCategoryId ?? this.archivedByCategoryId,
+      activeBeforeCategoryArchive: clearActiveBeforeCategoryArchive
+          ? null
+          : activeBeforeCategoryArchive ?? this.activeBeforeCategoryArchive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       packageOptions: packageOptions ?? this.packageOptions,
@@ -256,6 +270,9 @@ class Product {
       isFeatured: row['is_featured'] == true,
       isTopSelling: row['is_top_selling'] == true,
       archivedAt: DateTime.tryParse(row['archived_at']?.toString() ?? ''),
+      archivedByCategoryId: row['archived_by_category_id']?.toString(),
+      activeBeforeCategoryArchive:
+          row['active_before_category_archive'] as bool?,
       createdAt: DateTime.tryParse(row['created_at']?.toString() ?? ''),
       updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? ''),
       tags: [

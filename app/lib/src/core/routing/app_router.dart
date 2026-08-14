@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/admin_archive/admin_archive_screen.dart';
 import '../../features/admin_customers/admin_customers_screen.dart';
 import '../../features/admin_dashboard/admin_dashboard_screen.dart';
 import '../../features/admin_orders/admin_orders_screen.dart';
@@ -82,6 +83,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
           path: '/admin/products',
           builder: (context, state) => const AdminProductsScreen()),
+      GoRoute(
+          path: '/admin/archive',
+          builder: (context, state) => const AdminArchiveScreen()),
       GoRoute(
           path: '/admin/orders',
           builder: (context, state) => const AdminOrdersScreen()),
