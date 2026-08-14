@@ -1,82 +1,180 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/constants/order_status.dart';
+import '../../core/notifications/new_order_alert_sound.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/status_chip.dart';
 import '../../data/models/order.dart';
-import '../../data/repositories/orders_repository.dart';
 import '../../data/repositories/notifications_repository.dart';
+import '../../data/repositories/orders_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
 
 class AdminOrdersScreen extends ConsumerStatefulWidget {
   const AdminOrdersScreen({
     this.highlightedOrderId,
     this.showTodayOnly = false,
+    this.autoRefreshInterval = const Duration(seconds: 20),
     super.key,
   });
 
   final String? highlightedOrderId;
   final bool showTodayOnly;
+  final Duration autoRefreshInterval;
 
   @override
   ConsumerState<AdminOrdersScreen> createState() => _AdminOrdersScreenState();
 }
 
-class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
+class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
+    with WidgetsBindingObserver {
   static const _pageSize = OrdersRepository.defaultPageSize;
 
   OrderStatus? filter;
   late bool todayOnly;
+  late bool soundEnabled;
+  late bool soundReady;
   List<Order> orders = const [];
   bool initialLoading = true;
+  bool refreshing = false;
+  bool manualRefreshStarting = false;
+  bool soundToggleBusy = false;
   bool loadingMore = false;
   bool hasMore = false;
   Object? loadError;
   int nextOffset = 0;
   int loadRevision = 0;
   DateTime? snapshotAt;
+  DateTime? lastUpdatedAt;
   String? updatingOrderId;
+  Timer? autoRefreshTimer;
+  bool appIsResumed = true;
+  bool hasAttemptedInitialLoad = false;
+  bool hasLoadedOnce = false;
+  bool hasNewOrderNotificationBaseline = false;
+  bool hasOrderBaseline = false;
+  bool soundBlockedHintShown = false;
+  final Set<String> seenNewOrderNotificationIds = {};
+  final Set<String> seenOrderIds = {};
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    appIsResumed =
+        lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
     todayOnly = widget.highlightedOrderId == null && widget.showTodayOnly;
+    final sound = ref.read(newOrderAlertSoundProvider);
+    soundEnabled = sound.isAvailable;
+    soundReady = sound.isAvailable && !kIsWeb;
+    _startAutoRefresh();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_reload());
+      if (mounted) {
+        unawaited(_reload(showFullLoading: true));
+      }
     });
   }
 
   @override
   void didUpdateWidget(covariant AdminOrdersScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.autoRefreshInterval != widget.autoRefreshInterval) {
+      _startAutoRefresh();
+    }
     if (oldWidget.showTodayOnly != widget.showTodayOnly ||
         oldWidget.highlightedOrderId != widget.highlightedOrderId) {
       todayOnly = widget.highlightedOrderId == null && widget.showTodayOnly;
-      unawaited(_reload());
+      unawaited(_reload(showFullLoading: true));
     }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    appIsResumed = state == AppLifecycleState.resumed;
+    if (appIsResumed) {
+      _startAutoRefresh();
+      if (hasLoadedOnce && !_backgroundRefreshBlocked) {
+        unawaited(
+          _reload(consumeNewOrdersWithoutAnnouncement: true),
+        );
+      }
+      return;
+    }
+    autoRefreshTimer?.cancel();
+  }
+
+  @override
+  void dispose() {
+    autoRefreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final highlightedOrderId = widget.highlightedOrderId;
+    final soundAvailable = ref.watch(newOrderAlertSoundProvider).isAvailable;
     return AdminShell(
       title: 'إدارة الطلبات',
+      actions: [
+        IconButton(
+          key: const ValueKey('refresh-admin-orders-button'),
+          onPressed: _backgroundRefreshBlocked
+              ? null
+              : () => unawaited(_manualRefresh()),
+          icon: refreshing || manualRefreshStarting
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.refresh),
+          tooltip: 'تحديث الطلبات الآن',
+        ),
+        if (soundAvailable)
+          IconButton(
+            key: const ValueKey('toggle-admin-orders-sound-button'),
+            onPressed: soundToggleBusy ? null : () => unawaited(_toggleSound()),
+            icon: Icon(
+              !soundEnabled
+                  ? Icons.volume_off_outlined
+                  : soundReady
+                      ? Icons.volume_up
+                      : Icons.volume_up_outlined,
+            ),
+            tooltip: !soundEnabled
+                ? 'تشغيل صوت الطلبات الجديدة'
+                : soundReady
+                    ? 'إيقاف صوت الطلبات الجديدة'
+                    : 'اضغط لتفعيل صوت الطلبات الجديدة',
+          ),
+      ],
       child: initialLoading
           ? const Center(child: CircularProgressIndicator())
           : loadError != null && orders.isEmpty
-              ? _AdminOrdersError(onRetry: _refresh)
+              ? _AdminOrdersError(onRetry: _manualRefresh)
               : RefreshIndicator(
-                  onRefresh: _refresh,
+                  onRefresh: _manualRefresh,
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.all(18),
                     children: [
+                      _OrdersLiveStatus(
+                        autoRefreshInterval: widget.autoRefreshInterval,
+                        refreshing: refreshing,
+                        lastUpdatedAt: lastUpdatedAt,
+                        refreshFailed: loadError != null,
+                        soundAvailable: soundAvailable,
+                        soundEnabled: soundEnabled,
+                        soundReady: soundReady,
+                      ),
+                      const SizedBox(height: 12),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
@@ -156,16 +254,23 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
     );
   }
 
+  bool get _backgroundRefreshBlocked =>
+      initialLoading ||
+      refreshing ||
+      manualRefreshStarting ||
+      loadingMore ||
+      updatingOrderId != null;
+
   void _setTodayOnly(bool value) {
     if (todayOnly == value) return;
     setState(() => todayOnly = value);
-    unawaited(_reload());
+    unawaited(_reload(showFullLoading: true));
   }
 
   void _setFilter(OrderStatus? value) {
     if (filter == value) return;
     setState(() => filter = value);
-    unawaited(_reload());
+    unawaited(_reload(showFullLoading: true));
   }
 
   ({DateTime? from, DateTime? until}) _dateRange() {
@@ -178,22 +283,38 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
     );
   }
 
-  Future<void> _reload() async {
+  Future<void> _reload({
+    bool announceNewOrders = false,
+    bool consumeNewOrdersWithoutAnnouncement = false,
+    bool showFullLoading = false,
+    bool showFeedback = false,
+  }) async {
+    if (!showFullLoading && (initialLoading || refreshing || loadingMore)) {
+      return;
+    }
     final revision = ++loadRevision;
     final range = _dateRange();
+    final showBlockingLoading = showFullLoading || !hasAttemptedInitialLoad;
+    hasAttemptedInitialLoad = true;
     if (mounted) {
       setState(() {
-        initialLoading = true;
-        loadError = null;
         loadingMore = false;
-        orders = const [];
-        hasMore = false;
-        nextOffset = 0;
-        snapshotAt = null;
+        if (showBlockingLoading) {
+          loadError = null;
+          initialLoading = true;
+          refreshing = false;
+          orders = const [];
+          hasMore = false;
+          nextOffset = 0;
+          snapshotAt = null;
+        } else {
+          refreshing = true;
+        }
       });
     }
 
     try {
+      final notificationIds = await _latestNewOrderNotificationIds();
       final repository = ref.read(ordersRepositoryProvider);
       final page = await repository.ordersPage(
         status: filter,
@@ -216,20 +337,73 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
           // The main bounded page is still useful if deep-link lookup fails.
         }
       }
+      final deduplicated = _deduplicateOrders(loaded);
       if (!mounted || revision != loadRevision) return;
+
+      final newOrderIds = <String>{};
+      if (notificationIds != null) {
+        if (!hasNewOrderNotificationBaseline) {
+          seenNewOrderNotificationIds.addAll(notificationIds);
+          hasNewOrderNotificationBaseline = true;
+        } else if (announceNewOrders || consumeNewOrdersWithoutAnnouncement) {
+          if (announceNewOrders) {
+            newOrderIds.addAll(
+              notificationIds.difference(seenNewOrderNotificationIds),
+            );
+          }
+          seenNewOrderNotificationIds.addAll(notificationIds);
+        }
+      }
+
+      final loadedOrderIds = {
+        for (final order in deduplicated) order.id,
+      };
+      if (AppConfig.isDemoMode &&
+          (notificationIds == null || notificationIds.isEmpty) &&
+          hasOrderBaseline &&
+          announceNewOrders) {
+        newOrderIds.addAll(loadedOrderIds.difference(seenOrderIds));
+      }
+      seenOrderIds.addAll(loadedOrderIds);
+      hasOrderBaseline = true;
+
       setState(() {
-        orders = _deduplicateOrders(loaded);
+        orders = deduplicated;
         hasMore = page.hasMore;
         nextOffset = page.nextOffset;
         snapshotAt = page.snapshotAt;
+        loadError = null;
         initialLoading = false;
+        refreshing = false;
+        hasLoadedOnce = true;
+        lastUpdatedAt = DateTime.now();
       });
+      if (newOrderIds.isNotEmpty) {
+        ref.invalidate(unreadNotificationsCountProvider);
+        await _announceNewOrders(newOrderIds.length);
+      } else if (showFeedback && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم تحديث الطلبات — لا توجد طلبات جديدة.'),
+          ),
+        );
+      }
     } catch (error) {
       if (!mounted || revision != loadRevision) return;
       setState(() {
         loadError = error;
         initialLoading = false;
+        refreshing = false;
       });
+      if (showFeedback) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'تعذر تحديث الطلبات. ستستمر المحاولة تلقائياً عند عودة الاتصال.',
+            ),
+          ),
+        );
+      }
     }
   }
 
@@ -267,7 +441,135 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
     }
   }
 
-  Future<void> _refresh() => _reload();
+  Future<void> _manualRefresh() async {
+    if (_backgroundRefreshBlocked) return;
+    setState(() => manualRefreshStarting = true);
+    try {
+      await _primeSoundFromGesture();
+      await _reload(
+        announceNewOrders: true,
+        showFullLoading: !hasLoadedOnce && orders.isEmpty,
+        showFeedback: true,
+      );
+    } finally {
+      if (mounted) setState(() => manualRefreshStarting = false);
+    }
+  }
+
+  void _startAutoRefresh() {
+    autoRefreshTimer?.cancel();
+    if (!appIsResumed || widget.autoRefreshInterval <= Duration.zero) return;
+    autoRefreshTimer = Timer.periodic(
+      widget.autoRefreshInterval,
+      (_) {
+        if (!mounted || _backgroundRefreshBlocked) return;
+        unawaited(_reload(announceNewOrders: true));
+      },
+    );
+  }
+
+  Future<Set<String>?> _latestNewOrderNotificationIds() async {
+    try {
+      final notifications = await ref
+          .read(notificationsRepositoryProvider)
+          .list(limit: 50)
+          .timeout(const Duration(seconds: 6));
+      return {
+        for (final notification in notifications)
+          if (notification.type == 'new_order') notification.id,
+      };
+    } catch (_) {
+      // Order refresh remains useful if the notification feed is unavailable.
+      return null;
+    }
+  }
+
+  Future<void> _primeSoundFromGesture() async {
+    if (!soundEnabled) return;
+    final ready = await ref.read(newOrderAlertSoundProvider).prime();
+    if (!mounted) return;
+    setState(() {
+      soundReady = ready;
+      if (ready) soundBlockedHintShown = false;
+    });
+  }
+
+  Future<void> _toggleSound() async {
+    final sound = ref.read(newOrderAlertSoundProvider);
+    if (!sound.isAvailable || soundToggleBusy) return;
+
+    setState(() => soundToggleBusy = true);
+    try {
+      if (soundEnabled && soundReady) {
+        setState(() => soundEnabled = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم إيقاف صوت الطلبات الجديدة.')),
+        );
+        return;
+      }
+
+      if (!soundEnabled) {
+        setState(() => soundEnabled = true);
+      }
+      final ready = await sound.prime();
+      final played = ready && await sound.play();
+      if (!mounted) return;
+      setState(() {
+        soundReady = ready && played;
+        soundBlockedHintShown = !soundReady;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            soundReady
+                ? 'تم تشغيل صوت الطلبات الجديدة.'
+                : 'تعذر تشغيل الصوت. تحقق من كتم الجهاز ثم اضغط رمز الصوت مجدداً.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => soundToggleBusy = false);
+    }
+  }
+
+  Future<void> _announceNewOrders(int count) async {
+    if (!appIsResumed) return;
+    final sound = ref.read(newOrderAlertSoundProvider);
+    var played = false;
+    if (soundEnabled && sound.isAvailable) {
+      played = await sound.play();
+    }
+    if (!mounted || !appIsResumed) return;
+
+    final shouldOfferSoundAction =
+        soundEnabled && sound.isAvailable && !played && !soundBlockedHintShown;
+    final filteredView = filter != null || todayOnly;
+    setState(() {
+      if (soundEnabled && sound.isAvailable) {
+        soundReady = played;
+      }
+      if (shouldOfferSoundAction) soundBlockedHintShown = true;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          count == 1
+              ? filteredView
+                  ? 'وصل طلب جديد. قد لا يظهر مع الفلتر الحالي.'
+                  : 'وصل طلب جديد وتم تحديث القائمة.'
+              : filteredView
+                  ? 'وصلت $count طلبات جديدة. قد لا تظهر كلها مع الفلتر الحالي.'
+                  : 'وصلت $count طلبات جديدة وتم تحديث القائمة.',
+        ),
+        action: shouldOfferSoundAction
+            ? SnackBarAction(
+                label: 'تفعيل الصوت',
+                onPressed: () => unawaited(_toggleSound()),
+              )
+            : null,
+      ),
+    );
+  }
 
   Future<void> _showStatusDialog(Order order) async {
     if (order.allowedNextStatuses.isEmpty) {
@@ -398,6 +700,120 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
         const SnackBar(content: Text('تم نسخ ملخص الطلب')),
       );
     }
+  }
+}
+
+class _OrdersLiveStatus extends StatelessWidget {
+  const _OrdersLiveStatus({
+    required this.autoRefreshInterval,
+    required this.refreshing,
+    required this.lastUpdatedAt,
+    required this.refreshFailed,
+    required this.soundAvailable,
+    required this.soundEnabled,
+    required this.soundReady,
+  });
+
+  final Duration autoRefreshInterval;
+  final bool refreshing;
+  final DateTime? lastUpdatedAt;
+  final bool refreshFailed;
+  final bool soundAvailable;
+  final bool soundEnabled;
+  final bool soundReady;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColor = refreshFailed ? scheme.error : scheme.primary;
+    final refreshLabel = refreshing
+        ? 'جارٍ جلب أحدث الطلبات...'
+        : refreshFailed
+            ? 'تعذر آخر تحديث — ستتم المحاولة تلقائياً'
+            : lastUpdatedAt == null
+                ? 'الاتصال المباشر بالطلبات'
+                : 'آخر تحديث ${_shortTime(lastUpdatedAt!)}';
+    final intervalLabel = autoRefreshInterval <= Duration.zero
+        ? 'التحديث التلقائي متوقف'
+        : 'تحديث تلقائي ${_durationLabel(autoRefreshInterval)}';
+    final soundLabel = !soundEnabled
+        ? 'صوت الطلبات متوقف'
+        : soundReady
+            ? 'صوت الطلبات مفعّل'
+            : 'اضغط رمز الصوت مرة واحدة لتفعيله';
+
+    return Container(
+      key: const ValueKey('admin-orders-live-status'),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: statusColor.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: statusColor.withValues(alpha: .18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _OrdersStatusLabel(
+            icon: refreshing
+                ? Icons.sync
+                : refreshFailed
+                    ? Icons.sync_problem_outlined
+                    : Icons.cloud_done_outlined,
+            label: refreshLabel,
+            color: statusColor,
+          ),
+          const SizedBox(height: 7),
+          _OrdersStatusLabel(
+            icon: Icons.schedule,
+            label: intervalLabel,
+            color: scheme.onSurfaceVariant,
+          ),
+          if (soundAvailable) ...[
+            const SizedBox(height: 7),
+            _OrdersStatusLabel(
+              icon: soundReady
+                  ? Icons.volume_up_outlined
+                  : Icons.volume_off_outlined,
+              label: soundLabel,
+              color: soundReady ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _OrdersStatusLabel extends StatelessWidget {
+  const _OrdersStatusLabel({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -637,6 +1053,15 @@ String _date(DateTime date) => '${date.year}/${date.month}/${date.day}';
 String _dateTime(DateTime date) =>
     '${_date(date)} ${date.hour.toString().padLeft(2, '0')}:'
     '${date.minute.toString().padLeft(2, '0')}';
+
+String _shortTime(DateTime date) => '${date.hour.toString().padLeft(2, '0')}:'
+    '${date.minute.toString().padLeft(2, '0')}';
+
+String _durationLabel(Duration duration) {
+  if (duration.inSeconds < 60) return 'كل ${duration.inSeconds} ثانية';
+  final minutes = duration.inMinutes;
+  return minutes == 1 ? 'كل دقيقة' : 'كل $minutes دقائق';
+}
 
 List<Order> _deduplicateOrders(Iterable<Order> source) {
   final seen = <String>{};
