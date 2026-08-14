@@ -11,7 +11,14 @@ class Product {
     required this.unitSize,
     this.packageSize,
     required this.basePrice,
+    this.effectivePrice,
+    this.retailUnitPrice,
     required this.stockQuantity,
+    this.availableQuantity,
+    this.stockTrackingEnabled = true,
+    this.showStockQuantityToCustomers = false,
+    this.hideWhenOutOfStock = false,
+    this.unitsPerBox,
     required this.minOrderQty,
     this.descriptionAr = '',
     this.imageUrl,
@@ -22,6 +29,9 @@ class Product {
     this.isActive = true,
     this.isFeatured = false,
     this.isTopSelling = false,
+    this.archivedAt,
+    this.createdAt,
+    this.updatedAt,
     this.packageOptions = const [],
     this.tags = const [],
   });
@@ -37,9 +47,16 @@ class Product {
   final String unitSize;
   final String? packageSize;
   final double basePrice;
+  final double? effectivePrice;
+  final double? retailUnitPrice;
   final double? oldPrice;
   final int? discountPercent;
   final int stockQuantity;
+  final int? availableQuantity;
+  final bool stockTrackingEnabled;
+  final bool showStockQuantityToCustomers;
+  final bool hideWhenOutOfStock;
+  final int? unitsPerBox;
   final int minOrderQty;
   final String descriptionAr;
   final String? imageUrl;
@@ -48,17 +65,53 @@ class Product {
   final bool isActive;
   final bool isFeatured;
   final bool isTopSelling;
+  final DateTime? archivedAt;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
   final List<String> packageOptions;
   final List<String> tags;
 
   String get name => nameAr;
-  double get price => basePrice;
+  double get price => effectivePrice ?? basePrice;
   int get minOrderQuantity => minOrderQty;
   String get description => descriptionAr;
   String get effectivePackageSize => packageSize ?? unitSize;
   bool get active => isActive;
-  bool get inStock => stockQuantity > 0;
-  bool get lowStock => stockQuantity > 0 && stockQuantity <= 10;
+  bool get isArchived => archivedAt != null;
+  bool get hasUnitsPerBox => unitsPerBox != null && unitsPerBox! > 0;
+  String? get unitsPerBoxLabel =>
+      hasUnitsPerBox ? '$unitsPerBox قطعة في الصندوق' : null;
+  static const untrackedOrderQuantityLimit = 1000000;
+  int get orderableStockQuantity => stockTrackingEnabled
+      ? (availableQuantity ?? stockQuantity).clamp(0, stockQuantity).toInt()
+      : untrackedOrderQuantityLimit;
+  int? get orderQuantityLimit =>
+      stockTrackingEnabled ? orderableStockQuantity : null;
+  int get reservedQuantity =>
+      stockTrackingEnabled ? stockQuantity - orderableStockQuantity : 0;
+  bool get inStock => !stockTrackingEnabled || orderableStockQuantity > 0;
+  bool get isOrderable =>
+      !stockTrackingEnabled || orderableStockQuantity >= minOrderQuantity;
+  bool get lowStock =>
+      stockTrackingEnabled &&
+      orderableStockQuantity > 0 &&
+      orderableStockQuantity <= 10;
+  bool get hiddenFromCustomerBecauseOutOfStock =>
+      stockTrackingEnabled && hideWhenOutOfStock && !isOrderable;
+  String get customerAvailabilityLabel {
+    if (!isOrderable) return 'غير متوفر حالياً';
+    if (stockTrackingEnabled && showStockQuantityToCustomers) {
+      return 'متوفر $orderableStockQuantity';
+    }
+    return 'متوفر للطلب';
+  }
+
+  int normalizeOrderQuantity(int requested) {
+    final minimum = minOrderQuantity;
+    final normalized = requested < minimum ? minimum : requested;
+    final maximum = orderQuantityLimit ?? untrackedOrderQuantityLimit;
+    return normalized.clamp(minimum, maximum).toInt();
+  }
 
   Product copyWith({
     String? id,
@@ -72,9 +125,18 @@ class Product {
     String? unitSize,
     String? packageSize,
     double? basePrice,
+    double? effectivePrice,
+    double? retailUnitPrice,
+    bool clearRetailUnitPrice = false,
     double? oldPrice,
     int? discountPercent,
     int? stockQuantity,
+    int? availableQuantity,
+    bool? stockTrackingEnabled,
+    bool? showStockQuantityToCustomers,
+    bool? hideWhenOutOfStock,
+    int? unitsPerBox,
+    bool clearUnitsPerBox = false,
     int? minOrderQty,
     String? descriptionAr,
     String? imageUrl,
@@ -83,6 +145,10 @@ class Product {
     bool? isActive,
     bool? isFeatured,
     bool? isTopSelling,
+    DateTime? archivedAt,
+    bool clearArchivedAt = false,
+    DateTime? createdAt,
+    DateTime? updatedAt,
     List<String>? packageOptions,
     List<String>? tags,
   }) {
@@ -98,9 +164,18 @@ class Product {
       unitSize: unitSize ?? this.unitSize,
       packageSize: packageSize ?? this.packageSize,
       basePrice: basePrice ?? this.basePrice,
+      effectivePrice: effectivePrice ?? this.effectivePrice,
+      retailUnitPrice:
+          clearRetailUnitPrice ? null : retailUnitPrice ?? this.retailUnitPrice,
       oldPrice: oldPrice ?? this.oldPrice,
       discountPercent: discountPercent ?? this.discountPercent,
       stockQuantity: stockQuantity ?? this.stockQuantity,
+      availableQuantity: availableQuantity ?? this.availableQuantity,
+      stockTrackingEnabled: stockTrackingEnabled ?? this.stockTrackingEnabled,
+      showStockQuantityToCustomers:
+          showStockQuantityToCustomers ?? this.showStockQuantityToCustomers,
+      hideWhenOutOfStock: hideWhenOutOfStock ?? this.hideWhenOutOfStock,
+      unitsPerBox: clearUnitsPerBox ? null : unitsPerBox ?? this.unitsPerBox,
       minOrderQty: minOrderQty ?? this.minOrderQty,
       descriptionAr: descriptionAr ?? this.descriptionAr,
       imageUrl: imageUrl ?? this.imageUrl,
@@ -109,6 +184,9 @@ class Product {
       isActive: isActive ?? this.isActive,
       isFeatured: isFeatured ?? this.isFeatured,
       isTopSelling: isTopSelling ?? this.isTopSelling,
+      archivedAt: clearArchivedAt ? null : archivedAt ?? this.archivedAt,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
       packageOptions: packageOptions ?? this.packageOptions,
       tags: tags ?? this.tags,
     );
@@ -124,9 +202,14 @@ class Product {
         'unit_size': unitSize,
         'package_size': packageSize,
         'base_price': basePrice,
+        'retail_unit_price': retailUnitPrice,
         'old_price': oldPrice,
         'discount_percent': discountPercent,
         'stock_quantity': stockQuantity,
+        'stock_tracking_enabled': stockTrackingEnabled,
+        'show_stock_quantity_to_customers': showStockQuantityToCustomers,
+        'hide_when_out_of_stock': hideWhenOutOfStock,
+        'units_per_box': unitsPerBox,
         'min_order_quantity': minOrderQty,
         'image_url': imageUrl,
         'source_url': sourceUrl,
@@ -134,6 +217,7 @@ class Product {
         'active': isActive,
         'is_featured': isFeatured,
         'is_top_selling': isTopSelling,
+        'archived_at': archivedAt?.toIso8601String(),
         if (categoryUuid != null) 'category_id': categoryUuid,
       };
 
@@ -152,12 +236,18 @@ class Product {
       brand: (row['brand'] ?? '').toString(),
       unitSize: (row['unit_size'] ?? '').toString(),
       packageSize: row['package_size']?.toString(),
-      basePrice: ((row['base_price'] ?? 0) as num).toDouble(),
-      oldPrice: row['old_price'] == null
-          ? null
-          : (row['old_price'] as num).toDouble(),
+      basePrice: _asDouble(row['base_price']),
+      effectivePrice: _asNullableDouble(row['effective_price']),
+      retailUnitPrice: _asNullableDouble(row['retail_unit_price']),
+      oldPrice: _asNullableDouble(row['old_price']),
       discountPercent: row['discount_percent'] as int?,
-      stockQuantity: (row['stock_quantity'] ?? 0) as int,
+      stockQuantity: (row['stock_quantity'] as num?)?.toInt() ?? 0,
+      availableQuantity: (row['available_quantity'] as num?)?.toInt(),
+      stockTrackingEnabled: row['stock_tracking_enabled'] != false,
+      showStockQuantityToCustomers:
+          row['show_stock_quantity_to_customers'] == true,
+      hideWhenOutOfStock: row['hide_when_out_of_stock'] == true,
+      unitsPerBox: (row['units_per_box'] as num?)?.toInt(),
       minOrderQty: (row['min_order_quantity'] ?? 1) as int,
       descriptionAr: (row['description'] ?? '').toString(),
       imageUrl: row['image_url']?.toString(),
@@ -165,9 +255,19 @@ class Product {
       isActive: row['active'] != false,
       isFeatured: row['is_featured'] == true,
       isTopSelling: row['is_top_selling'] == true,
+      archivedAt: DateTime.tryParse(row['archived_at']?.toString() ?? ''),
+      createdAt: DateTime.tryParse(row['created_at']?.toString() ?? ''),
+      updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? ''),
       tags: [
         for (final tag in (row['tags'] as List? ?? const [])) tag.toString()
       ],
     );
+  }
+
+  static double _asDouble(Object? value) => _asNullableDouble(value) ?? 0;
+
+  static double? _asNullableDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
   }
 }

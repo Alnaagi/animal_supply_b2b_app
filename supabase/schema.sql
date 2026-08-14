@@ -1,4 +1,9 @@
+-- Legacy baseline schema.
+-- Production deployments must apply all timestamped migrations after this file
+-- (prefer `supabase db push`) so transactional RPCs and hardened RLS are installed.
+
 create extension if not exists "pgcrypto";
+create sequence if not exists order_number_seq;
 
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -8,6 +13,7 @@ create table if not exists profiles (
   role text not null check (role in ('admin','staff','customer')),
   must_change_password boolean not null default false,
   active boolean not null default true,
+  last_login_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -34,6 +40,7 @@ create table if not exists business_customers (
   account_status text not null default 'active' check (account_status in ('active','suspended','archived')),
   credit_limit numeric(12,2) not null default 0,
   outstanding_balance numeric(12,2) not null default 0,
+  ordering_block_reason text,
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -72,11 +79,19 @@ create table if not exists products (
   animal_type text,
   unit_size text,
   package_size text,
+  units_per_box integer
+    check (units_per_box is null or units_per_box between 1 and 1000000),
   base_price numeric(12,2) not null default 0,
+  retail_unit_price numeric(12,2)
+    check (retail_unit_price is null or retail_unit_price > 0),
   old_price numeric(12,2),
   discount_percent integer,
   stock_quantity integer not null default 0,
-  min_order_quantity integer not null default 1,
+  stock_tracking_enabled boolean not null default true,
+  show_stock_quantity_to_customers boolean not null default false,
+  hide_when_out_of_stock boolean not null default false,
+  min_order_quantity integer not null default 1
+    check (min_order_quantity between 1 and 1000000),
   image_url text,
   source_url text,
   tags text[] not null default '{}',
@@ -126,23 +141,81 @@ create table if not exists inventory_movements (
 create table if not exists orders (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references business_customers(id),
+  customer_profile_id uuid references profiles(id) on delete set null,
+  order_number text not null unique,
+  client_request_id uuid not null,
+  business_name_snapshot text not null,
+  contact_person_snapshot text not null default '',
+  contact_phone_snapshot text not null default '',
   status text not null default 'pending' check (status in ('pending','confirmed','preparing','ready','delivered','cancelled')),
   subtotal numeric(12,2) not null default 0,
+  delivery_fee numeric(12,2) not null default 0,
+  handling_fee numeric(12,2) not null default 0,
+  total numeric(12,2) generated always as (subtotal + delivery_fee + handling_fee) stored,
+  delivery_address text not null default '',
   delivery_note text,
   customer_note text,
   admin_note text,
+  placed_by uuid references profiles(id) on delete set null,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  unique(customer_id, client_request_id),
+  check (subtotal >= 0 and delivery_fee >= 0 and handling_fee >= 0)
 );
 
 create table if not exists order_items (
   id uuid primary key default gen_random_uuid(),
   order_id uuid not null references orders(id) on delete cascade,
   product_id uuid not null references products(id),
-  quantity integer not null check (quantity > 0),
-  unit_price numeric(12,2) not null,
-  line_total numeric(12,2) generated always as (quantity * unit_price) stored
+  product_name_snapshot text not null,
+  product_sku_snapshot text not null,
+  unit_size_snapshot text not null default '',
+  package_label_snapshot text not null default '',
+  units_per_box_snapshot integer
+    check (
+      units_per_box_snapshot is null
+      or units_per_box_snapshot between 1 and 1000000
+    ),
+  retail_unit_price_snapshot numeric(12,2)
+    check (
+      retail_unit_price_snapshot is null
+      or retail_unit_price_snapshot > 0
+    ),
+  stock_tracking_enabled_snapshot boolean not null default true,
+  quantity integer not null check (quantity between 1 and 1000000),
+  unit_price numeric(12,2) not null check (unit_price >= 0),
+  line_total numeric(12,2) generated always as (quantity * unit_price) stored,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
+
+create table if not exists order_status_history (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid not null references orders(id) on delete cascade,
+  from_status text check (from_status is null or from_status in ('pending','confirmed','preparing','ready','delivered','cancelled')),
+  to_status text not null check (to_status in ('pending','confirmed','preparing','ready','delivered','cancelled')),
+  note text not null default '',
+  changed_by uuid references profiles(id) on delete set null,
+  changed_by_role text check (changed_by_role is null or changed_by_role in ('admin','staff','customer','system')),
+  changed_at timestamptz not null default now()
+);
+
+create table if not exists inventory_reservations (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid not null references orders(id) on delete cascade,
+  order_item_id uuid not null unique references order_items(id) on delete cascade,
+  product_id uuid not null references products(id) on delete restrict,
+  quantity integer not null check (quantity > 0),
+  status text not null default 'active' check (status in ('active','released','fulfilled')),
+  released_at timestamptz,
+  fulfilled_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table inventory_movements
+  add column if not exists order_id uuid references orders(id) on delete set null,
+  add column if not exists order_item_id uuid references order_items(id) on delete set null;
 
 create table if not exists app_settings (
   key text primary key,
@@ -179,22 +252,68 @@ create table if not exists admin_device_tokens (
 
 create table if not exists notifications (
   id uuid primary key default gen_random_uuid(),
-  recipient_profile_id uuid references profiles(id) on delete cascade,
+  recipient_profile_id uuid not null references profiles(id) on delete cascade,
   recipient_role text check (recipient_role in ('admin','staff','customer')),
   type text not null,
   title text not null,
   body text not null,
   payload jsonb not null default '{}'::jsonb,
+  dedupe_key text,
+  expires_at timestamptz,
   read_at timestamptz,
   created_at timestamptz not null default now()
+);
+
+create table if not exists device_tokens (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references profiles(id) on delete cascade,
+  token text not null unique,
+  platform text not null check (platform in ('android','ios','web')),
+  device_id text,
+  device_label text,
+  app_version text,
+  locale text not null default 'ar_LY',
+  active boolean not null default true,
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists notification_outbox (
+  id uuid primary key default gen_random_uuid(),
+  notification_id uuid not null unique references notifications(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending','processing','sent','failed','dead')),
+  attempts integer not null default 0 check (attempts >= 0),
+  scheduled_at timestamptz not null default now(),
+  next_attempt_at timestamptz not null default now(),
+  locked_at timestamptz,
+  locked_by text,
+  sent_at timestamptz,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists notification_deliveries (
+  id uuid primary key default gen_random_uuid(),
+  outbox_id uuid not null references notification_outbox(id) on delete cascade,
+  device_token_id uuid references device_tokens(id) on delete set null,
+  provider_message_id text,
+  status text not null check (status in ('sent','failed','skipped')),
+  error_code text,
+  error_message text,
+  attempted_at timestamptz not null default now()
 );
 
 create table if not exists app_versions (
   id uuid primary key default gen_random_uuid(),
   platform text not null default 'android',
   version_name text not null,
-  version_code integer not null,
+  version_code integer not null check (version_code > 0),
+  minimum_supported_code integer not null default 1 check (minimum_supported_code > 0 and minimum_supported_code <= version_code),
   apk_url text,
+  sha256 text check (sha256 is null or sha256 ~ '^[0-9a-fA-F]{64}$'),
+  file_size_bytes bigint check (file_size_bytes is null or file_size_bytes >= 0),
   required_update boolean not null default false,
   release_notes text,
   published boolean not null default false,
@@ -208,9 +327,13 @@ create table if not exists invite_tokens (
   customer_id uuid references business_customers(id) on delete cascade,
   token_hash text not null unique,
   client_code text,
+  purpose text not null default 'activation' check (purpose in ('activation','password_reset')),
   expires_at timestamptz not null,
   used_at timestamptz,
+  revoked_at timestamptz,
+  used_by uuid references profiles(id) on delete set null,
   created_by uuid references profiles(id),
+  metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -234,13 +357,31 @@ create table if not exists sync_outbox (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists edge_rate_limits (
+  endpoint text not null,
+  key_hash text not null,
+  window_started_at timestamptz not null default now(),
+  attempts integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (endpoint, key_hash)
+);
+
 create index if not exists idx_business_customers_profile on business_customers(profile_id);
 create index if not exists idx_products_category on products(category_id);
 create index if not exists idx_orders_customer on orders(customer_id);
+create index if not exists idx_orders_status_created on orders(status, created_at desc);
 create index if not exists idx_order_items_order on order_items(order_id);
+create index if not exists idx_order_status_history_order on order_status_history(order_id, changed_at);
+create index if not exists idx_inventory_reservations_product_active on inventory_reservations(product_id) where status = 'active';
+create index if not exists idx_inventory_reservations_order on inventory_reservations(order_id);
 create index if not exists idx_notifications_recipient on notifications(recipient_profile_id, created_at desc);
 create index if not exists idx_notifications_role on notifications(recipient_role, created_at desc);
+create unique index if not exists idx_notifications_dedupe on notifications(dedupe_key) where dedupe_key is not null;
 create index if not exists idx_admin_device_tokens_profile on admin_device_tokens(profile_id);
+create index if not exists idx_device_tokens_profile_active on device_tokens(profile_id) where active;
+create index if not exists idx_notification_outbox_pending on notification_outbox(next_attempt_at, created_at) where status in ('pending','failed');
+create index if not exists idx_notification_deliveries_outbox on notification_deliveries(outbox_id, attempted_at desc);
+create index if not exists idx_invite_tokens_active_customer on invite_tokens(customer_id, expires_at) where used_at is null and revoked_at is null;
 create index if not exists idx_app_versions_platform on app_versions(platform, published, version_code desc);
 
 -- Storage note: create bucket product-images in Supabase dashboard or CLI.
