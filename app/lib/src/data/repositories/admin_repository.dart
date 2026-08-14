@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/constants/order_status.dart';
+import '../../core/updates/update_link.dart';
 import '../models/admin_models.dart';
 import '../models/order.dart';
 import '../models/product.dart';
@@ -10,6 +11,40 @@ import '../remote/supabase_clients.dart';
 
 final adminRepositoryProvider =
     Provider<AdminRepository>((ref) => AdminRepository());
+
+final appSettingsProvider = FutureProvider<AppSettingsData>(
+  (ref) => ref.watch(adminRepositoryProvider).settings(),
+);
+
+typedef AdminEdgeFunctionInvoker = Future<Object?> Function(
+  String functionName,
+  Map<String, dynamic> body,
+);
+
+const adminCustomersDefaultPageSize = 50;
+const adminCustomersMaximumPageSize = 100;
+const _customerSelect = '*, profiles(username)';
+const _supportedCustomerStatuses = <String>{
+  'active',
+  'suspended',
+  'archived',
+};
+
+class AdminCustomerPage {
+  AdminCustomerPage({
+    required List<BusinessCustomer> customers,
+    required this.offset,
+    required this.limit,
+    required this.hasMore,
+  }) : customers = List<BusinessCustomer>.unmodifiable(customers);
+
+  final List<BusinessCustomer> customers;
+  final int offset;
+  final int limit;
+  final bool hasMore;
+
+  int get nextOffset => offset + customers.length;
+}
 
 class InviteResult {
   const InviteResult({
@@ -25,9 +60,423 @@ class InviteResult {
   final String inviteLink;
   final String whatsappMessage;
   final String customerPhone;
+
+  factory InviteResult.fromFunctionResponse(
+    Object? responseData, {
+    required String fallbackUsername,
+    required String customerPhone,
+  }) {
+    final root = _stringKeyedMap(responseData);
+    final nested = _stringKeyedMap(root['data']);
+    final payload = <String, dynamic>{...root, ...nested};
+    final username = _firstNonEmpty(payload, const [
+      'username',
+      'login_identifier',
+    ]);
+    final temporaryPassword = _requiredInviteValue(
+      payload,
+      const ['temporary_password', 'temporaryPassword'],
+      'temporary password',
+    );
+    final inviteLink = _requiredSecureInviteLink(
+      payload,
+      const ['invite_link', 'inviteLink'],
+    );
+    final whatsappMessage = _requiredInviteValue(
+      payload,
+      const ['whatsapp_message', 'whatsappMessage'],
+      'WhatsApp message',
+    );
+
+    return InviteResult(
+      username: username.isEmpty ? fallbackUsername : username,
+      temporaryPassword: temporaryPassword,
+      inviteLink: inviteLink,
+      whatsappMessage: whatsappMessage,
+      customerPhone: customerPhone,
+    );
+  }
+}
+
+Map<String, dynamic> _stringKeyedMap(Object? value) {
+  if (value is! Map) return const {};
+  return {
+    for (final entry in value.entries) entry.key.toString(): entry.value,
+  };
+}
+
+String _firstNonEmpty(
+  Map<String, dynamic> payload,
+  List<String> keys,
+) {
+  for (final key in keys) {
+    final value = payload[key]?.toString().trim() ?? '';
+    if (value.isNotEmpty && value != 'null') return value;
+  }
+  return '';
+}
+
+String _requiredInviteValue(
+  Map<String, dynamic> payload,
+  List<String> keys,
+  String label,
+) {
+  final value = _firstNonEmpty(payload, keys);
+  if (value.isEmpty) {
+    throw StateError('Secure invite response is missing $label.');
+  }
+  return value;
+}
+
+String _requiredSecureInviteLink(
+  Map<String, dynamic> payload,
+  List<String> keys,
+) {
+  final value = _requiredInviteValue(payload, keys, 'one-time invite link');
+  final uri = Uri.tryParse(value);
+  final token = uri?.queryParameters['token']?.trim() ?? '';
+  final forbiddenParameters = uri?.queryParameters.keys.any(
+        (key) => const {
+          'password',
+          'temporary_password',
+          'temporarypassword',
+        }.contains(key.toLowerCase()),
+      ) ??
+      false;
+  if (uri == null ||
+      uri.scheme.toLowerCase() != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty ||
+      token.isEmpty ||
+      token == 'null' ||
+      forbiddenParameters) {
+    throw StateError('Secure invite response contains an invalid invite link.');
+  }
+  return value;
+}
+
+String _validatedCustomerQuery(String rawQuery) {
+  final query = rawQuery.trim();
+  if (query.length > 120 || RegExp(r'[\u0000-\u001f\u007f]').hasMatch(query)) {
+    throw ArgumentError.value(
+      rawQuery,
+      'query',
+      'Customer search must be at most 120 printable characters.',
+    );
+  }
+  return query;
+}
+
+String? _validatedCustomerStatus(String? rawStatus) {
+  final status = rawStatus?.trim();
+  if (status == null || status.isEmpty) return null;
+  if (!_supportedCustomerStatuses.contains(status)) {
+    throw ArgumentError.value(
+      rawStatus,
+      'status',
+      'Unsupported customer account status.',
+    );
+  }
+  return status;
+}
+
+void _validateCustomerPageArguments({
+  required int offset,
+  required int limit,
+}) {
+  if (offset < 0) {
+    throw ArgumentError.value(offset, 'offset', 'Offset must not be negative.');
+  }
+  if (limit < 1 || limit > adminCustomersMaximumPageSize) {
+    throw ArgumentError.value(
+      limit,
+      'limit',
+      'Page size must be between 1 and $adminCustomersMaximumPageSize.',
+    );
+  }
+}
+
+bool _matchesCustomerQuery(BusinessCustomer customer, String query) {
+  if (query.isEmpty) return true;
+  final needle = query.toLowerCase();
+  return [
+    customer.businessName,
+    customer.username,
+    customer.contactPerson,
+    customer.phone,
+    customer.city,
+    customer.area,
+  ].any((value) => value.toLowerCase().contains(needle));
+}
+
+List<BusinessCustomer> _filterCustomers(
+  Iterable<BusinessCustomer> customers, {
+  required String query,
+  String? status,
+}) {
+  return customers
+      .where(
+        (customer) =>
+            (status == null || customer.accountStatus == status) &&
+            _matchesCustomerQuery(customer, query),
+      )
+      .toList(growable: false);
+}
+
+AdminCustomerPage _customerPageFromWindow(
+  List<BusinessCustomer> window, {
+  required int offset,
+  required int limit,
+}) {
+  if (window.length > limit + 1) {
+    throw StateError('Customer page response exceeded the requested range.');
+  }
+  final hasMore = window.length > limit;
+  return AdminCustomerPage(
+    customers: window.take(limit).toList(growable: false),
+    offset: offset,
+    limit: limit,
+    hasMore: hasMore,
+  );
+}
+
+AdminCustomerPage _pageCustomers(
+  List<BusinessCustomer> customers, {
+  required int offset,
+  required int limit,
+}) {
+  final window = customers.skip(offset).take(limit + 1).toList(growable: false);
+  return _customerPageFromWindow(window, offset: offset, limit: limit);
+}
+
+AdminReportData buildAdminReportData({
+  required List<Product> products,
+  required List<Order> orders,
+  required List<BusinessCustomer> customers,
+  DateTime? from,
+  DateTime? to,
+}) {
+  final periodOrders = orders.where((order) {
+    if (from != null && order.createdAt.isBefore(from)) return false;
+    if (to != null && order.createdAt.isAfter(to)) return false;
+    return true;
+  }).toList(growable: false);
+  final deliveredOrders = periodOrders
+      .where((order) => order.status == OrderStatus.delivered)
+      .toList(growable: false);
+  final customersById = {
+    for (final customer in customers) customer.id: customer,
+  };
+
+  final customerRows = <String, AdminCustomerReportRow>{};
+  final productRows = <String, AdminProductReportRow>{};
+  for (final order in deliveredOrders) {
+    final customerId =
+        order.customerId.trim().isEmpty ? 'unknown' : order.customerId;
+    final customerName = order.businessName.trim().isNotEmpty
+        ? order.businessName.trim()
+        : customersById[customerId]?.businessName.trim().isNotEmpty == true
+            ? customersById[customerId]!.businessName.trim()
+            : 'عميل غير معروف';
+    final previousCustomer = customerRows[customerId];
+    customerRows[customerId] = AdminCustomerReportRow(
+      customerId: customerId,
+      businessName: customerName,
+      orderCount: (previousCustomer?.orderCount ?? 0) + 1,
+      salesTotal: (previousCustomer?.salesTotal ?? 0) + order.total,
+    );
+
+    for (final item in order.items) {
+      final productId = item.productId.trim().isEmpty
+          ? 'sku:${item.productSku}'
+          : item.productId;
+      final previousProduct = productRows[productId];
+      productRows[productId] = AdminProductReportRow(
+        productId: productId,
+        productName: item.productName,
+        sku: item.productSku,
+        quantity: (previousProduct?.quantity ?? 0) + item.quantity,
+        salesTotal: (previousProduct?.salesTotal ?? 0) + item.lineTotal,
+      );
+    }
+  }
+
+  final topCustomers = customerRows.values.toList()
+    ..sort((a, b) {
+      final bySales = b.salesTotal.compareTo(a.salesTotal);
+      return bySales != 0 ? bySales : a.businessName.compareTo(b.businessName);
+    });
+  final topProducts = productRows.values.toList()
+    ..sort((a, b) {
+      final byQuantity = b.quantity.compareTo(a.quantity);
+      return byQuantity != 0
+          ? byQuantity
+          : b.salesTotal.compareTo(a.salesTotal);
+    });
+  final lowStockProducts = products
+      .where(
+        (product) =>
+            product.stockTrackingEnabled &&
+            (!product.isOrderable || product.lowStock),
+      )
+      .map(
+        (product) => AdminInventoryReportRow(
+          productId: product.id,
+          productName: product.name,
+          sku: product.sku,
+          availableQuantity: product.orderableStockQuantity,
+        ),
+      )
+      .toList()
+    ..sort(
+      (a, b) => a.availableQuantity.compareTo(b.availableQuantity),
+    );
+  final outstandingCustomers = customers
+      .where((customer) => customer.outstandingBalance > 0)
+      .map(
+        (customer) => AdminBalanceReportRow(
+          customerId: customer.id,
+          businessName: customer.businessName,
+          outstandingBalance: customer.outstandingBalance,
+          creditLimit: customer.creditLimit,
+        ),
+      )
+      .toList()
+    ..sort(
+      (a, b) => b.outstandingBalance.compareTo(a.outstandingBalance),
+    );
+  final salesTotal = deliveredOrders.fold<double>(
+    0,
+    (sum, order) => sum + order.total,
+  );
+
+  return AdminReportData(
+    periodOrderCount: periodOrders.length,
+    deliveredOrderCount: deliveredOrders.length,
+    cancelledOrderCount: periodOrders
+        .where((order) => order.status == OrderStatus.cancelled)
+        .length,
+    salesTotal: salesTotal,
+    averageOrderValue:
+        deliveredOrders.isEmpty ? 0 : salesTotal / deliveredOrders.length,
+    outstandingBalance: outstandingCustomers.fold<double>(
+      0,
+      (sum, customer) => sum + customer.outstandingBalance,
+    ),
+    topCustomers: List.unmodifiable(topCustomers),
+    topProducts: List.unmodifiable(topProducts),
+    lowStockProducts: List.unmodifiable(lowStockProducts),
+    outstandingCustomers: List.unmodifiable(outstandingCustomers),
+  );
+}
+
+Uri? _safeBannerHttpsUri(String raw) {
+  final uri = Uri.tryParse(raw.trim());
+  if (uri == null ||
+      uri.scheme.toLowerCase() != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
+    return null;
+  }
+  return uri;
+}
+
+AppBanner _validatedBanner(AppBanner banner) {
+  final title = banner.title.trim();
+  final body = banner.body.trim();
+  final ctaText = banner.ctaText.trim();
+  final imageUrl = banner.imageUrl.trim();
+  final targetType = banner.targetType.trim().toLowerCase();
+  var targetValue = banner.targetValue.trim();
+
+  if (title.isEmpty || title.length > 120) {
+    throw ArgumentError.value(
+      banner.title,
+      'title',
+      'Banner title must contain 1 to 120 characters.',
+    );
+  }
+  if (body.length > 500) {
+    throw ArgumentError.value(
+      banner.body,
+      'body',
+      'Banner body must not exceed 500 characters.',
+    );
+  }
+  if (ctaText.isEmpty || ctaText.length > 40) {
+    throw ArgumentError.value(
+      banner.ctaText,
+      'ctaText',
+      'Banner CTA must contain 1 to 40 characters.',
+    );
+  }
+  if (_safeBannerHttpsUri(imageUrl) == null) {
+    throw ArgumentError.value(
+      banner.imageUrl,
+      'imageUrl',
+      'Banner image must use a safe HTTPS URL.',
+    );
+  }
+  if (!AppBanner.supportedTargetTypes.contains(targetType)) {
+    throw ArgumentError.value(
+      banner.targetType,
+      'targetType',
+      'Unsupported banner target type.',
+    );
+  }
+  if (banner.sortOrder < 0 || banner.sortOrder > 100000) {
+    throw ArgumentError.value(
+      banner.sortOrder,
+      'sortOrder',
+      'Banner order must be between 0 and 100000.',
+    );
+  }
+
+  switch (targetType) {
+    case 'catalog':
+      targetValue = '';
+    case 'category':
+      if (targetValue.isEmpty || targetValue.length > 120) {
+        throw ArgumentError.value(
+          banner.targetValue,
+          'targetValue',
+          'Category targets require 1 to 120 characters.',
+        );
+      }
+    case 'product':
+      if (!RegExp(r'^[A-Za-z0-9_-]{1,120}$').hasMatch(targetValue)) {
+        throw ArgumentError.value(
+          banner.targetValue,
+          'targetValue',
+          'Product targets require a safe product identifier.',
+        );
+      }
+  }
+
+  return banner.copyWith(
+    title: title,
+    body: body,
+    ctaText: ctaText,
+    imageUrl: imageUrl,
+    targetType: targetType,
+    targetValue: targetValue,
+  );
 }
 
 class AdminRepository {
+  AdminRepository({
+    Iterable<BusinessCustomer>? demoCustomers,
+    AdminEdgeFunctionInvoker? edgeFunctionInvoker,
+  }) : _edgeFunctionInvoker = edgeFunctionInvoker {
+    if (demoCustomers != null) {
+      _customers
+        ..clear()
+        ..addAll(demoCustomers);
+    }
+  }
+
+  final AdminEdgeFunctionInvoker? _edgeFunctionInvoker;
+
   final List<BusinessCustomer> _customers = [
     const BusinessCustomer(
       id: 'customer-1',
@@ -39,7 +488,7 @@ class AdminRepository {
       city: 'طرابلس',
       area: 'حي الأندلس',
       address: 'شارع تجاري قريب من الطريق الرئيسي',
-      priceGroup: 'جملة',
+      discountPercent: 12.5,
       creditLimit: 2500,
       outstandingBalance: 420,
     ),
@@ -51,7 +500,6 @@ class AdminRepository {
       phone: '+218920000002',
       city: 'بنغازي',
       area: 'الهواري',
-      priceGroup: 'جملة',
     ),
     const BusinessCustomer(
       id: 'customer-3',
@@ -61,7 +509,7 @@ class AdminRepository {
       phone: '+218930000003',
       city: 'مصراتة',
       area: 'الدافنية',
-      priceGroup: 'خاص',
+      discountPercent: 5,
       accountStatus: 'suspended',
     ),
   ];
@@ -73,8 +521,8 @@ class AdminRepository {
     apkLink: AppConfig.apkLink,
   );
 
-  final List<AppBanner> _banners = const [
-    AppBanner(
+  final List<AppBanner> _banners = [
+    const AppBanner(
       id: 'banner-1',
       title: 'عروض خاصة لتجار مستلزمات الحيوانات',
       body: 'اطلب الأعلاف والمستلزمات بالجملة بسهولة',
@@ -96,6 +544,8 @@ class AdminRepository {
       orderId: 'o1001',
     ),
   ];
+
+  bool get hasRemoteBackend => supabaseClient != null;
 
   Future<AdminDashboardStats> dashboardStats(
       List<Product> products, List<Order> orders) async {
@@ -122,73 +572,288 @@ class AdminRepository {
     );
   }
 
-  Future<List<BusinessCustomer>> listCustomers(
-      {String query = '', String? status}) async {
+  Future<AdminDashboardData> dashboardData({
+    List<Product> products = const <Product>[],
+    List<Order> orders = const <Order>[],
+  }) async {
     final client = supabaseClient;
     if (client != null) {
-      final rows = await client
-          .from('business_customers')
-          .select('*, profiles(username), price_groups(name)')
-          .order('created_at', ascending: false);
-      return rows
-          .map<BusinessCustomer>((row) => BusinessCustomer.fromSupabase(row))
-          .where((customer) {
-        final q = query.trim();
-        return (status == null || customer.accountStatus == status) &&
-            (q.isEmpty ||
-                customer.businessName.contains(q) ||
-                customer.username.contains(q) ||
-                customer.phone.contains(q) ||
-                customer.city.contains(q));
-      }).toList();
+      final response = await client.rpc('admin_dashboard_snapshot');
+      if (response is! Map) {
+        throw StateError('Invalid admin_dashboard_snapshot response.');
+      }
+      return AdminDashboardData.fromRpc(
+        Map<String, dynamic>.from(response),
+      );
     }
-    final q = query.trim();
-    return _customers.where((customer) {
-      return (status == null || customer.accountStatus == status) &&
-          (q.isEmpty ||
-              customer.businessName.contains(q) ||
-              customer.username.contains(q) ||
-              customer.phone.contains(q) ||
-              customer.city.contains(q));
-    }).toList();
+
+    final stats = await dashboardStats(products, orders);
+    final pending = orders
+        .where((order) => order.status == OrderStatus.pending)
+        .take(5)
+        .map(
+          (order) => AdminDashboardOrderRow(
+            id: order.id,
+            orderNumber: order.orderNumber,
+            businessName: order.businessName,
+            itemCount: order.items.length,
+            total: order.total,
+            createdAt: order.createdAt,
+          ),
+        )
+        .toList(growable: false);
+    final lowStock = products
+        .where((product) => product.lowStock)
+        .take(5)
+        .map(
+          (product) => AdminInventoryReportRow(
+            productId: product.id,
+            productName: product.name,
+            sku: product.sku,
+            availableQuantity: product.orderableStockQuantity,
+          ),
+        )
+        .toList(growable: false);
+    return AdminDashboardData(
+      stats: stats,
+      pendingOrders: pending,
+      lowStockProducts: lowStock,
+    );
+  }
+
+  Future<AdminReportData> reports(
+    List<Product> products,
+    List<Order> orders, {
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final client = supabaseClient;
+    if (client != null) {
+      final response = await client.rpc(
+        'admin_operational_report',
+        params: {
+          'p_from': from?.toUtc().toIso8601String(),
+          'p_to': to?.toUtc().toIso8601String(),
+        },
+      );
+      if (response is! Map) {
+        throw StateError('Invalid admin_operational_report response.');
+      }
+      return AdminReportData.fromRpc(Map<String, dynamic>.from(response));
+    }
+    final customers = await listCustomers();
+    return buildAdminReportData(
+      products: products,
+      orders: orders,
+      customers: customers,
+      from: from,
+      to: to,
+    );
+  }
+
+  static bool canUseServerSideCustomerSearch(String rawQuery) {
+    final query = rawQuery.trim();
+    if (query.isEmpty) return true;
+    if (query.length > 120) return false;
+    return RegExp(
+      r'^[A-Za-z0-9\u0600-\u06ff +\-]+$',
+      unicode: true,
+    ).hasMatch(query);
+  }
+
+  static String customerSearchFilterForServer(String rawQuery) {
+    final query = _validatedCustomerQuery(rawQuery);
+    if (query.isEmpty || !canUseServerSideCustomerSearch(query)) {
+      throw ArgumentError.value(
+        rawQuery,
+        'query',
+        'Customer search cannot be safely encoded for PostgREST.',
+      );
+    }
+    final pattern = '*$query*';
+    return [
+      'business_name.ilike.$pattern',
+      'contact_person.ilike.$pattern',
+      'phone.ilike.$pattern',
+      'city.ilike.$pattern',
+      'area.ilike.$pattern',
+    ].join(',');
+  }
+
+  static List<BusinessCustomer> _customersFromResponse(Object? responseData) {
+    if (responseData is! List) {
+      throw StateError('Invalid business_customers response.');
+    }
+    final customers = <BusinessCustomer>[];
+    final customerIds = <String>{};
+    for (final rawRow in responseData) {
+      if (rawRow is! Map) {
+        throw StateError('Invalid business_customers row.');
+      }
+      final row = _stringKeyedMap(rawRow);
+      final id = row['id'];
+      final businessName = row['business_name'];
+      final accountStatus = row['account_status'];
+      final creditLimit = row['credit_limit'];
+      final outstandingBalance = row['outstanding_balance'];
+      final discountPercent = row['discount_percent'];
+      if (id is! String ||
+          id.trim().isEmpty ||
+          businessName is! String ||
+          businessName.trim().isEmpty ||
+          accountStatus is! String ||
+          !_supportedCustomerStatuses.contains(accountStatus) ||
+          (creditLimit != null && creditLimit is! num) ||
+          (outstandingBalance != null && outstandingBalance is! num) ||
+          (discountPercent != null && discountPercent is! num) ||
+          (row['profiles'] != null && row['profiles'] is! Map)) {
+        throw StateError('Malformed business_customers row.');
+      }
+      if (!customerIds.add(id)) {
+        throw StateError('Duplicate customer in business_customers response.');
+      }
+      try {
+        customers.add(BusinessCustomer.fromSupabase(row));
+      } catch (_) {
+        throw StateError('Malformed business_customers row.');
+      }
+    }
+    return List<BusinessCustomer>.unmodifiable(customers);
+  }
+
+  static AdminCustomerPage customerPageFromResponse(
+    Object? responseData, {
+    required int offset,
+    required int limit,
+  }) {
+    _validateCustomerPageArguments(offset: offset, limit: limit);
+    final customers = _customersFromResponse(responseData);
+    return _customerPageFromWindow(
+      customers,
+      offset: offset,
+      limit: limit,
+    );
+  }
+
+  Future<List<BusinessCustomer>> listCustomers({
+    String query = '',
+    String? status,
+  }) async {
+    final normalizedQuery = _validatedCustomerQuery(query);
+    final normalizedStatus = _validatedCustomerStatus(status);
+    final client = supabaseClient;
+    if (client != null) {
+      var request = client.from('business_customers').select(_customerSelect);
+      if (normalizedStatus != null) {
+        request = request.eq('account_status', normalizedStatus);
+      }
+      final rows = await request
+          .order('created_at', ascending: false)
+          .order('id', ascending: false);
+      return _filterCustomers(
+        _customersFromResponse(rows),
+        query: normalizedQuery,
+      );
+    }
+    return _filterCustomers(
+      _customers,
+      query: normalizedQuery,
+      status: normalizedStatus,
+    );
+  }
+
+  Future<AdminCustomerPage> listCustomersPage({
+    String query = '',
+    String? status,
+    int offset = 0,
+    int limit = adminCustomersDefaultPageSize,
+  }) async {
+    _validateCustomerPageArguments(offset: offset, limit: limit);
+    final normalizedQuery = _validatedCustomerQuery(query);
+    final normalizedStatus = _validatedCustomerStatus(status);
+    final client = supabaseClient;
+    if (client == null) {
+      final filtered = _filterCustomers(
+        _customers,
+        query: normalizedQuery,
+        status: normalizedStatus,
+      );
+      return _pageCustomers(filtered, offset: offset, limit: limit);
+    }
+
+    if (normalizedQuery.isNotEmpty &&
+        !canUseServerSideCustomerSearch(normalizedQuery)) {
+      final filtered = await listCustomers(
+        query: normalizedQuery,
+        status: normalizedStatus,
+      );
+      return _pageCustomers(filtered, offset: offset, limit: limit);
+    }
+
+    var request = client.from('business_customers').select(_customerSelect);
+    if (normalizedStatus != null) {
+      request = request.eq('account_status', normalizedStatus);
+    }
+    if (normalizedQuery.isNotEmpty) {
+      request = request.or(
+        customerSearchFilterForServer(normalizedQuery),
+      );
+    }
+    final rows = await request
+        .order('created_at', ascending: false)
+        .order('id', ascending: false)
+        .range(offset, offset + limit);
+    return customerPageFromResponse(
+      rows,
+      offset: offset,
+      limit: limit,
+    );
   }
 
   Future<BusinessCustomer> saveCustomer(BusinessCustomer customer) async {
+    final normalized = customer.copyWith(
+      discountPercent:
+          validatedCustomerDiscountPercent(customer.discountPercent),
+    );
     final client = supabaseClient;
     if (client != null) {
-      final saved = await client
-          .from('business_customers')
-          .update({
-            'business_name': customer.businessName,
-            'contact_person': customer.contactPerson,
-            'phone': customer.phone,
-            'city': customer.city,
-            'area': customer.area,
-            'address': customer.address,
-            'account_status': customer.accountStatus,
-            'credit_limit': customer.creditLimit,
-            'outstanding_balance': customer.outstandingBalance,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', customer.id)
-          .select('*, profiles(username), price_groups(name)')
-          .single();
-      return BusinessCustomer.fromSupabase(saved);
+      final response = await client.functions.invoke(
+        'admin-update-customer',
+        body: customerUpdatePayload(normalized),
+      );
+      return customerFromUpdateResponse(response.data);
     }
-    final index = _customers.indexWhere((item) => item.id == customer.id);
+    final index = _customers.indexWhere((item) => item.id == normalized.id);
     if (index == -1) {
-      _customers.insert(0, customer);
+      _customers.insert(0, normalized);
     } else {
-      _customers[index] = customer;
+      _customers[index] = normalized;
     }
-    return customer;
+    return normalized;
   }
 
-  Future<InviteResult> createCustomerInvite(BusinessCustomer customer) async {
-    final client = supabaseClient;
-    if (client != null) {
-      final response =
-          await client.functions.invoke('admin-create-customer', body: {
+  static Map<String, dynamic> customerUpdatePayload(
+    BusinessCustomer customer,
+  ) =>
+      {
+        'customer_id': customer.id,
+        'business_name': customer.businessName,
+        'contact_person': customer.contactPerson,
+        'phone': customer.phone,
+        'city': customer.city,
+        'area': customer.area,
+        'address': customer.address,
+        'discount_percent':
+            validatedCustomerDiscountPercent(customer.discountPercent),
+        'account_status': customer.accountStatus,
+        'credit_limit': customer.creditLimit,
+        'outstanding_balance': customer.outstandingBalance,
+      };
+
+  static Map<String, dynamic> customerCreatePayload(
+    BusinessCustomer customer,
+  ) =>
+      {
         'business_name': customer.businessName,
         'contact_person': customer.contactPerson,
         'phone': customer.phone,
@@ -196,15 +861,35 @@ class AdminRepository {
         'area': customer.area,
         'address': customer.address,
         'username': customer.username,
-        'download_link': _settings.downloadLink,
-        'shop_name': _settings.shopName,
-      });
-      final data = response.data as Map<String, dynamic>;
-      return InviteResult(
-        username: data['username'].toString(),
-        temporaryPassword: data['temporaryPassword'].toString(),
-        inviteLink: data['inviteLink'].toString(),
-        whatsappMessage: data['whatsappMessage'].toString(),
+        'discount_percent':
+            validatedCustomerDiscountPercent(customer.discountPercent),
+        'credit_limit': customer.creditLimit,
+      };
+
+  static BusinessCustomer customerFromUpdateResponse(Object? responseData) {
+    final root = _stringKeyedMap(responseData);
+    final nested = _stringKeyedMap(root['data']);
+    final customer = _stringKeyedMap(
+      nested['customer'] ?? root['customer'],
+    );
+    if (customer.isEmpty || _firstNonEmpty(customer, const ['id']).isEmpty) {
+      throw StateError(
+        'Customer update response is missing the saved customer.',
+      );
+    }
+    return BusinessCustomer.fromSupabase(customer);
+  }
+
+  Future<InviteResult> createCustomerInvite(BusinessCustomer customer) async {
+    final client = supabaseClient;
+    if (client != null) {
+      final response = await client.functions.invoke(
+        'admin-create-customer',
+        body: customerCreatePayload(customer),
+      );
+      return InviteResult.fromFunctionResponse(
+        response.data,
+        fallbackUsername: customer.username,
         customerPhone: customer.phone,
       );
     }
@@ -227,22 +912,35 @@ class AdminRepository {
 
   Future<InviteResult> resetCustomerPassword(BusinessCustomer customer) async {
     final client = supabaseClient;
-    if (client != null && customer.profileId != null) {
-      final response = await client.functions.invoke(
-          'admin-reset-customer-password',
-          body: {'user_id': customer.profileId});
-      final data = response.data as Map<String, dynamic>;
-      const token = 'reset-token-not-used-in-password';
-      final inviteLink =
-          'animalsupplyb2b://invite?token=$token&client=${Uri.encodeComponent(customer.username)}';
-      final temp = data['temporaryPassword'].toString();
-      return InviteResult(
-          username: customer.username,
-          temporaryPassword: temp,
-          inviteLink: inviteLink,
-          whatsappMessage: _inviteMessage(
-              customer.businessName, customer.username, temp, inviteLink),
-          customerPhone: customer.phone);
+    if (client != null || _edgeFunctionInvoker != null) {
+      final profileId = customer.profileId?.trim() ?? '';
+      final customerId = customer.id.trim();
+      if (profileId.isEmpty && (customerId.isEmpty || customerId == 'new')) {
+        throw StateError(
+          'A saved customer ID is required for a secure password reset.',
+        );
+      }
+      final body = <String, dynamic>{
+        if (profileId.isNotEmpty)
+          'user_id': profileId
+        else
+          'customer_id': customerId,
+      };
+      final responseData = _edgeFunctionInvoker != null
+          ? await _edgeFunctionInvoker(
+              'admin-reset-customer-password',
+              body,
+            )
+          : (await client!.functions.invoke(
+              'admin-reset-customer-password',
+              body: body,
+            ))
+              .data;
+      return InviteResult.fromFunctionResponse(
+        responseData,
+        fallbackUsername: customer.username,
+        customerPhone: customer.phone,
+      );
     }
     const temp = 'Temp-48291!';
     final inviteLink =
@@ -282,26 +980,86 @@ class AdminRepository {
     }
   }
 
-  Future<List<AppBanner>> banners() async {
+  Future<List<AppBanner>> banners() => _loadBanners(includeInactive: false);
+
+  Future<List<AppBanner>> allBanners() => _loadBanners(includeInactive: true);
+
+  Future<List<AppBanner>> _loadBanners({required bool includeInactive}) async {
     final client = supabaseClient;
     if (client != null) {
-      final rows = await client
-          .from('banners')
-          .select()
-          .eq('active', true)
-          .order('sort_order');
+      final rows = includeInactive
+          ? await client
+              .from('banners')
+              .select()
+              .order('sort_order')
+              .order('created_at')
+          : await client
+              .from('banners')
+              .select()
+              .eq('active', true)
+              .order('sort_order')
+              .order('created_at');
       return rows.map<AppBanner>((row) => AppBanner.fromSupabase(row)).toList();
     }
-    return _banners;
+    final result = _banners
+        .where((banner) => includeInactive || banner.active)
+        .toList(growable: false)
+      ..sort((a, b) {
+        final order = a.sortOrder.compareTo(b.sortOrder);
+        return order != 0 ? order : a.title.compareTo(b.title);
+      });
+    return List<AppBanner>.unmodifiable(result);
   }
 
-  Future<AppVersionInfo> latestVersion() async {
+  Future<AppBanner> saveBanner(AppBanner banner) async {
+    final normalized = _validatedBanner(banner);
+    final client = supabaseClient;
+    if (client != null) {
+      final payload = {
+        ...normalized.toSupabasePayload(),
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+      final Map<String, dynamic> saved;
+      if (normalized.id == 'new') {
+        saved = await client.from('banners').insert(payload).select().single();
+      } else {
+        saved = await client
+            .from('banners')
+            .update(payload)
+            .eq('id', normalized.id)
+            .select()
+            .single();
+      }
+      return AppBanner.fromSupabase(saved);
+    }
+
+    if (normalized.id == 'new') {
+      final created = normalized.copyWith(id: const Uuid().v4());
+      _banners.add(created);
+      return created;
+    }
+    final index = _banners.indexWhere((item) => item.id == normalized.id);
+    if (index == -1) {
+      throw StateError('Banner not found.');
+    }
+    _banners[index] = normalized;
+    return normalized;
+  }
+
+  Future<AppBanner> setBannerActive(
+    AppBanner banner, {
+    required bool active,
+  }) {
+    return saveBanner(banner.copyWith(active: active));
+  }
+
+  Future<AppVersionInfo> latestVersion({String platform = 'android'}) async {
     final client = supabaseClient;
     if (client != null) {
       final row = await client
           .from('app_versions')
           .select()
-          .eq('platform', 'android')
+          .eq('platform', platform)
           .eq('published', true)
           .order('version_code', ascending: false)
           .limit(1)
@@ -314,12 +1072,67 @@ class AdminRepository {
           apkUrl: (row['apk_url'] ?? '').toString(),
           required: row['required_update'] == true,
           releaseNotes: (row['release_notes'] ?? '').toString(),
+          minimumSupportedCode: (row['minimum_supported_code'] ?? 1) as int,
+          sha256: (row['sha256'] ?? '').toString(),
+          fileSizeBytes: row['file_size_bytes'] as int?,
         );
       }
     }
+    final isAndroid = platform == 'android';
     return AppVersionInfo(
-        apkUrl: _settings.apkLink,
-        releaseNotes: 'رابط APK تجريبي للاختبار المباشر.');
+      platform: platform,
+      apkUrl: isAndroid ? _settings.apkLink : '',
+      releaseNotes: isAndroid
+          ? 'رابط APK تجريبي للاختبار المباشر.'
+          : 'لم تُنشر بيانات توزيع iOS بعد.',
+    );
+  }
+
+  Future<void> publishVersion(AppVersionInfo version) async {
+    validateVersionForPublication(version);
+    final client = supabaseClient;
+    if (client == null) return;
+    await client.from('app_versions').upsert(
+      {
+        'platform': version.platform,
+        'version_name': version.versionName,
+        'version_code': version.versionCode,
+        'minimum_supported_code': version.minimumSupportedCode,
+        'apk_url': version.apkUrl,
+        'required_update': version.required,
+        'release_notes': version.releaseNotes,
+        'sha256': version.sha256.isEmpty ? null : version.sha256,
+        'file_size_bytes': version.fileSizeBytes,
+        'published': true,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      onConflict: 'platform,version_code',
+    );
+  }
+
+  static void validateVersionForPublication(AppVersionInfo version) {
+    final platform = version.platform.trim().toLowerCase();
+    final validPlatform = platform == 'android' || platform == 'ios';
+    final validHash =
+        RegExp(r'^[a-f0-9]{64}$').hasMatch(version.sha256.trim().toLowerCase());
+    final requiresAndroidIntegrity = platform == 'android';
+    if (!validPlatform ||
+        version.versionName.trim().isEmpty ||
+        version.versionCode < 1 ||
+        version.minimumSupportedCode < 1 ||
+        version.minimumSupportedCode > version.versionCode ||
+        safeHttpsUpdateUri(version.apkUrl) == null ||
+        (requiresAndroidIntegrity && !validHash) ||
+        (requiresAndroidIntegrity &&
+            (version.fileSizeBytes == null || version.fileSizeBytes! < 1)) ||
+        (!requiresAndroidIntegrity &&
+            version.sha256.trim().isNotEmpty &&
+            !validHash) ||
+        (version.fileSizeBytes != null && version.fileSizeBytes! < 1)) {
+      throw const FormatException(
+        'Version metadata is incomplete or unsafe for publication.',
+      );
+    }
   }
 
   Future<List<AdminNotification>> notifications() async {

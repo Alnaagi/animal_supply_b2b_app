@@ -12,8 +12,12 @@ import '../auth/auth_controller.dart';
 
 final cartControllerProvider =
     StateNotifierProvider<CartController, List<CartItem>>((ref) {
+  final ownerProfileId = ref.watch(
+    authControllerProvider.select((auth) => auth.user?.id),
+  );
   final controller = CartController(
     ref,
+    ownerProfileId: ownerProfileId,
     cache: ref.watch(localCacheProvider),
     outbox: ref.watch(syncOutboxProvider),
   );
@@ -24,14 +28,17 @@ final cartControllerProvider =
 class CartController extends StateNotifier<List<CartItem>> {
   CartController(
     this.ref, {
+    required String? ownerProfileId,
     LocalCache? cache,
     SyncOutbox? outbox,
     List<CartItem> initialItems = const [],
-  })  : _cache = cache,
+  })  : _ownerProfileId = ownerProfileId,
+        _cache = cache,
         _outbox = outbox,
         super(initialItems);
 
   final Ref ref;
+  final String? _ownerProfileId;
   final LocalCache? _cache;
   final SyncOutbox? _outbox;
   String? _pendingRequestId;
@@ -45,8 +52,15 @@ class CartController extends StateNotifier<List<CartItem>> {
   }
 
   Future<void> _hydrateBody(LocalCache cache) async {
-    final cachedCart = await cache.cachedCart();
-    final pending = await cache.pendingRequest();
+    final ownerProfileId = _ownerProfileId;
+    if (ownerProfileId == null || ownerProfileId.isEmpty) return;
+    final cachedCart = await cache.cachedCart(
+      ownerProfileId: ownerProfileId,
+    );
+    final pending = await cache.pendingRequest(
+      ownerProfileId: ownerProfileId,
+    );
+    if (!mounted) return;
     // Never clobber newer in-memory cart/pending state if hydrate finishes late.
     if (cachedCart.isNotEmpty && state.isEmpty) {
       state = cachedCart;
@@ -62,12 +76,9 @@ class CartController extends StateNotifier<List<CartItem>> {
   }
 
   void addQuantity(Product product, int quantity) {
-    if (!product.inStock || product.stockQuantity < product.minOrderQuantity) {
-      return;
-    }
+    if (!product.isOrderable) return;
     _invalidatePendingRequest();
-    final safeQty =
-        quantity.clamp(product.minOrderQuantity, product.stockQuantity);
+    final safeQty = product.normalizeOrderQuantity(quantity);
     final index = state.indexWhere((item) => item.product.id == product.id);
     if (index == -1) {
       state = [...state, CartItem(product: product, quantity: safeQty)];
@@ -76,8 +87,8 @@ class CartController extends StateNotifier<List<CartItem>> {
         for (final item in state)
           if (item.product.id == product.id)
             item.copyWith(
-                quantity: (item.quantity + safeQty)
-                    .clamp(product.minOrderQuantity, product.stockQuantity))
+              quantity: product.normalizeOrderQuantity(item.quantity + safeQty),
+            )
           else
             item,
       ];
@@ -91,12 +102,9 @@ class CartController extends StateNotifier<List<CartItem>> {
       for (final item in state)
         if (item.product.id != productId)
           item
-        else if (item.product.stockQuantity >= item.product.minOrderQuantity)
+        else if (item.product.isOrderable)
           item.copyWith(
-            quantity: qty.clamp(
-              item.product.minOrderQuantity,
-              item.product.stockQuantity,
-            ),
+            quantity: item.product.normalizeOrderQuantity(qty),
           )
         else
           item,
@@ -128,6 +136,13 @@ class CartController extends StateNotifier<List<CartItem>> {
         message: 'انتهت جلسة الدخول. سجل الدخول من جديد ثم أعد المحاولة.',
       );
     }
+    if (_ownerProfileId == null || user.id != _ownerProfileId) {
+      throw const OrdersRepositoryException(
+        code: 'AUTH_CONTEXT_CHANGED',
+        message:
+            'تغير حساب المستخدم. افتح السلة من الحساب الحالي وحاول مجدداً.',
+      );
+    }
 
     final submittedState = state;
     final submittedItems = List<CartItem>.unmodifiable(submittedState);
@@ -155,7 +170,10 @@ class CartController extends StateNotifier<List<CartItem>> {
             deliveryNote: deliveryNote,
           );
 
-      await _outbox?.remove(requestId);
+      await _outbox?.remove(
+        requestId,
+        ownerProfileId: _ownerProfileId,
+      );
       if (identical(state, submittedState)) {
         state = const [];
       } else {
@@ -165,13 +183,46 @@ class CartController extends StateNotifier<List<CartItem>> {
       await _persistCart();
       await _persistPendingRequest();
       return order;
-    } catch (error) {
-      await _enqueuePendingOrder(
-        requestId: requestId,
-        items: submittedItems,
-        note: note,
-        deliveryAddress: deliveryAddress,
-        deliveryNote: deliveryNote,
+    } on OrdersRepositoryException catch (error) {
+      final requestIsStillCurrent =
+          _pendingRequestId == requestId && _pendingFingerprint == fingerprint;
+      bool? queuedDurably;
+      if (error.isRetryable && requestIsStillCurrent) {
+        queuedDurably = await _enqueuePendingOrder(
+          requestId: requestId,
+          items: submittedItems,
+          note: note,
+          deliveryAddress: deliveryAddress,
+          deliveryNote: deliveryNote,
+        );
+      } else if (!requestIsStillCurrent) {
+        await _outbox?.remove(
+          requestId,
+          ownerProfileId: _ownerProfileId,
+        );
+      } else {
+        await _outbox?.markFailed(
+          requestId,
+          ownerProfileId: _ownerProfileId,
+          errorCode: error.code,
+        );
+      }
+      final cartDurable = await _persistCart();
+      final requestDurable = await _persistPendingRequest();
+      if (queuedDurably == false || !cartDurable || !requestDurable) {
+        throw const OrdersRepositoryException(
+          code: 'LOCAL_STORAGE_UNAVAILABLE',
+          message: 'تعذر حفظ الطلب بشكل دائم على هذا الجهاز. '
+              'بقيت السلة في الجلسة الحالية فقط؛ لا تغلق التطبيق، '
+              'تحقق من مساحة التخزين ثم أعد الإرسال.',
+        );
+      }
+      rethrow;
+    } catch (_) {
+      await _outbox?.markFailed(
+        requestId,
+        ownerProfileId: _ownerProfileId,
+        errorCode: 'UNEXPECTED_LOCAL_FAILURE',
       );
       await _persistCart();
       await _persistPendingRequest();
@@ -179,7 +230,7 @@ class CartController extends StateNotifier<List<CartItem>> {
     }
   }
 
-  Future<void> _enqueuePendingOrder({
+  Future<bool> _enqueuePendingOrder({
     required String requestId,
     required List<CartItem> items,
     required String note,
@@ -187,10 +238,11 @@ class CartController extends StateNotifier<List<CartItem>> {
     required String deliveryNote,
   }) async {
     final outbox = _outbox;
-    if (outbox == null) return;
-    await outbox.enqueue(
+    if (outbox == null) return false;
+    return outbox.enqueue(
       SyncOutboxEntry(
         id: requestId,
+        ownerProfileId: _ownerProfileId!,
         entityType: 'place_order',
         payload: {
           'client_request_id': requestId,
@@ -211,20 +263,74 @@ class CartController extends StateNotifier<List<CartItem>> {
     );
   }
 
-  Future<void> _persistCart() async {
-    await _cache?.saveCart(state);
+  /// Cancels a still-visible queued request before the customer edits the cart.
+  ///
+  /// The current cart is intentionally preserved. A stale request is never
+  /// replayed or restored blindly from product IDs.
+  Future<bool> discardQueuedOrderForEditing({
+    required String requestId,
+    required CustomerQueuedOrderState expectedState,
+  }) async {
+    await hydrate();
+    final user = ref.read(authControllerProvider).user;
+    final ownerProfileId = _ownerProfileId;
+    final outbox = _outbox;
+    if (user == null ||
+        !user.isCustomer ||
+        ownerProfileId == null ||
+        user.id != ownerProfileId ||
+        outbox == null) {
+      return false;
+    }
+
+    final discarded = await outbox.discardPlaceOrderForEditing(
+      requestId,
+      ownerProfileId: ownerProfileId,
+      expectedState: expectedState,
+    );
+    if (!discarded) return false;
+
+    if (_pendingRequestId == requestId) {
+      _pendingRequestId = null;
+      _pendingFingerprint = null;
+      await _persistPendingRequest();
+    }
+    return true;
   }
 
-  Future<void> _persistPendingRequest() async {
-    await _cache?.savePendingRequest(
-      requestId: _pendingRequestId,
-      fingerprint: _pendingFingerprint,
-    );
+  Future<bool> _persistCart() async {
+    final ownerProfileId = _ownerProfileId;
+    if (ownerProfileId == null || ownerProfileId.isEmpty) return false;
+    return await _cache?.saveCart(
+          ownerProfileId: ownerProfileId,
+          items: state,
+        ) ??
+        false;
+  }
+
+  Future<bool> _persistPendingRequest() async {
+    final ownerProfileId = _ownerProfileId;
+    if (ownerProfileId == null || ownerProfileId.isEmpty) return false;
+    return await _cache?.savePendingRequest(
+          ownerProfileId: ownerProfileId,
+          requestId: _pendingRequestId,
+          fingerprint: _pendingFingerprint,
+        ) ??
+        false;
   }
 
   void _invalidatePendingRequest() {
+    final requestId = _pendingRequestId;
     _pendingRequestId = null;
     _pendingFingerprint = null;
+    if (requestId != null && _ownerProfileId != null) {
+      unawaited(
+        _outbox?.remove(
+          requestId,
+          ownerProfileId: _ownerProfileId,
+        ),
+      );
+    }
     unawaited(_persistPendingRequest());
   }
 

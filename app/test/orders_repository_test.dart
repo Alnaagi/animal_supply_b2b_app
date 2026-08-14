@@ -1,10 +1,107 @@
+import 'dart:async';
+
 import 'package:animal_supply_b2b/src/core/constants/order_status.dart';
 import 'package:animal_supply_b2b/src/data/models/order.dart';
 import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:animal_supply_b2b/src/data/repositories/orders_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  group('SupabaseOrdersRemoteGateway transition boundary', () {
+    test('uses the trusted transition function and preserves its response',
+        () async {
+      String? invokedFunction;
+      Map<String, dynamic>? invokedBody;
+      final gateway = SupabaseOrdersRemoteGateway(
+        _testSupabaseClient(),
+        functionInvoker: (functionName, body) async {
+          invokedFunction = functionName;
+          invokedBody = body;
+          return const OrdersFunctionResponse(
+            status: 200,
+            data: {'ok': true},
+          );
+        },
+      );
+
+      final response = await gateway.transitionOrderStatus({
+        'order_id': 'order-1',
+        'status': 'confirmed',
+      });
+
+      expect(invokedFunction, 'transition-order-status');
+      expect(invokedBody, {
+        'order_id': 'order-1',
+        'status': 'confirmed',
+      });
+      expect(response.status, 200);
+      expect(response.data, {'ok': true});
+    });
+
+    test('maps a function rejection into a repository-readable response',
+        () async {
+      final gateway = SupabaseOrdersRemoteGateway(
+        _testSupabaseClient(),
+        functionInvoker: (_, __) async {
+          throw const FunctionException(
+            status: 409,
+            details: {
+              'ok': false,
+              'error': {'code': 'INVALID_STATUS_TRANSITION'},
+            },
+          );
+        },
+      );
+
+      final response = await gateway.transitionOrderStatus({
+        'order_id': 'order-1',
+        'status': 'delivered',
+      });
+
+      expect(response.status, 409);
+      expect(response.data, {
+        'ok': false,
+        'error': {'code': 'INVALID_STATUS_TRANSITION'},
+      });
+    });
+
+    test('wraps transport failures and enforces the request timeout', () async {
+      final transportGateway = SupabaseOrdersRemoteGateway(
+        _testSupabaseClient(),
+        functionInvoker: (_, __) async {
+          throw Exception('network unavailable');
+        },
+      );
+      final timeoutGateway = SupabaseOrdersRemoteGateway(
+        _testSupabaseClient(),
+        functionInvoker: (_, __) => Completer<OrdersFunctionResponse>().future,
+        requestTimeout: const Duration(milliseconds: 5),
+      );
+
+      await expectLater(
+        transportGateway.transitionOrderStatus(const {}),
+        throwsA(
+          isA<OrdersTransportException>().having(
+            (error) => error.cause,
+            'cause',
+            isA<Exception>(),
+          ),
+        ),
+      );
+      await expectLater(
+        timeoutGateway.transitionOrderStatus(const {}),
+        throwsA(
+          isA<OrdersTransportException>().having(
+            (error) => error.cause,
+            'cause',
+            isA<TimeoutException>(),
+          ),
+        ),
+      );
+    });
+  });
+
   group('OrdersRepository remote boundary', () {
     test('sends only IDs and quantities and trusts returned pricing', () async {
       final gateway = _FakeGateway(
@@ -93,9 +190,78 @@ void main() {
           isA<OrdersRepositoryException>()
               .having((error) => error.code, 'code', 'INSUFFICIENT_STOCK')
               .having(
+                (error) => error.isRetryable,
+                'isRetryable',
+                isFalse,
+              )
+              .having(
                 (error) => error.message,
                 'message',
                 contains('المخزون'),
+              ),
+        ),
+      );
+    });
+
+    test('maps maintenance mode to a clear retry-later message', () async {
+      final gateway = _FakeGateway(
+        placeResponses: const [
+          OrdersFunctionResponse(
+            status: 503,
+            data: {
+              'ok': false,
+              'error': {
+                'code': 'MAINTENANCE_MODE',
+                'message': 'Orders are temporarily unavailable.',
+              },
+            },
+          ),
+        ],
+      );
+      final repository = OrdersRepository(remote: gateway, demoSeed: const []);
+
+      expect(
+        () => repository.placeOrder(
+          clientRequestId: 'request-1',
+          customerId: 'customer-1',
+          items: [CartItem(product: _product(price: 20), quantity: 1)],
+        ),
+        throwsA(
+          isA<OrdersRepositoryException>()
+              .having((error) => error.code, 'code', 'MAINTENANCE_MODE')
+              .having(
+                (error) => error.isRetryable,
+                'isRetryable',
+                isTrue,
+              )
+              .having(
+                (error) => error.message,
+                'message',
+                contains('صيانة'),
+              ),
+        ),
+      );
+    });
+
+    test('classifies a transport failure as retryable', () async {
+      final repository = OrdersRepository(
+        remote: _TransportFailureGateway(),
+        demoSeed: const [],
+      );
+
+      expect(
+        () => repository.placeOrder(
+          clientRequestId: 'request-1',
+          customerId: 'customer-1',
+          items: [CartItem(product: _product(price: 20), quantity: 1)],
+        ),
+        throwsA(
+          isA<OrdersRepositoryException>()
+              .having((error) => error.code, 'code', 'NETWORK_ERROR')
+              .having(
+                (error) => error.isRetryable,
+                'isRetryable',
+                isTrue,
               ),
         ),
       );
@@ -177,8 +343,8 @@ void main() {
       expect(placed.displayNumber, 'DEMO-1001');
       expect(placed.items.single, isA<OrderItem>());
       expect(placed.subtotal, 50);
-      expect(placed.handlingFee, 10);
-      expect(placed.total, 60);
+      expect(placed.handlingFee, 0);
+      expect(placed.total, 50);
       expect(
         await repository.ordersForCustomer('customer-1'),
         hasLength(1),
@@ -208,6 +374,13 @@ void main() {
       );
     });
   });
+}
+
+SupabaseClient _testSupabaseClient() {
+  return SupabaseClient(
+    'https://example.supabase.co',
+    'test-anon-key',
+  );
 }
 
 class _FakeGateway implements OrdersRemoteGateway {
@@ -242,6 +415,31 @@ class _FakeGateway implements OrdersRemoteGateway {
       Map<String, dynamic> body) async {
     transitionBodies.add(body);
     return transitionResponses[_transitionIndex++];
+  }
+}
+
+class _TransportFailureGateway implements OrdersRemoteGateway {
+  @override
+  Future<List<Map<String, dynamic>>> allOrders() async => const [];
+
+  @override
+  Future<List<Map<String, dynamic>>> ordersForCustomer(
+    String customerId,
+  ) async =>
+      const [];
+
+  @override
+  Future<OrdersFunctionResponse> placeOrder(
+    Map<String, dynamic> body,
+  ) async {
+    throw const OrdersTransportException('network unavailable');
+  }
+
+  @override
+  Future<OrdersFunctionResponse> transitionOrderStatus(
+    Map<String, dynamic> body,
+  ) {
+    throw UnimplementedError();
   }
 }
 

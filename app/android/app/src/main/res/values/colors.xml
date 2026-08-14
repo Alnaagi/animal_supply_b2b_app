@@ -1,0 +1,5 @@
+<resources>
+    <color name="launch_background">#FFF7F2EA</color>
+    <color name="brand_green">#FF168A63</color>
+    <color name="notification_accent">#FF168A63</color>
+</resources>

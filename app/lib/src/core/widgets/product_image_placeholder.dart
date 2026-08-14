@@ -7,11 +7,13 @@ class ProductImagePlaceholder extends StatelessWidget {
       {required this.category,
       this.productId,
       this.imageUrl,
+      this.semanticLabel,
       this.size = 92,
       super.key});
   final String category;
   final String? productId;
   final String? imageUrl;
+  final String? semanticLabel;
   final double size;
 
   IconData get icon => switch (category) {
@@ -39,7 +41,7 @@ class ProductImagePlaceholder extends StatelessWidget {
       ),
       child: Icon(icon, color: AppTheme.green, size: size * .42),
     );
-    final assetFallback = productId == null || productId!.isEmpty
+    final assetFallback = !_hasBundledProductImage(productId)
         ? fallback
         : ClipRRect(
             borderRadius: BorderRadius.circular(size > 120 ? 28 : 20),
@@ -51,19 +53,35 @@ class ProductImagePlaceholder extends StatelessWidget {
               errorBuilder: (context, error, stackTrace) => fallback,
             ),
           );
-    if (imageUrl == null || imageUrl!.isEmpty) return assetFallback;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(size > 120 ? 28 : 20),
-      child: Image.network(
-        imageUrl!,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-        loadingBuilder: (context, child, loadingProgress) =>
-            loadingProgress == null ? child : assetFallback,
-        errorBuilder: (context, error, stackTrace) => assetFallback,
-      ),
+    final image = imageUrl == null ||
+            imageUrl!.isEmpty ||
+            imageUrl!.contains('placehold.co')
+        ? assetFallback
+        : ClipRRect(
+            borderRadius: BorderRadius.circular(size > 120 ? 28 : 20),
+            child: Image.network(
+              imageUrl!,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              excludeFromSemantics: true,
+              webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+              loadingBuilder: (context, child, loadingProgress) =>
+                  loadingProgress == null ? child : assetFallback,
+              errorBuilder: (context, error, stackTrace) => assetFallback,
+            ),
+          );
+    return Semantics(
+      image: true,
+      label: semanticLabel ?? 'صورة منتج من تصنيف $category',
+      child: ExcludeSemantics(child: image),
     );
   }
+}
+
+bool _hasBundledProductImage(String? productId) {
+  if (productId == null) return false;
+  return RegExp(
+    r'^(cat|dog|bird|fish|farm|sup|clean|vit)-00[1-5]$',
+  ).hasMatch(productId);
 }

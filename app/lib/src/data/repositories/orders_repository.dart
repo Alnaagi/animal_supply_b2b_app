@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -17,6 +19,34 @@ class OrdersFunctionResponse {
   final Object? data;
 }
 
+class OrdersTransportException implements Exception {
+  const OrdersTransportException(this.cause);
+
+  final Object cause;
+}
+
+typedef OrdersFunctionInvoker = Future<OrdersFunctionResponse> Function(
+  String functionName,
+  Map<String, dynamic> body,
+);
+
+class OrdersPage {
+  const OrdersPage({
+    required this.orders,
+    required this.hasMore,
+    required this.nextOffset,
+    required this.snapshotAt,
+  });
+
+  final List<Order> orders;
+  final bool hasMore;
+  final int nextOffset;
+
+  /// Upper timestamp boundary shared by every page in the same browsing
+  /// session. This prevents newly inserted orders from shifting offset pages.
+  final DateTime snapshotAt;
+}
+
 abstract interface class OrdersRemoteGateway {
   Future<List<Map<String, dynamic>>> ordersForCustomer(String customerId);
 
@@ -28,10 +58,50 @@ abstract interface class OrdersRemoteGateway {
       Map<String, dynamic> body);
 }
 
-class SupabaseOrdersRemoteGateway implements OrdersRemoteGateway {
-  SupabaseOrdersRemoteGateway(this.client);
+/// Optional bounded read capability for remote order gateways.
+///
+/// Kept separate from [OrdersRemoteGateway] so existing adapters and report
+/// callers remain source-compatible while interactive history screens can use
+/// production-safe paging.
+abstract interface class OrdersPagedRemoteGateway {
+  Future<List<Map<String, dynamic>>> queryOrdersPage({
+    String? customerId,
+    String? status,
+    DateTime? createdFrom,
+    DateTime? createdUntil,
+    required DateTime snapshotAt,
+    required int offset,
+    required int limit,
+  });
+
+  Future<Map<String, dynamic>?> queryOrderById(
+    String orderId, {
+    String? customerId,
+  });
+}
+
+class SupabaseOrdersRemoteGateway
+    implements OrdersRemoteGateway, OrdersPagedRemoteGateway {
+  SupabaseOrdersRemoteGateway(
+    this.client, {
+    OrdersFunctionInvoker? functionInvoker,
+    Duration requestTimeout = const Duration(seconds: 25),
+  })  : _functionInvoker = functionInvoker ??
+            ((functionName, body) async {
+              final response = await client.functions.invoke(
+                functionName,
+                body: body,
+              );
+              return OrdersFunctionResponse(
+                status: response.status,
+                data: response.data,
+              );
+            }),
+        _requestTimeout = requestTimeout;
 
   final SupabaseClient client;
+  final OrdersFunctionInvoker _functionInvoker;
+  final Duration _requestTimeout;
 
   static const _orderSelect = '''
     *,
@@ -70,23 +140,82 @@ class SupabaseOrdersRemoteGateway implements OrdersRemoteGateway {
   }
 
   @override
+  Future<List<Map<String, dynamic>>> queryOrdersPage({
+    String? customerId,
+    String? status,
+    DateTime? createdFrom,
+    DateTime? createdUntil,
+    required DateTime snapshotAt,
+    required int offset,
+    required int limit,
+  }) async {
+    dynamic query = client.from('orders').select(_orderSelect);
+    if (customerId != null && customerId.isNotEmpty) {
+      query = query.eq('customer_id', customerId);
+    }
+    if (status != null && status.isNotEmpty) {
+      query = query.eq('status', status);
+    }
+    if (createdFrom != null) {
+      query = query.gte(
+        'created_at',
+        createdFrom.toUtc().toIso8601String(),
+      );
+    }
+    if (createdUntil != null) {
+      query = query.lt(
+        'created_at',
+        createdUntil.toUtc().toIso8601String(),
+      );
+    }
+    final rows = await query
+        .lte('created_at', snapshotAt.toUtc().toIso8601String())
+        .order('created_at', ascending: false)
+        .order('id', ascending: false)
+        .range(offset, offset + limit - 1);
+    return _asRows(rows);
+  }
+
+  @override
+  Future<Map<String, dynamic>?> queryOrderById(
+    String orderId, {
+    String? customerId,
+  }) async {
+    dynamic query =
+        client.from('orders').select(_orderSelect).eq('id', orderId);
+    if (customerId != null && customerId.isNotEmpty) {
+      query = query.eq('customer_id', customerId);
+    }
+    final row = await query.maybeSingle();
+    return _asMap(row);
+  }
+
+  @override
   Future<OrdersFunctionResponse> placeOrder(Map<String, dynamic> body) async {
-    final response = await client.functions.invoke('place-order', body: body);
-    return OrdersFunctionResponse(
-      status: response.status,
-      data: response.data,
-    );
+    return _invokeFunction('place-order', body);
   }
 
   @override
   Future<OrdersFunctionResponse> transitionOrderStatus(
       Map<String, dynamic> body) async {
-    final response =
-        await client.functions.invoke('transition-order-status', body: body);
-    return OrdersFunctionResponse(
-      status: response.status,
-      data: response.data,
-    );
+    return _invokeFunction('transition-order-status', body);
+  }
+
+  Future<OrdersFunctionResponse> _invokeFunction(
+    String functionName,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      return await _functionInvoker(functionName, body)
+          .timeout(_requestTimeout);
+    } on FunctionException catch (error) {
+      return OrdersFunctionResponse(
+        status: error.status,
+        data: error.details,
+      );
+    } on Exception catch (error) {
+      throw OrdersTransportException(error);
+    }
   }
 
   static List<Map<String, dynamic>> _asRows(Object? rows) {
@@ -104,12 +233,14 @@ class OrdersRepositoryException implements Exception {
     required this.message,
     this.status,
     this.details,
+    this.isRetryable = false,
   });
 
   final String code;
   final String message;
   final int? status;
   final Object? details;
+  final bool isRetryable;
 
   @override
   String toString() => message;
@@ -136,6 +267,8 @@ class OrdersRepository {
 
   bool get isDemoMode => _remote == null;
 
+  static const defaultPageSize = 50;
+
   Future<List<Order>> ordersForCustomer(String customerId) async {
     final remote = _remote;
     if (remote != null) {
@@ -153,6 +286,118 @@ class OrdersRepository {
       return rows.map(Order.fromSupabase).toList(growable: false);
     }
     return [..._orders]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  }
+
+  Future<OrdersPage> ordersPage({
+    String? customerId,
+    OrderStatus? status,
+    DateTime? createdFrom,
+    DateTime? createdUntil,
+    DateTime? snapshotAt,
+    int offset = 0,
+    int pageSize = defaultPageSize,
+  }) async {
+    final safeOffset = offset < 0 ? 0 : offset;
+    final safePageSize = pageSize.clamp(1, 100).toInt();
+    final safeSnapshot = (snapshotAt ?? DateTime.now()).toUtc();
+    final normalizedCustomerId = _nonEmptyOrNull(customerId);
+    final remote = _remote;
+
+    if (remote case final OrdersPagedRemoteGateway pagedRemote) {
+      final rows = await pagedRemote.queryOrdersPage(
+        customerId: normalizedCustomerId,
+        status: status?.value,
+        createdFrom: createdFrom?.toUtc(),
+        createdUntil: createdUntil?.toUtc(),
+        snapshotAt: safeSnapshot,
+        offset: safeOffset,
+        limit: safePageSize + 1,
+      );
+      final mapped = rows.map(Order.fromSupabase).toList(growable: false);
+      if (normalizedCustomerId != null &&
+          mapped.any((order) => order.customerId != normalizedCustomerId)) {
+        throw const OrdersRepositoryException(
+          code: 'INVALID_SERVER_RESPONSE',
+          message:
+              'وصلت بيانات طلبات غير مطابقة للحساب الحالي، لذلك لم يتم عرضها.',
+        );
+      }
+      return _buildPage(
+        mapped,
+        offset: safeOffset,
+        pageSize: safePageSize,
+        snapshotAt: safeSnapshot,
+      );
+    }
+
+    final source = remote == null
+        ? _orders
+        : normalizedCustomerId == null
+            ? await remote
+                .allOrders()
+                .then((rows) => rows.map(Order.fromSupabase).toList())
+            : await remote
+                .ordersForCustomer(normalizedCustomerId)
+                .then((rows) => rows.map(Order.fromSupabase).toList());
+    final filtered = _filterAndSortOrders(
+      source,
+      customerId: normalizedCustomerId,
+      status: status,
+      createdFrom: createdFrom,
+      createdUntil: createdUntil,
+      snapshotAt: safeSnapshot,
+    );
+    final available = safeOffset >= filtered.length
+        ? const <Order>[]
+        : filtered.skip(safeOffset).take(safePageSize + 1).toList();
+    return _buildPage(
+      available,
+      offset: safeOffset,
+      pageSize: safePageSize,
+      snapshotAt: safeSnapshot,
+    );
+  }
+
+  Future<Order?> orderById(
+    String orderId, {
+    String? customerId,
+  }) async {
+    final normalizedOrderId = orderId.trim();
+    if (normalizedOrderId.isEmpty) return null;
+    final normalizedCustomerId = _nonEmptyOrNull(customerId);
+    final remote = _remote;
+
+    if (remote case final OrdersPagedRemoteGateway pagedRemote) {
+      final row = await pagedRemote.queryOrderById(
+        normalizedOrderId,
+        customerId: normalizedCustomerId,
+      );
+      if (row == null) return null;
+      final order = Order.fromSupabase(row);
+      if (normalizedCustomerId != null &&
+          order.customerId != normalizedCustomerId) {
+        return null;
+      }
+      return order;
+    }
+
+    final source = remote == null
+        ? _orders
+        : normalizedCustomerId == null
+            ? await remote
+                .allOrders()
+                .then((rows) => rows.map(Order.fromSupabase).toList())
+            : await remote
+                .ordersForCustomer(normalizedCustomerId)
+                .then((rows) => rows.map(Order.fromSupabase).toList());
+    for (final order in source) {
+      if (order.id == normalizedOrderId &&
+          (normalizedCustomerId == null ||
+              order.customerId == normalizedCustomerId)) {
+        return order;
+      }
+    }
+    return null;
   }
 
   /// Places an order through the trusted server boundary.
@@ -188,7 +433,7 @@ class OrdersRepository {
             },
         ],
       };
-      final response = await remote.placeOrder(body);
+      final response = await _sendPlaceOrder(remote, body);
       return _orderFromFunction(response);
     }
 
@@ -283,7 +528,7 @@ class OrdersRepository {
             },
         ],
       };
-      final response = await remote.placeOrder(body);
+      final response = await _sendPlaceOrder(remote, body);
       return _orderFromFunction(response);
     }
 
@@ -492,7 +737,87 @@ class OrdersRepository {
       message: message,
       status: status,
       details: error?['details'] ?? raw,
+      isRetryable: _isRetryableStatus(status),
     );
+  }
+
+  static Future<OrdersFunctionResponse> _sendPlaceOrder(
+    OrdersRemoteGateway remote,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      return await remote.placeOrder(body);
+    } on OrdersRepositoryException {
+      rethrow;
+    } on OrdersTransportException catch (error) {
+      throw OrdersRepositoryException(
+        code: 'NETWORK_ERROR',
+        message:
+            'تعذر الاتصال بالخادم. تم الاحتفاظ بالطلب لإعادة إرساله عند عودة الاتصال.',
+        details: error.cause,
+        isRetryable: true,
+      );
+    } on TimeoutException catch (error) {
+      throw OrdersRepositoryException(
+        code: 'REQUEST_TIMEOUT',
+        message:
+            'استغرق الاتصال بالخادم وقتاً طويلاً. تم الاحتفاظ بالطلب لإعادة إرساله.',
+        details: error,
+        isRetryable: true,
+      );
+    }
+  }
+
+  static bool _isRetryableStatus(int status) {
+    return status == 408 || status == 425 || status == 429 || status >= 500;
+  }
+
+  static OrdersPage _buildPage(
+    List<Order> available, {
+    required int offset,
+    required int pageSize,
+    required DateTime snapshotAt,
+  }) {
+    final hasMore = available.length > pageSize;
+    final orders = available.take(pageSize).toList(growable: false);
+    return OrdersPage(
+      orders: orders,
+      hasMore: hasMore,
+      nextOffset: offset + orders.length,
+      snapshotAt: snapshotAt,
+    );
+  }
+
+  static List<Order> _filterAndSortOrders(
+    Iterable<Order> source, {
+    String? customerId,
+    OrderStatus? status,
+    DateTime? createdFrom,
+    DateTime? createdUntil,
+    required DateTime snapshotAt,
+  }) {
+    final from = createdFrom?.toUtc();
+    final until = createdUntil?.toUtc();
+    final snapshot = snapshotAt.toUtc();
+    final filtered = source.where((order) {
+      final created = order.createdAt.toUtc();
+      if (customerId != null && order.customerId != customerId) return false;
+      if (status != null && order.status != status) return false;
+      if (created.isAfter(snapshot)) return false;
+      if (from != null && created.isBefore(from)) return false;
+      if (until != null && !created.isBefore(until)) return false;
+      return true;
+    }).toList();
+    filtered.sort((first, second) {
+      final byDate = second.createdAt.compareTo(first.createdAt);
+      return byDate != 0 ? byDate : second.id.compareTo(first.id);
+    });
+    return filtered;
+  }
+
+  static String? _nonEmptyOrNull(String? value) {
+    final normalized = value?.trim() ?? '';
+    return normalized.isEmpty ? null : normalized;
   }
 
   static String _localizedErrorMessage({
@@ -511,6 +836,8 @@ class OrdersRepository {
       case 'PROFILE_INACTIVE':
       case 'CUSTOMER_SUSPENDED':
         return 'الحساب غير مخول لإرسال هذا الطلب. تواصل مع الإدارة.';
+      case 'MAINTENANCE_MODE':
+        return 'الطلبات متوقفة مؤقتاً للصيانة. حاول لاحقاً أو تواصل مع الإدارة.';
       case 'OUT_OF_STOCK':
       case 'INSUFFICIENT_STOCK':
         return 'تغير المخزون لبعض المنتجات. راجع السلة وحاول من جديد.';

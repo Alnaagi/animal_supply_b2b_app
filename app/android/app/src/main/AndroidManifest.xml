@@ -1,8 +1,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
-        android:label="Animal Supply B2B"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
         android:name="${applicationName}">
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_accent" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="animal_supply_orders" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -11,6 +11,7 @@ abstract class OrderLine {
   String get productSku;
   String get unitSize;
   String get packageLabel;
+  int? get unitsPerBox;
   int get quantity;
   double get unitPrice;
   double get lineTotal;
@@ -46,13 +47,16 @@ class CartItem extends OrderLine {
   String get packageLabel => product.effectivePackageSize;
 
   @override
+  int? get unitsPerBox => product.unitsPerBox;
+
+  @override
   double get unitPrice => product.price;
 
   @override
   double get lineTotal => unitPrice * quantity;
 
   @override
-  bool get canReorder => product.active && product.inStock;
+  bool get canReorder => product.active && product.isOrderable;
 
   CartItem copyWith({int? quantity}) =>
       CartItem(product: product, quantity: quantity ?? this.quantity);
@@ -70,6 +74,7 @@ class OrderItem extends OrderLine {
     required this.productSku,
     required this.unitSize,
     required this.packageLabel,
+    this.unitsPerBox,
     required this.quantity,
     required this.unitPrice,
     required this.lineTotal,
@@ -94,6 +99,9 @@ class OrderItem extends OrderLine {
   final String packageLabel;
 
   @override
+  final int? unitsPerBox;
+
+  @override
   final int quantity;
 
   @override
@@ -110,7 +118,7 @@ class OrderItem extends OrderLine {
   final Product product;
 
   @override
-  bool get canReorder => product.active && product.inStock;
+  bool get canReorder => product.active && product.isOrderable;
 
   factory OrderItem.fromMap(Map<String, dynamic> row) {
     final productRow = _mapOrNull(row['products']) ??
@@ -144,6 +152,11 @@ class OrderItem extends OrderLine {
             productRow['unit_size'] ??
             '')
         .toString();
+    final unitsPerBox = _asNullableInt(
+      row['units_per_box'] ??
+          row['units_per_box_snapshot'] ??
+          productRow['units_per_box'],
+    );
 
     final currentProduct = productRow.isEmpty
         ? Product(
@@ -169,6 +182,7 @@ class OrderItem extends OrderLine {
       productSku: productSku,
       unitSize: unitSize,
       packageLabel: packageLabel,
+      unitsPerBox: unitsPerBox,
       quantity: quantity,
       unitPrice: unitPrice,
       lineTotal: _asDouble(
@@ -178,6 +192,11 @@ class OrderItem extends OrderLine {
       product: currentProduct,
     );
   }
+}
+
+int? _asNullableInt(Object? value) {
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '');
 }
 
 class OrderStatusHistoryEntry {
@@ -392,21 +411,26 @@ class CartPricingSummary {
     required this.deliveryFee,
   });
 
-  static const double defaultEstimatedHandlingFee = 10;
-
   final double subtotal;
   final double handlingFee;
   final double deliveryFee;
 
   double get total => subtotal + handlingFee + deliveryFee;
+  bool meetsMinimum(double minimumOrderAmount) =>
+      subtotal >= minimumOrderAmount;
+  double amountNeededForMinimum(double minimumOrderAmount) =>
+      (minimumOrderAmount - subtotal).clamp(0, double.infinity);
 
-  factory CartPricingSummary.estimate(Iterable<CartItem> items) {
+  factory CartPricingSummary.estimate(
+    Iterable<CartItem> items, {
+    double handlingFee = 0,
+    double deliveryFee = 0,
+  }) {
     final itemList = items.toList(growable: false);
     return CartPricingSummary(
       subtotal: itemList.fold<double>(0, (sum, item) => sum + item.lineTotal),
-      handlingFee:
-          itemList.isEmpty ? 0 : CartPricingSummary.defaultEstimatedHandlingFee,
-      deliveryFee: 0,
+      handlingFee: itemList.isEmpty ? 0 : handlingFee,
+      deliveryFee: itemList.isEmpty ? 0 : deliveryFee,
     );
   }
 }

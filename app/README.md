@@ -1,17 +1,25 @@
-# animal_supply_b2b
+# Animal Supply B2B Flutter App
 
-A new Flutter project.
+Arabic-first, RTL Flutter client for customer, staff, and admin roles. Customer
+accounts are created by authorized staff; there is no public sign-up flow.
 
-## Getting Started
+Run local validation from this directory:
 
-This project is a starting point for a Flutter application.
+```bash
+/home/alnaagi/development/flutter/bin/flutter pub get
+/home/alnaagi/development/flutter/bin/flutter analyze
+/home/alnaagi/development/flutter/bin/flutter test
+```
 
-A few resources to get you started if this is your first Flutter project:
+Run without Supabase values for the clearly labelled demo/offline-friendly
+mode. Production builds require the public configuration described in the
+repository root `README.md` and `CLOUDFLARE_DEPLOYMENT.md`; never provide
+service-role, Firebase service-account, signing, or database secrets through
+Flutter build defines.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Use `tool/build_web_release.mjs` for web releases so the generated offline
+shell manifest matches the exact build. Android and iOS distribution
+instructions are maintained in the repository root deployment documents. Use
+`tool/build_mobile_release.mjs` for final Android/iOS artifacts so public
+configuration is validated, secret-shaped artifact content is rejected, and
+a checksummed release manifest is generated.

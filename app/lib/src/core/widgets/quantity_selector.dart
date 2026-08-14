@@ -23,11 +23,18 @@ class QuantitySelector extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
+              tooltip: 'تقليل الكمية',
               onPressed: quantity <= min ? null : () => onChanged(quantity - 1),
               icon: const Icon(Icons.remove)),
-          Text('$quantity',
-              style: const TextStyle(fontWeight: FontWeight.bold)),
+          Semantics(
+            label: 'الكمية الحالية: $quantity',
+            child: ExcludeSemantics(
+              child: Text('$quantity',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ),
           IconButton(
+              tooltip: 'زيادة الكمية',
               onPressed: max != null && quantity >= max!
                   ? null
                   : () => onChanged(quantity + 1),

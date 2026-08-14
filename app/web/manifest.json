@@ -1,12 +1,16 @@
 {
-    "name": "animal_supply_b2b",
-    "short_name": "animal_supply_b2b",
-    "start_url": ".",
+    "name": "متجر أعلاف ومستلزمات الحيوانات",
+    "short_name": "متجر الأعلاف",
+    "id": "/",
+    "scope": "/",
+    "start_url": "/",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#F7F2EA",
+    "theme_color": "#168A63",
+    "description": "منصة عربية لطلبات الجملة للأعلاف ومستلزمات الحيوانات.",
     "orientation": "portrait-primary",
+    "lang": "ar",
+    "dir": "rtl",
     "prefer_related_applications": false,
     "icons": [
         {

@@ -11,7 +11,7 @@ class BusinessCustomer {
     this.city = '',
     this.area = '',
     this.address = '',
-    this.priceGroup = 'جملة',
+    this.discountPercent = 0,
     this.accountStatus = 'active',
     this.creditLimit = 0,
     this.outstandingBalance = 0,
@@ -26,7 +26,7 @@ class BusinessCustomer {
   final String city;
   final String area;
   final String address;
-  final String priceGroup;
+  final double discountPercent;
   final String accountStatus;
   final double creditLimit;
   final double outstandingBalance;
@@ -43,7 +43,7 @@ class BusinessCustomer {
     String? city,
     String? area,
     String? address,
-    String? priceGroup,
+    double? discountPercent,
     String? accountStatus,
     double? creditLimit,
     double? outstandingBalance,
@@ -58,7 +58,7 @@ class BusinessCustomer {
       city: city ?? this.city,
       area: area ?? this.area,
       address: address ?? this.address,
-      priceGroup: priceGroup ?? this.priceGroup,
+      discountPercent: discountPercent ?? this.discountPercent,
       accountStatus: accountStatus ?? this.accountStatus,
       creditLimit: creditLimit ?? this.creditLimit,
       outstandingBalance: outstandingBalance ?? this.outstandingBalance,
@@ -67,7 +67,6 @@ class BusinessCustomer {
 
   factory BusinessCustomer.fromSupabase(Map<String, dynamic> row) {
     final profile = row['profiles'];
-    final priceGroup = row['price_groups'];
     return BusinessCustomer(
       id: row['id'].toString(),
       profileId: row['profile_id']?.toString(),
@@ -78,14 +77,45 @@ class BusinessCustomer {
       city: (row['city'] ?? '').toString(),
       area: (row['area'] ?? '').toString(),
       address: (row['address'] ?? '').toString(),
-      priceGroup: priceGroup is Map
-          ? (priceGroup['name'] ?? 'جملة').toString()
-          : 'جملة',
+      discountPercent:
+          validatedCustomerDiscountPercent(row['discount_percent'] ?? 0),
       accountStatus: (row['account_status'] ?? 'active').toString(),
       creditLimit: ((row['credit_limit'] ?? 0) as num).toDouble(),
       outstandingBalance: ((row['outstanding_balance'] ?? 0) as num).toDouble(),
     );
   }
+}
+
+double validatedCustomerDiscountPercent(Object? value) {
+  if (value is! num) {
+    throw ArgumentError.value(
+      value,
+      'discountPercent',
+      'Customer discount must be numeric.',
+    );
+  }
+  final discount = value.toDouble();
+  if (!discount.isFinite || discount < 0 || discount >= 100) {
+    throw ArgumentError.value(
+      value,
+      'discountPercent',
+      'Customer discount must be between 0 and 99.99 with at most two decimals.',
+    );
+  }
+  final normalized = (discount * 100).round() / 100;
+  if ((normalized - discount).abs() > 0.000000001) {
+    throw ArgumentError.value(
+      value,
+      'discountPercent',
+      'Customer discount must be between 0 and 99.99 with at most two decimals.',
+    );
+  }
+  return normalized;
+}
+
+double _adminMoney(Object? value) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? 0;
 }
 
 class AdminDashboardStats {
@@ -106,14 +136,252 @@ class AdminDashboardStats {
   final double monthSales;
 }
 
+class AdminDashboardData {
+  const AdminDashboardData({
+    required this.stats,
+    required this.pendingOrders,
+    required this.lowStockProducts,
+  });
+
+  final AdminDashboardStats stats;
+  final List<AdminDashboardOrderRow> pendingOrders;
+  final List<AdminInventoryReportRow> lowStockProducts;
+
+  factory AdminDashboardData.fromRpc(Map<String, dynamic> value) {
+    final stats = _adminMap(value['stats']);
+    return AdminDashboardData(
+      stats: AdminDashboardStats(
+        totalCustomers: _adminInt(stats['total_customers']),
+        activeCustomers: _adminInt(stats['active_customers']),
+        pendingOrders: _adminInt(stats['pending_orders']),
+        todayOrders: _adminInt(stats['today_orders']),
+        lowStockCount: _adminInt(stats['low_stock_count']),
+        monthSales: _adminMoney(stats['month_sales']),
+      ),
+      pendingOrders: [
+        for (final row in _adminRows(value['pending_orders']))
+          AdminDashboardOrderRow.fromRpc(row),
+      ],
+      lowStockProducts: [
+        for (final row in _adminRows(value['low_stock_products']))
+          AdminInventoryReportRow.fromRpc(row),
+      ],
+    );
+  }
+}
+
+class AdminDashboardOrderRow {
+  const AdminDashboardOrderRow({
+    required this.id,
+    required this.orderNumber,
+    required this.businessName,
+    required this.itemCount,
+    required this.total,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String orderNumber;
+  final String businessName;
+  final int itemCount;
+  final double total;
+  final DateTime createdAt;
+
+  String get displayNumber {
+    if (orderNumber.trim().isNotEmpty) return orderNumber;
+    return id.substring(0, id.length < 8 ? id.length : 8);
+  }
+
+  factory AdminDashboardOrderRow.fromRpc(Map<String, dynamic> row) {
+    return AdminDashboardOrderRow(
+      id: (row['id'] ?? '').toString(),
+      orderNumber: (row['order_number'] ?? '').toString(),
+      businessName: (row['business_name'] ?? '').toString(),
+      itemCount: _adminInt(row['item_count']),
+      total: _adminMoney(row['total']),
+      createdAt:
+          DateTime.tryParse((row['created_at'] ?? '').toString())?.toLocal() ??
+              DateTime.fromMillisecondsSinceEpoch(0),
+    );
+  }
+}
+
+class AdminReportData {
+  const AdminReportData({
+    required this.periodOrderCount,
+    required this.deliveredOrderCount,
+    required this.cancelledOrderCount,
+    required this.salesTotal,
+    required this.averageOrderValue,
+    required this.outstandingBalance,
+    required this.topCustomers,
+    required this.topProducts,
+    required this.lowStockProducts,
+    required this.outstandingCustomers,
+  });
+
+  final int periodOrderCount;
+  final int deliveredOrderCount;
+  final int cancelledOrderCount;
+  final double salesTotal;
+  final double averageOrderValue;
+
+  /// A manually maintained reference value, not an accounting-ledger total.
+  final double outstandingBalance;
+
+  final List<AdminCustomerReportRow> topCustomers;
+  final List<AdminProductReportRow> topProducts;
+  final List<AdminInventoryReportRow> lowStockProducts;
+  final List<AdminBalanceReportRow> outstandingCustomers;
+
+  factory AdminReportData.fromRpc(Map<String, dynamic> value) {
+    return AdminReportData(
+      periodOrderCount: _adminInt(value['period_order_count']),
+      deliveredOrderCount: _adminInt(value['delivered_order_count']),
+      cancelledOrderCount: _adminInt(value['cancelled_order_count']),
+      salesTotal: _adminMoney(value['sales_total']),
+      averageOrderValue: _adminMoney(value['average_order_value']),
+      outstandingBalance: _adminMoney(value['outstanding_balance']),
+      topCustomers: [
+        for (final row in _adminRows(value['top_customers']))
+          AdminCustomerReportRow.fromRpc(row),
+      ],
+      topProducts: [
+        for (final row in _adminRows(value['top_products']))
+          AdminProductReportRow.fromRpc(row),
+      ],
+      lowStockProducts: [
+        for (final row in _adminRows(value['low_stock_products']))
+          AdminInventoryReportRow.fromRpc(row),
+      ],
+      outstandingCustomers: [
+        for (final row in _adminRows(value['outstanding_customers']))
+          AdminBalanceReportRow.fromRpc(row),
+      ],
+    );
+  }
+}
+
+class AdminCustomerReportRow {
+  const AdminCustomerReportRow({
+    required this.customerId,
+    required this.businessName,
+    required this.orderCount,
+    required this.salesTotal,
+  });
+
+  final String customerId;
+  final String businessName;
+  final int orderCount;
+  final double salesTotal;
+
+  factory AdminCustomerReportRow.fromRpc(Map<String, dynamic> row) =>
+      AdminCustomerReportRow(
+        customerId: (row['customer_id'] ?? '').toString(),
+        businessName: (row['business_name'] ?? '').toString(),
+        orderCount: _adminInt(row['order_count']),
+        salesTotal: _adminMoney(row['sales_total']),
+      );
+}
+
+class AdminProductReportRow {
+  const AdminProductReportRow({
+    required this.productId,
+    required this.productName,
+    required this.sku,
+    required this.quantity,
+    required this.salesTotal,
+  });
+
+  final String productId;
+  final String productName;
+  final String sku;
+  final int quantity;
+  final double salesTotal;
+
+  factory AdminProductReportRow.fromRpc(Map<String, dynamic> row) =>
+      AdminProductReportRow(
+        productId: (row['product_id'] ?? '').toString(),
+        productName: (row['product_name'] ?? '').toString(),
+        sku: (row['sku'] ?? '').toString(),
+        quantity: _adminInt(row['quantity']),
+        salesTotal: _adminMoney(row['sales_total']),
+      );
+}
+
+class AdminInventoryReportRow {
+  const AdminInventoryReportRow({
+    required this.productId,
+    required this.productName,
+    required this.sku,
+    required this.availableQuantity,
+  });
+
+  final String productId;
+  final String productName;
+  final String sku;
+  final int availableQuantity;
+
+  factory AdminInventoryReportRow.fromRpc(Map<String, dynamic> row) =>
+      AdminInventoryReportRow(
+        productId: (row['product_id'] ?? '').toString(),
+        productName: (row['product_name'] ?? '').toString(),
+        sku: (row['sku'] ?? '').toString(),
+        availableQuantity: _adminInt(row['available_quantity']),
+      );
+}
+
+class AdminBalanceReportRow {
+  const AdminBalanceReportRow({
+    required this.customerId,
+    required this.businessName,
+    required this.outstandingBalance,
+    required this.creditLimit,
+  });
+
+  final String customerId;
+  final String businessName;
+  final double outstandingBalance;
+  final double creditLimit;
+
+  factory AdminBalanceReportRow.fromRpc(Map<String, dynamic> row) =>
+      AdminBalanceReportRow(
+        customerId: (row['customer_id'] ?? '').toString(),
+        businessName: (row['business_name'] ?? '').toString(),
+        outstandingBalance: _adminMoney(row['outstanding_balance']),
+        creditLimit: _adminMoney(row['credit_limit']),
+      );
+}
+
+int _adminInt(Object? value) {
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+Map<String, dynamic> _adminMap(Object? value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return const <String, dynamic>{};
+}
+
+List<Map<String, dynamic>> _adminRows(Object? value) {
+  if (value is! List) return const <Map<String, dynamic>>[];
+  return [
+    for (final row in value)
+      if (row is Map) Map<String, dynamic>.from(row),
+  ];
+}
+
 class AppSettingsData {
   const AppSettingsData({
     this.shopName = 'متجر أعلاف ومستلزمات الحيوانات',
-    this.supportWhatsapp = '+218910000000',
-    this.downloadLink = 'https://example.com/animal-supply.apk',
-    this.apkLink = 'https://example.com/downloads/animal-supply-b2b.apk',
+    this.supportWhatsapp = '',
+    this.downloadLink = '',
+    this.apkLink = '',
     this.deliveryPolicy = 'يتم الاتفاق بعد تأكيد الطلب',
     this.minimumOrderAmount = 0,
+    this.deliveryFee = 0,
+    this.handlingFee = 0,
     this.currency = 'LYD',
     this.maintenanceMode = false,
   });
@@ -124,6 +392,8 @@ class AppSettingsData {
   final String apkLink;
   final String deliveryPolicy;
   final double minimumOrderAmount;
+  final double deliveryFee;
+  final double handlingFee;
   final String currency;
   final bool maintenanceMode;
 
@@ -134,6 +404,8 @@ class AppSettingsData {
         'apk_link': apkLink,
         'delivery_policy': deliveryPolicy,
         'minimum_order_amount': minimumOrderAmount.toStringAsFixed(2),
+        'delivery_fee': deliveryFee.toStringAsFixed(2),
+        'handling_fee': handlingFee.toStringAsFixed(2),
         'currency': currency,
         'maintenance_mode': maintenanceMode.toString(),
       };
@@ -141,15 +413,15 @@ class AppSettingsData {
   factory AppSettingsData.fromKeyValues(Map<String, String> values) {
     return AppSettingsData(
       shopName: values['shop_name'] ?? 'متجر أعلاف ومستلزمات الحيوانات',
-      supportWhatsapp: values['support_whatsapp'] ?? '+218910000000',
-      downloadLink:
-          values['download_link'] ?? 'https://example.com/animal-supply.apk',
-      apkLink: values['apk_link'] ??
-          'https://example.com/downloads/animal-supply-b2b.apk',
+      supportWhatsapp: values['support_whatsapp'] ?? '',
+      downloadLink: values['download_link'] ?? '',
+      apkLink: values['apk_link'] ?? '',
       deliveryPolicy:
           values['delivery_policy'] ?? 'يتم الاتفاق بعد تأكيد الطلب',
       minimumOrderAmount:
           double.tryParse(values['minimum_order_amount'] ?? '') ?? 0,
+      deliveryFee: double.tryParse(values['delivery_fee'] ?? '') ?? 0,
+      handlingFee: double.tryParse(values['handling_fee'] ?? '') ?? 0,
       currency: values['currency'] ?? 'LYD',
       maintenanceMode: values['maintenance_mode'] == 'true',
     );
@@ -157,6 +429,12 @@ class AppSettingsData {
 }
 
 class AppBanner {
+  static const supportedTargetTypes = <String>{
+    'catalog',
+    'category',
+    'product',
+  };
+
   const AppBanner({
     required this.id,
     required this.title,
@@ -179,6 +457,42 @@ class AppBanner {
   final int sortOrder;
   final bool active;
 
+  AppBanner copyWith({
+    String? id,
+    String? title,
+    String? body,
+    String? ctaText,
+    String? imageUrl,
+    String? targetType,
+    String? targetValue,
+    int? sortOrder,
+    bool? active,
+  }) {
+    return AppBanner(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      body: body ?? this.body,
+      ctaText: ctaText ?? this.ctaText,
+      imageUrl: imageUrl ?? this.imageUrl,
+      targetType: targetType ?? this.targetType,
+      targetValue: targetValue ?? this.targetValue,
+      sortOrder: sortOrder ?? this.sortOrder,
+      active: active ?? this.active,
+    );
+  }
+
+  Map<String, dynamic> toSupabasePayload() => {
+        'title': title,
+        'body': body.isEmpty ? null : body,
+        'cta_text': ctaText,
+        'image_url': imageUrl,
+        'image_path': null,
+        'target_type': targetType,
+        'target_value': targetValue.isEmpty ? null : targetValue,
+        'sort_order': sortOrder,
+        'active': active,
+      };
+
   factory AppBanner.fromSupabase(Map<String, dynamic> row) => AppBanner(
         id: row['id'].toString(),
         title: (row['title'] ?? '').toString(),
@@ -187,7 +501,7 @@ class AppBanner {
         imageUrl: (row['image_url'] ?? row['image_path'] ?? '').toString(),
         targetType: (row['target_type'] ?? 'catalog').toString(),
         targetValue: (row['target_value'] ?? '').toString(),
-        sortOrder: (row['sort_order'] ?? 0) as int,
+        sortOrder: (row['sort_order'] as num?)?.toInt() ?? 0,
         active: row['active'] != false,
       );
 }
@@ -200,6 +514,9 @@ class AppVersionInfo {
     this.apkUrl = '',
     this.required = false,
     this.releaseNotes = '',
+    this.minimumSupportedCode = 1,
+    this.sha256 = '',
+    this.fileSizeBytes,
   });
 
   final String platform;
@@ -208,6 +525,14 @@ class AppVersionInfo {
   final String apkUrl;
   final bool required;
   final String releaseNotes;
+  final int minimumSupportedCode;
+  final String sha256;
+  final int? fileSizeBytes;
+
+  bool hasUpdateFor(int installedCode) => versionCode > installedCode;
+
+  bool requiresUpdateFor(int installedCode) =>
+      required || installedCode < minimumSupportedCode;
 }
 
 class AdminNotification {

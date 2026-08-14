@@ -15,6 +15,10 @@ The demo catalog now contains 40 realistic sample products, with 5 products in e
 
 Products use common brand and product-style names such as Royal Canin, Purina Pro Plan, Whiskas, Pedigree, Josera, Happy Dog, Tetra, Versele-Laga, Vitakraft, Catsan, Biokats, Beaphar, and generic livestock feed items.
 
+The demo customer has one clearly labelled customer-wide discount. Demo
+customer prices apply that percentage to every positive base price using the
+same two-decimal rounding and `0.01` minimum as the production database.
+
 ## Demo Only
 
 This catalog is sample presentation/testing data only. It is not the client inventory, not a supplier agreement, and not a production price list.
@@ -47,8 +51,10 @@ Use `docs/product_import_template.csv` as a starting point for CSV import. The a
 
 - `categories`
 - `products`
-- `product_prices`
-- `customer_special_prices`
+
+Customer-specific pricing is not imported per product. Admins set one
+`discount_percent` from the customer's profile. Legacy pricing tables remain
+dormant for transition/rollback review.
 
 Recommended production import flow:
 

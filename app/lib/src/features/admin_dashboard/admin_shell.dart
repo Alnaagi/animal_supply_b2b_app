@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/config/app_config.dart';
+import '../../core/notifications/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
+import '../../data/repositories/notifications_repository.dart';
 import '../auth/auth_controller.dart';
+import '../notifications/notification_center_sheet.dart';
 
 class AdminShell extends ConsumerWidget {
   const AdminShell(
@@ -19,8 +23,14 @@ class AdminShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final wide = MediaQuery.sizeOf(context).width >= 900;
+    final user = ref.watch(authControllerProvider).user;
+    final unread = ref.watch(unreadNotificationsCountProvider).valueOrNull ?? 0;
     final nav = _AdminNav(
-        onLogout: () => ref.read(authControllerProvider.notifier).logout());
+      isAdmin: user?.isAdmin == true,
+      onLogout: () => ref
+          .read(pushNotificationsCoordinatorProvider)
+          .signOut(ref.read(authControllerProvider.notifier)),
+    );
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
@@ -29,13 +39,17 @@ class AdminShell extends ConsumerWidget {
             : Builder(
                 builder: (context) => IconButton(
                     icon: const Icon(Icons.menu),
+                    tooltip: 'فتح قائمة الإدارة',
                     onPressed: () => Scaffold.of(context).openDrawer())),
         actions: [
           IconButton(
             tooltip: 'الإشعارات',
-            onPressed: () => _showNotificationsPlaceholder(context),
-            icon: const Badge(
-                label: Text('1'), child: Icon(Icons.notifications_outlined)),
+            onPressed: () => showNotificationCenter(context, ref),
+            icon: Badge(
+              isLabelVisible: unread > 0,
+              label: Text(unread > 99 ? '99+' : '$unread'),
+              child: const Icon(Icons.notifications_outlined),
+            ),
           ),
           ...actions,
         ],
@@ -46,37 +60,64 @@ class AdminShell extends ConsumerWidget {
           if (wide)
             SizedBox(
                 width: 270, child: Material(color: Colors.white, child: nav)),
-          Expanded(child: child),
+          Expanded(
+            child: Column(
+              children: [
+                if (AppConfig.isDemoMode || user?.isDemo == true)
+                  const AdminDemoModeNotice(),
+                Expanded(child: child),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
+}
 
-  void _showNotificationsPlaceholder(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (context) => const Padding(
-        padding: EdgeInsets.all(18),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+class AdminDemoModeNotice extends StatelessWidget {
+  const AdminDemoModeNotice({super.key});
+
+  static const message =
+      'وضع تجريبي — بيانات الإدارة والطلبات والتغييرات محلية وغير تشغيلية.';
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: message,
+      child: ExcludeSemantics(
+        child: Container(
+          key: const Key('admin-demo-mode-notice'),
+          width: double.infinity,
+          color: Colors.blueGrey.shade800,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text('الإشعارات',
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)),
-              SizedBox(height: 12),
-              ListTile(
-                  leading: Icon(Icons.receipt_long),
-                  title: Text('طلب جديد'),
-                  subtitle:
-                      Text('سيتم ربط تنبيهات FCM هنا عند إضافة Firebase.')),
-            ]),
+              Icon(Icons.science_outlined, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
 class _AdminNav extends StatelessWidget {
-  const _AdminNav({required this.onLogout});
+  const _AdminNav({required this.isAdmin, required this.onLogout});
+  final bool isAdmin;
   final VoidCallback onLogout;
 
   @override
@@ -97,7 +138,7 @@ class _AdminNav extends StatelessWidget {
                   child: Icon(Icons.pets, color: Colors.white)),
               SizedBox(width: 10),
               Expanded(
-                  child: Text('Animal Supply B2B\nلوحة العمليات',
+                  child: Text('${AppConfig.shopName}\nلوحة العمليات',
                       style: TextStyle(fontWeight: FontWeight.w900))),
             ]),
           ),
@@ -117,6 +158,12 @@ class _AdminNav extends StatelessWidget {
               current: current,
               icon: Icons.inventory_2_outlined,
               label: 'المنتجات'),
+          if (isAdmin)
+            _NavTile(
+                path: '/admin/banners',
+                current: current,
+                icon: Icons.view_carousel_outlined,
+                label: 'البانرات'),
           _NavTile(
               path: '/admin/orders',
               current: current,
@@ -127,16 +174,25 @@ class _AdminNav extends StatelessWidget {
               current: current,
               icon: Icons.archive_outlined,
               label: 'الأرشيف'),
-          _NavTile(
-              path: '/admin/settings',
-              current: current,
-              icon: Icons.settings_outlined,
-              label: 'الإعدادات والتحديثات'),
+          if (isAdmin)
+            _NavTile(
+                path: '/admin/notifications',
+                current: current,
+                icon: Icons.campaign_outlined,
+                label: 'إرسال الإشعارات'),
+          if (isAdmin)
+            _NavTile(
+                path: '/admin/reports',
+                current: current,
+                icon: Icons.analytics_outlined,
+                label: 'التقارير التشغيلية'),
+          if (isAdmin)
+            _NavTile(
+                path: '/admin/settings',
+                current: current,
+                icon: Icons.settings_outlined,
+                label: 'الإعدادات والتحديثات'),
           const Divider(height: 28),
-          ListTile(
-              leading: const Icon(Icons.storefront),
-              title: const Text('واجهة العميل'),
-              onTap: () => context.go('/home')),
           ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('خروج'),

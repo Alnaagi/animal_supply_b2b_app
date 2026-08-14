@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/notifications/push_notifications.dart';
+import '../../core/notifications/push_permission_card.dart';
+import '../../core/support/whatsapp_support.dart';
+import '../../core/utils/formatters.dart';
+import '../../data/repositories/admin_repository.dart';
 import '../auth/auth_controller.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -10,15 +15,28 @@ class ProfileScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authControllerProvider).user!;
+    final settings = ref.watch(appSettingsProvider).asData?.value;
+    final shopName = settings?.shopName.trim().isNotEmpty == true
+        ? settings!.shopName.trim()
+        : AppConfig.shopName;
+    final supportPhone = settings?.supportWhatsapp.trim().isNotEmpty == true
+        ? settings!.supportWhatsapp
+        : AppConfig.supportWhatsapp;
     final rows = {
-      'اسم النشاط': user.businessName ?? 'عميل تجريبي',
-      'الشخص المسؤول': 'محمد علي',
-      'الهاتف': '+218910000001',
-      'المدينة/المنطقة': 'طرابلس - حي الأندلس',
-      'العنوان': 'عنوان العميل التجاري',
-      'مجموعة الأسعار': 'جملة',
-      'حد الائتمان': 'سيضاف لاحقاً',
-      'الرصيد المستحق': 'سيضاف لاحقاً',
+      'اسم النشاط': user.businessName ?? user.username,
+      if (user.fullName?.trim().isNotEmpty == true)
+        'الشخص المسؤول': user.fullName!,
+      if (user.phone?.trim().isNotEmpty == true) 'الهاتف': user.phone!,
+      if (user.city?.trim().isNotEmpty == true ||
+          user.area?.trim().isNotEmpty == true)
+        'المدينة/المنطقة': [
+          if (user.city?.trim().isNotEmpty == true) user.city!,
+          if (user.area?.trim().isNotEmpty == true) user.area!,
+        ].join(' - '),
+      if (user.address?.trim().isNotEmpty == true) 'العنوان': user.address!,
+      'خصم جميع المنتجات': _formatDiscountPercent(user.discountPercent),
+      'حد الائتمان (مرجعي)': lyd(user.creditLimit),
+      'الرصيد المستحق (مسجل يدوياً)': lyd(user.outstandingBalance),
     };
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -36,7 +54,12 @@ class ProfileScreen extends ConsumerWidget {
                       .titleLarge
                       ?.copyWith(fontWeight: FontWeight.w900),
                   textAlign: TextAlign.center),
-              const Text('حساب عميل جملة نشط'),
+              Text(
+                user.isDemo
+                    ? 'حساب عميل تجريبي — البيانات غير حقيقية'
+                    : 'حساب عميل جملة نشط',
+                textAlign: TextAlign.center,
+              ),
             ]),
           ),
         ),
@@ -44,14 +67,49 @@ class ProfileScreen extends ConsumerWidget {
         ...rows.entries.map((e) =>
             Card(child: ListTile(title: Text(e.key), subtitle: Text(e.value)))),
         OutlinedButton.icon(
-            onPressed: () {},
+          onPressed: AppConfig.remoteBackendEnabled
+              ? () => ref
+                  .read(authControllerProvider.notifier)
+                  .retrySessionCheck()
+              : null,
+          icon: const Icon(Icons.refresh),
+          label: const Text('تحديث بيانات الحساب والأسعار'),
+        ),
+        const PushPermissionCard(),
+        OutlinedButton.icon(
+            onPressed: WhatsAppSupport.isConfiguredFor(supportPhone)
+                ? () async {
+                    final opened = await WhatsAppSupport.openMessage(
+                      'مرحباً، أحتاج مساعدة بخصوص حسابي في '
+                      '$shopName.',
+                      phone: supportPhone,
+                    );
+                    if (!opened && context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('تعذر فتح واتساب حالياً'),
+                        ),
+                      );
+                    }
+                  }
+                : null,
             icon: const Icon(Icons.chat),
-            label: const Text('الدعم عبر واتساب ${AppConfig.supportWhatsapp}')),
+            label: Text(WhatsAppSupport.isConfiguredFor(supportPhone)
+                ? 'الدعم عبر واتساب ${WhatsAppSupport.displayPhoneFor(supportPhone)}'
+                : 'واتساب الدعم غير مهيأ')),
         FilledButton.icon(
-            onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+            onPressed: () => ref
+                .read(pushNotificationsCoordinatorProvider)
+                .signOut(ref.read(authControllerProvider.notifier)),
             icon: const Icon(Icons.logout),
             label: const Text('تسجيل خروج')),
       ],
     );
   }
+}
+
+String _formatDiscountPercent(double value) {
+  final fixed = value.toStringAsFixed(2);
+  final compact = fixed.replaceFirst(RegExp(r'\.?0+$'), '');
+  return '$compact%';
 }

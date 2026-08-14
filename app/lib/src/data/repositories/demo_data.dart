@@ -13,6 +13,14 @@ const demoCustomer = AppUser(
   role: 'customer',
   businessName: 'شركة طرابلس للحيوانات الأليفة',
   customerId: 'customer-1',
+  fullName: 'محمد السنوسي',
+  phone: '+218910000001',
+  city: 'طرابلس',
+  area: 'حي الأندلس',
+  address: 'شارع تجاري قريب من الطريق الرئيسي',
+  discountPercent: 12.5,
+  creditLimit: 2500,
+  outstandingBalance: 420,
 );
 
 const _img =
@@ -913,8 +921,23 @@ final _demoProductsRaw = <Product>[
       tags: ['هضم', 'مكملات']),
 ];
 
+double _suggestedDemoRetailPrice(double wholesalePrice) =>
+    (wholesalePrice * 125).round() / 100;
+
+double _demoCustomerPrice(double basePrice) {
+  if (basePrice <= 0) return basePrice;
+  final discounted =
+      (basePrice * (100 - demoCustomer.discountPercent)).round() / 100;
+  return discounted < 0.01 ? 0.01 : discounted;
+}
+
 final demoProducts = _demoProductsRaw
-    .where((product) => product.imageUrl != null && product.imageUrl != _img)
+    .map(
+      (product) => product.copyWith(
+        effectivePrice: _demoCustomerPrice(product.basePrice),
+        retailUnitPrice: _suggestedDemoRetailPrice(product.basePrice),
+      ),
+    )
     .toList();
 
 final demoOrders = <Order>[

@@ -140,7 +140,7 @@ void main() {
       final summary = CartPricingSummary.estimate([
         CartItem(product: first, quantity: 2),
         CartItem(product: second, quantity: 1),
-      ]);
+      ], handlingFee: 10);
 
       expect(summary.subtotal, 90);
       expect(summary.handlingFee, 10);
@@ -152,6 +152,18 @@ void main() {
       final summary = CartPricingSummary.estimate(const []);
       expect(summary.total, 0);
       expect(summary.handlingFee, 0);
+    });
+
+    test('reports the remaining minimum-order amount', () {
+      const summary = CartPricingSummary(
+        subtotal: 70,
+        handlingFee: 5,
+        deliveryFee: 5,
+      );
+      expect(summary.meetsMinimum(100), isFalse);
+      expect(summary.amountNeededForMinimum(100), 30);
+      expect(summary.meetsMinimum(70), isTrue);
+      expect(summary.amountNeededForMinimum(70), 0);
     });
   });
 

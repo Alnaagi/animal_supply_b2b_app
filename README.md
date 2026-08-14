@@ -22,10 +22,14 @@ With Supabase:
 
 ```bash
 flutter run \
+  --dart-define=APP_ENV=staging \
   --dart-define=SUPABASE_URL=https://YOUR_PROJECT.supabase.co \
   --dart-define=SUPABASE_ANON_KEY=YOUR_ANON_KEY \
-  --dart-define=APP_DOWNLOAD_LINK=https://example.com/animal-supply.apk
+  --dart-define=CUSTOMER_LOGIN_DOMAIN=accounts.YOUR_CLIENT_DOMAIN
 ```
+
+The same `CUSTOMER_LOGIN_DOMAIN` must be configured as a Supabase Edge
+Function secret. Placeholder domains are rejected in production builds.
 
 ## Demo Logins
 
@@ -35,11 +39,18 @@ flutter run \
 
 ## Supabase Setup
 
-This project is migration-first. Do not deploy only `schema.sql` or `rls.sql`.
+This project is migration-first. `schema.sql` is a legacy reference and
+`rls.sql` intentionally fails closed; deploy only the ordered migrations.
 
 1. Create and link a Supabase project.
-2. Run `supabase db push`.
-3. Create Storage bucket `product-images` and keep writes controlled.
+2. For a fresh project, run `supabase db push`. For an existing project already
+   migrated through `024`, run
+   `supabase/legacy_constraints_preflight.sql` before migration `027`. If a
+   push stops on migration `027`, repair every reported legacy-data conflict
+   and retry; do not skip the validation migration. After migration `032`,
+   run `supabase/production_preflight.sql` for the complete production check.
+3. Review the `product-images` Storage bucket and its ownership/admin RLS
+   policies created by the migrations before importing approved images.
 4. Configure Edge Function secrets and deploy the functions listed in
    `supabase/README.md`.
 5. Keep public Auth sign-up disabled. Customers are created only by the
@@ -48,23 +59,56 @@ This project is migration-first. Do not deploy only `schema.sql` or `rls.sql`.
 ## Android APK
 
 ```bash
-cd app
+cd /home/alnaagi/Desktop/animal_supply_b2b_app/app
+
 flutter build apk --debug
-flutter build apk --release
+
+FLUTTER_BIN=/home/alnaagi/development/flutter/bin/flutter \
+  node tool/build_mobile_release.mjs android \
+  --dart-define-from-file=../mobile.public.json
 ```
 
 See `DEPLOYMENT_ANDROID_APK.md`, `DEPLOYMENT_IOS.md`, and
 `MOBILE_APK_TESTING_AND_UPDATES.md` for signing, direct download flow, app
 version checks, push setup, and platform limitations.
 
+For the Flutter web release, Cloudflare Workers Static Assets configuration
+is included in `wrangler.jsonc`. See `CLOUDFLARE_DEPLOYMENT.md` for the
+review-safe demo deployment and the production configuration checklist.
+
+Current client-review deployment:
+
+- URL: `https://animal-supply-b2b.alnaagi-ai.workers.dev`
+- Cloudflare version: `770b7a01-6575-49e9-8ca7-b77f393c8f5b`
+- App version: `1.0.4+5`
+- Status: demo data, no production Supabase/Firebase connection, and
+  intentionally `noindex`; this is not the production launch.
+- Eligible browsers now receive an Arabic install-as-web-app prompt after the
+  app loads. Chromium uses its native install confirmation; iPhone/iPad Safari
+  receives Add to Home Screen guidance.
+
 ## MVP Limitations
 
-- Demo repositories are in-memory until Supabase credentials and remote repositories are connected.
+- Demo mode remains intentionally available without Supabase credentials;
+  production workflows require a migrated client-owned Supabase project.
 - Offline support persists catalog/cart data and safely retries unsent orders
   using product IDs and quantities only; the server remains authoritative for
   prices, stock, and account status.
-- Product image upload UI is a placeholder.
-- Password reset and Auth user creation must happen via Edge Functions in production.
+- An optional customer-wide discount is managed from the customer's admin
+  profile and resolved by the server for every product. The product-level
+  `products.discount_percent` field remains catalog-promotion metadata and is
+  not the customer's negotiated discount.
+- Legacy price-group, group-price, and per-product special-price tables remain
+  dormant during the transition for compatibility and audit safety. They are
+  not exposed by the active admin UI, and existing orders retain their original
+  immutable price snapshots.
+- Admin product-image upload is implemented for approved JPEG, PNG, and WebP
+  files through the controlled `product-images` Supabase Storage bucket.
+  Demo catalog images remain placeholders until the client supplies licensed
+  production assets.
+- Password reset, Auth user creation, invite redemption, password completion,
+  device-token registration, order transactions, and privileged status changes
+  remain Edge Function operations in production.
 - Firebase Cloud Messaging needs a client-owned Firebase project, platform
   configuration, APNs setup for iOS, web VAPID configuration, and a scheduled
   Supabase dispatcher before actual push delivery is enabled.
@@ -72,9 +116,13 @@ version checks, push setup, and platform limitations.
 ## Admin Operations Phase
 
 - Admin UI is responsive inside the same Flutter app.
-- Customer, product, order, settings, APK update, and notification scaffolding are repository-backed.
+- Customer profiles, including customer-wide discounts, plus product, banner,
+  order, settings, app-update, and notification operations are
+  repository-backed.
 - When Supabase env vars are configured, admin writes use Supabase tables/RLS and Edge Functions for secure Auth operations.
-- Normal APK apps cannot silently self-update. This project uses signed APK update prompts plus planned Shorebird OTA for Flutter/Dart-only patches.
+- Normal APK apps cannot silently self-update. Required/optional signed APK
+  update prompts are implemented. Shorebird is only an optional future channel
+  and is not currently configured or included in the release promise.
 
 ## Phase 2A UI Demo
 

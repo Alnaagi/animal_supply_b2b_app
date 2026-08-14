@@ -6,29 +6,67 @@ import '../../core/theme/app_theme.dart';
 import 'auth_controller.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({
+    super.key,
+    this.inviteToken,
+    this.clientCode,
+  });
+
+  final String? inviteToken;
+  final String? clientCode;
 
   @override
   ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final username = TextEditingController();
-  final password = TextEditingController();
-  final inviteCode = TextEditingController();
+  late final TextEditingController username;
+  late final TextEditingController password;
+  late final TextEditingController inviteToken;
+
+  bool get hasInviteFromLink => widget.inviteToken?.trim().isNotEmpty ?? false;
+
+  @override
+  void initState() {
+    super.initState();
+    username = TextEditingController(text: widget.clientCode?.trim() ?? '');
+    password = TextEditingController();
+    inviteToken = TextEditingController();
+  }
+
+  @override
+  void didUpdateWidget(covariant LoginScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldCode = oldWidget.clientCode?.trim() ?? '';
+    final newCode = widget.clientCode?.trim() ?? '';
+    if (newCode != oldCode &&
+        (username.text.trim().isEmpty || username.text.trim() == oldCode)) {
+      username.text = newCode;
+    }
+  }
 
   @override
   void dispose() {
     username.dispose();
     password.dispose();
-    inviteCode.dispose();
+    inviteToken.dispose();
     super.dispose();
+  }
+
+  Future<void> _submit(AuthController controller) {
+    return controller.login(
+      username.text,
+      password.text,
+      inviteToken: hasInviteFromLink ? widget.inviteToken : inviteToken.text,
+      clientCode: widget.clientCode,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authControllerProvider);
     final authController = ref.read(authControllerProvider.notifier);
+    final configurationBlocked = AppConfig.configurationBlocked;
     final theme = Theme.of(context);
     const fieldRadius = BorderRadius.all(Radius.circular(16));
     final loginTheme = theme.copyWith(
@@ -37,8 +75,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         fillColor: const Color(0xfff5f9f7),
         focusColor: AppTheme.green.withValues(alpha: 0.08),
         hoverColor: AppTheme.green.withValues(alpha: 0.04),
-        contentPadding:
-            const EdgeInsetsDirectional.fromSTEB(18, 18, 14, 18),
+        contentPadding: const EdgeInsetsDirectional.fromSTEB(18, 18, 14, 18),
         labelStyle: const TextStyle(
           color: Color(0xff48645b),
           fontWeight: FontWeight.w600,
@@ -101,6 +138,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ),
       ),
     );
+
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -114,117 +152,181 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   child: Theme(
                     key: const Key('login-input-theme'),
                     data: loginTheme,
-                    child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(
-                        width: 74,
-                        height: 74,
-                        decoration: const BoxDecoration(
-                            shape: BoxShape.circle, color: Color(0xffe3f3eb)),
-                        child: const Icon(Icons.pets,
-                            size: 42, color: AppTheme.green),
+                    child: AutofillGroup(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Container(
+                            width: 74,
+                            height: 74,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Color(0xffe3f3eb),
+                            ),
+                            child: const Icon(
+                              Icons.pets,
+                              size: 42,
+                              color: AppTheme.green,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Text(
+                            AppConfig.shopName,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineSmall
+                                ?.copyWith(fontWeight: FontWeight.w900),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'مرحباً بك في منصة طلبات الجملة للأعلاف ومستلزمات الحيوانات',
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 14),
+                          _EnvironmentBanner(
+                            message: auth.notice ??
+                                (configurationBlocked
+                                    ? AppConfig.configurationMessageAr
+                                    : null),
+                            isError: configurationBlocked,
+                          ),
+                          if (auth.bootstrapping) ...[
+                            const SizedBox(height: 14),
+                            const LinearProgressIndicator(),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'جار التحقق من جلسة الدخول المحفوظة...',
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                          if (hasInviteFromLink) ...[
+                            const SizedBox(height: 14),
+                            const _InviteReceivedCard(),
+                          ] else ...[
+                            const SizedBox(height: 20),
+                            TextField(
+                              key: const Key('login-invite-field'),
+                              controller: inviteToken,
+                              enabled: !auth.loading,
+                              obscureText: true,
+                              enableSuggestions: false,
+                              autocorrect: false,
+                              textInputAction: TextInputAction.next,
+                              decoration: const InputDecoration(
+                                labelText: 'رمز الدعوة',
+                                hintText: 'أدخل الرمز المرسل من المتجر',
+                                helperText:
+                                    'لأول دخول أو إعادة التعيين فقط. الحسابات المفعلة '
+                                    'لا تحتاجه، ولا تضع كلمة المرور هنا.',
+                                prefixIcon: Icon(Icons.link),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 14),
+                          TextField(
+                            key: const Key('login-username-field'),
+                            controller: username,
+                            enabled: !auth.loading,
+                            autofillHints: const [AutofillHints.username],
+                            keyboardType: TextInputType.text,
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: 'اسم المستخدم أو البريد',
+                              prefixIcon: Icon(Icons.person_outline),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          TextField(
+                            key: const Key('login-password-field'),
+                            controller: password,
+                            enabled: !auth.loading,
+                            obscureText: true,
+                            enableSuggestions: false,
+                            autocorrect: false,
+                            autofillHints: const [AutofillHints.password],
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: auth.loading || configurationBlocked
+                                ? null
+                                : (_) => _submit(authController),
+                            decoration: const InputDecoration(
+                              labelText: 'كلمة المرور',
+                              prefixIcon: Icon(Icons.lock_outline),
+                            ),
+                          ),
+                          if (auth.error != null) ...[
+                            const SizedBox(height: 12),
+                            _AuthMessage(
+                              message: auth.error!,
+                              isError: true,
+                            ),
+                          ],
+                          const SizedBox(height: 16),
+                          FilledButton(
+                            onPressed: auth.loading || configurationBlocked
+                                ? null
+                                : () => _submit(authController),
+                            child: Text(
+                              auth.loading ? 'جار التحقق...' : 'دخول',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'ليس لديك حساب؟ تواصل مع المتجر لإنشاء حساب أعمال خاص بك.',
+                            textAlign: TextAlign.center,
+                          ),
+                          if (AppConfig.allowsDemoCredentials) ...[
+                            const Divider(height: 28),
+                            Text(
+                              'تجربة سريعة — بيانات غير حقيقية',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                _DemoLoginButton(
+                                  label: 'مدير',
+                                  icon: Icons.admin_panel_settings_outlined,
+                                  onPressed: auth.loading
+                                      ? null
+                                      : () => authController.login(
+                                            'admin@demo.ly',
+                                            'Admin123!',
+                                          ),
+                                ),
+                                _DemoLoginButton(
+                                  label: 'موظف',
+                                  icon: Icons.badge_outlined,
+                                  onPressed: auth.loading
+                                      ? null
+                                      : () => authController.login(
+                                            'staff@demo.ly',
+                                            'Staff123!',
+                                          ),
+                                ),
+                                _DemoLoginButton(
+                                  label: 'عميل',
+                                  icon: Icons.storefront_outlined,
+                                  onPressed: auth.loading
+                                      ? null
+                                      : () => authController.login(
+                                            'tripoli-pets',
+                                            'Customer123!',
+                                          ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
                       ),
-                      const SizedBox(height: 14),
-                      Text(AppConfig.shopName,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.w900)),
-                      const SizedBox(height: 8),
-                      const Text(
-                          'مرحباً بك في منصة طلبات الجملة للأعلاف ومستلزمات الحيوانات',
-                          textAlign: TextAlign.center),
-                      const SizedBox(height: 20),
-                      TextField(
-                        key: const Key('login-invite-field'),
-                        controller: inviteCode,
-                        enabled: !auth.loading,
-                        decoration: const InputDecoration(
-                          labelText: 'رمز الدعوة',
-                          hintText: 'أدخل الرمز المرسل من المتجر',
-                          helperText:
-                              'لأول دخول أو إعادة التعيين فقط. الحسابات المفعلة '
-                              'لا تحتاجه، ولا تضع كلمة المرور هنا.',
-                          prefixIcon: Icon(Icons.link),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      TextField(
-                        key: const Key('login-username-field'),
-                        controller: username,
-                        enabled: !auth.loading,
-                        decoration: const InputDecoration(
-                          labelText: 'اسم المستخدم أو الهاتف أو البريد',
-                          prefixIcon: Icon(Icons.person_outline),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      TextField(
-                        key: const Key('login-password-field'),
-                        controller: password,
-                        enabled: !auth.loading,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'كلمة المرور',
-                          prefixIcon: Icon(Icons.lock_outline),
-                        ),
-                      ),
-                      if (auth.error != null) ...[
-                        const SizedBox(height: 12),
-                        Text(auth.error!,
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.error)),
-                      ],
-                      const SizedBox(height: 16),
-                      FilledButton(
-                          onPressed: auth.loading
-                              ? null
-                              : () => authController.login(
-                                  username.text, password.text),
-                          child: Text(auth.loading ? 'جار التحقق...' : 'دخول')),
-                      const SizedBox(height: 12),
-                      const Text(
-                          'لا تملك حساب؟ تواصل مع المتجر لإنشاء حساب خاص بك',
-                          textAlign: TextAlign.center),
-                      const Divider(height: 28),
-                      Text('تجربة سريعة',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleMedium
-                              ?.copyWith(fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            _DemoLoginButton(
-                                label: 'مدير',
-                                icon: Icons.admin_panel_settings_outlined,
-                                onPressed: auth.loading
-                                    ? null
-                                    : () => authController.login(
-                                        'admin@demo.ly', 'Admin123!')),
-                            _DemoLoginButton(
-                                label: 'موظف',
-                                icon: Icons.badge_outlined,
-                                onPressed: auth.loading
-                                    ? null
-                                    : () => authController.login(
-                                        'staff@demo.ly', 'Staff123!')),
-                            _DemoLoginButton(
-                                label: 'عميل',
-                                icon: Icons.storefront_outlined,
-                                onPressed: auth.loading
-                                    ? null
-                                    : () => authController.login(
-                                        'tripoli-pets', 'Customer123!')),
-                          ]),
-                    ],
-                  ),
+                    ),
                   ),
                 ),
               ),
@@ -236,14 +338,96 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 }
 
+class _InviteReceivedCard extends StatelessWidget {
+  const _InviteReceivedCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xffeaf4ff),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xffb8d8f4)),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.verified_user_outlined, color: Color(0xff1769aa)),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'تم استلام رابط الدعوة الآمن. أدخل بيانات الدخول المؤقتة '
+              'التي أرسلها المتجر لإكمال التفعيل.',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EnvironmentBanner extends StatelessWidget {
+  const _EnvironmentBanner({
+    required this.message,
+    required this.isError,
+  });
+
+  final String? message;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    if (message == null || message!.isEmpty) return const SizedBox.shrink();
+    return _AuthMessage(message: message!, isError: isError);
+  }
+}
+
+class _AuthMessage extends StatelessWidget {
+  const _AuthMessage({
+    required this.message,
+    required this.isError,
+  });
+
+  final String message;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        isError ? Theme.of(context).colorScheme.error : const Color(0xff8a5a00);
+    final background =
+        isError ? color.withValues(alpha: 0.08) : const Color(0xfffff4d6);
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        message,
+        style: TextStyle(color: color, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
 class _DemoLoginButton extends StatelessWidget {
-  const _DemoLoginButton(
-      {required this.label, required this.icon, required this.onPressed});
+  const _DemoLoginButton({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+  });
+
   final String label;
   final IconData icon;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) => OutlinedButton.icon(
-      onPressed: onPressed, icon: Icon(icon, size: 18), label: Text(label));
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(label),
+      );
 }

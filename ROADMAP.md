@@ -9,13 +9,17 @@
 - WhatsApp invite generation.
 - Catalog, cart, order submission, profile, admin dashboard.
 
-## Phase 2 Offline Sync
+## Phase 2 Offline Resilience
 
-- Drift local database.
-- Cached catalog and customer profile.
-- Offline order outbox.
-- Retry queue with status indicators.
-- Conflict policy for products, prices, stock, and order submission.
+- Completed: persisted catalog/cart cache with account isolation.
+- Completed: offline order outbox with timed exponential retry and status
+  indicators.
+- Completed: connectivity recovery that submits product IDs and quantities
+  without trusting cached prices.
+- Production invariant: the Edge Function revalidates customer status, current
+  prices, MOQ, inventory, reservations, and idempotency.
+- Optional future expansion: a richer local database and conflict UI if the
+  client later requires large offline catalogs or multi-device editing.
 
 ## Phase 3 Payments And Invoices
 
@@ -33,8 +37,10 @@
 
 ## Phase 5 Analytics And ERP
 
-- Sales by day/customer/product.
-- Low stock planning.
+- Completed MVP operational view: bounded period sales, top
+  customer/product, low-stock, and manually recorded balance summaries.
+- Future: scheduled exports, richer comparisons, and low-stock purchasing
+  forecasts.
 - Demand forecasting.
 - ERP/accounting exports.
 - Multi-branch inventory.
@@ -42,4 +48,12 @@
 ## Phase 2A Customer Shopping UI
 
 - Completed modern customer UI pass and functional demo shopping flow.
-- Next: full offline sync, real product images, and Supabase remote repositories.
+- Completed product details, checkout, order history/reorder,
+  customer-profile all-products discounts, banners, notifications, product
+  upload, and responsive web/admin flows.
+- The former standalone price-group and per-product special-pricing surface is
+  retired. Its database tables remain dormant during the compatibility
+  transition, while historical orders keep their original price snapshots.
+- Next production activation: approved catalog/images, migrated client
+  Supabase project, Firebase/APNs/web push, custom domain, and physical-device
+  acceptance testing.

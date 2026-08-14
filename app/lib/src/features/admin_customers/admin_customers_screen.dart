@@ -1,11 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/config/app_config.dart';
+import '../../core/support/invite_delivery.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/responsive_field_group.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
@@ -20,13 +25,100 @@ class AdminCustomersScreen extends ConsumerStatefulWidget {
 
 class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
   final search = TextEditingController();
+  final Set<String> busyCustomerIds = <String>{};
+  List<BusinessCustomer> customers = const <BusinessCustomer>[];
   String? status;
-  int refreshKey = 0;
+  Object? loadError;
+  bool loadingInitial = true;
+  bool loadingMore = false;
+  bool hasMore = false;
+  int nextOffset = 0;
+  int requestGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshCustomers());
+  }
 
   @override
   void dispose() {
+    requestGeneration++;
     search.dispose();
     super.dispose();
+  }
+
+  Future<void> _refreshCustomers() async {
+    if (!mounted) return;
+    final generation = ++requestGeneration;
+    setState(() {
+      customers = const <BusinessCustomer>[];
+      loadError = null;
+      loadingInitial = true;
+      loadingMore = false;
+      hasMore = false;
+      nextOffset = 0;
+    });
+    try {
+      final page = await ref.read(adminRepositoryProvider).listCustomersPage(
+            query: search.text,
+            status: status,
+            limit: adminCustomersDefaultPageSize,
+          );
+      if (!mounted || generation != requestGeneration) return;
+      setState(() {
+        customers = page.customers;
+        nextOffset = page.nextOffset;
+        hasMore = page.hasMore;
+        loadingInitial = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != requestGeneration) return;
+      setState(() {
+        loadError = error;
+        loadingInitial = false;
+      });
+    }
+  }
+
+  Future<void> _loadMoreCustomers() async {
+    if (!mounted || loadingInitial || loadingMore || !hasMore) return;
+    final generation = requestGeneration;
+    setState(() => loadingMore = true);
+    try {
+      final page = await ref.read(adminRepositoryProvider).listCustomersPage(
+            query: search.text,
+            status: status,
+            offset: nextOffset,
+            limit: adminCustomersDefaultPageSize,
+          );
+      if (!mounted || generation != requestGeneration) return;
+      final existingIds = customers.map((customer) => customer.id).toSet();
+      setState(() {
+        customers = <BusinessCustomer>[
+          ...customers,
+          for (final customer in page.customers)
+            if (existingIds.add(customer.id)) customer,
+        ];
+        nextOffset = page.nextOffset;
+        hasMore = page.hasMore;
+        loadingMore = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != requestGeneration) return;
+      setState(() => loadingMore = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تعذر تحميل المزيد من العملاء. حاول مرة أخرى.'),
+        ),
+      );
+    }
+  }
+
+  void _selectStatus(String? value) {
+    if (status == value) return;
+    setState(() => status = value);
+    unawaited(_refreshCustomers());
   }
 
   @override
@@ -35,107 +127,196 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
       title: 'إدارة العملاء',
       actions: [
         IconButton(
+          onPressed:
+              loadingInitial ? null : () => unawaited(_refreshCustomers()),
+          icon: const Icon(Icons.refresh),
+          tooltip: 'تحديث العملاء',
+        ),
+        IconButton(
             onPressed: _showCreateCustomer,
             icon: const Icon(Icons.person_add),
             tooltip: 'عميل جديد'),
       ],
-      child: FutureBuilder<List<BusinessCustomer>>(
-        key: ValueKey(refreshKey),
-        future: ref
-            .read(adminRepositoryProvider)
-            .listCustomers(query: search.text, status: status),
-        builder: (context, snapshot) {
-          final customers = snapshot.data ?? const <BusinessCustomer>[];
-          return ListView(
-            padding: const EdgeInsets.all(18),
-            children: [
-              Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 360,
-                      child: TextField(
-                        controller: search,
-                        decoration: const InputDecoration(
-                            prefixIcon: Icon(Icons.search),
-                            labelText: 'بحث باسم النشاط أو الهاتف أو المدينة'),
-                        onSubmitted: (_) => setState(() => refreshKey++),
-                      ),
-                    ),
-                    ChoiceChip(
-                        label: const Text('الكل'),
-                        selected: status == null,
-                        onSelected: (_) => setState(() => status = null)),
-                    ChoiceChip(
-                        label: const Text('نشط'),
-                        selected: status == 'active',
-                        onSelected: (_) => setState(() => status = 'active')),
-                    ChoiceChip(
-                        label: const Text('موقوف'),
-                        selected: status == 'suspended',
-                        onSelected: (_) =>
-                            setState(() => status = 'suspended')),
-                    FilledButton.icon(
-                        onPressed: _showCreateCustomer,
-                        icon: const Icon(Icons.add),
-                        label: const Text('إنشاء عميل')),
-                  ]),
-              const SizedBox(height: 14),
-              if (customers.isEmpty)
-                const Card(
-                    child: ListTile(
-                        leading: Icon(Icons.groups_outlined),
-                        title: Text('لا يوجد عملاء بهذا البحث')))
-              else
-                for (final customer in customers)
-                  Card(
-                    key: ValueKey(
-                      'admin-customer-card-${customer.id}',
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: ListTile(
-                      onTap: () => _showCustomerForm(customer),
-                      leading: CircleAvatar(
-                          backgroundColor:
-                              customer.active ? AppTheme.green : AppTheme.red,
-                          child: Icon(
-                              customer.active ? Icons.store : Icons.block,
-                              color: Colors.white)),
-                      title: Text(customer.businessName,
-                          style: const TextStyle(fontWeight: FontWeight.w900)),
-                      subtitle: Text(
-                          '${customer.username} • ${customer.city} ${customer.area} • ${customer.priceGroup}\nرصيد: ${lyd(customer.outstandingBalance)} • حد ائتمان: ${lyd(customer.creditLimit)}'),
-                      isThreeLine: true,
-                      trailing: PopupMenuButton<String>(
-                        key: ValueKey(
-                          'admin-customer-menu-${customer.id}',
+      child: loadingInitial
+          ? const Center(child: CircularProgressIndicator())
+          : loadError != null
+              ? _CustomerLoadError(
+                  onRetry: () => unawaited(_refreshCustomers()),
+                )
+              : RefreshIndicator(
+                  onRefresh: _refreshCustomers,
+                  child: ListView(
+                    key: const Key('admin-customers-list'),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(18),
+                    children: [
+                      Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 360,
+                              child: TextField(
+                                controller: search,
+                                decoration: const InputDecoration(
+                                    prefixIcon: Icon(Icons.search),
+                                    labelText:
+                                        'بحث باسم النشاط أو الهاتف أو المدينة'),
+                                maxLength: 120,
+                                textInputAction: TextInputAction.search,
+                                onSubmitted: (_) =>
+                                    unawaited(_refreshCustomers()),
+                              ),
+                            ),
+                            ChoiceChip(
+                                label: const Text('الكل'),
+                                selected: status == null,
+                                onSelected: (_) => _selectStatus(null)),
+                            ChoiceChip(
+                                label: const Text('نشط'),
+                                selected: status == 'active',
+                                onSelected: (_) => _selectStatus('active')),
+                            ChoiceChip(
+                                label: const Text('موقوف'),
+                                selected: status == 'suspended',
+                                onSelected: (_) => _selectStatus('suspended')),
+                            ChoiceChip(
+                                label: const Text('مؤرشف'),
+                                selected: status == 'archived',
+                                onSelected: (_) => _selectStatus('archived')),
+                            FilledButton.icon(
+                                onPressed: _showCreateCustomer,
+                                icon: const Icon(Icons.add),
+                                label: const Text('إنشاء عميل')),
+                          ]),
+                      const SizedBox(height: 14),
+                      if (customers.isEmpty)
+                        const Card(
+                            child: ListTile(
+                                leading: Icon(Icons.groups_outlined),
+                                title: Text('لا يوجد عملاء بهذا البحث')))
+                      else
+                        for (final customer in customers)
+                          Card(
+                            key: ValueKey(
+                              'admin-customer-card-${customer.id}',
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: ListTile(
+                              onTap: busyCustomerIds.contains(customer.id)
+                                  ? null
+                                  : () => unawaited(
+                                        _handleCustomerAction(
+                                          'edit',
+                                          customer,
+                                        ),
+                                      ),
+                              leading: CircleAvatar(
+                                  backgroundColor:
+                                      customer.accountStatus == 'archived'
+                                          ? Colors.grey
+                                          : customer.active
+                                              ? AppTheme.green
+                                              : AppTheme.red,
+                                  child: Icon(
+                                      customer.accountStatus == 'archived'
+                                          ? Icons.archive_outlined
+                                          : customer.active
+                                              ? Icons.store
+                                              : Icons.block,
+                                      color: Colors.white)),
+                              title: Text(customer.businessName,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w900)),
+                              subtitle: Text(
+                                '${customer.username} • ${customer.city} ${customer.area} • خصم ${_formatDiscountPercent(customer.discountPercent)}\nرصيد مسجل يدوياً: ${lyd(customer.outstandingBalance)} • حد ائتمان مرجعي: ${lyd(customer.creditLimit)}',
+                                key: ValueKey(
+                                  'admin-customer-discount-${customer.id}',
+                                ),
+                              ),
+                              isThreeLine: true,
+                              trailing: busyCustomerIds.contains(customer.id)
+                                  ? const SizedBox.square(
+                                      dimension: 24,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : PopupMenuButton<String>(
+                                      key: ValueKey(
+                                        'admin-customer-menu-${customer.id}',
+                                      ),
+                                      onSelected: (value) =>
+                                          _handleCustomerAction(
+                                              value, customer),
+                                      itemBuilder: (context) => [
+                                        const PopupMenuItem(
+                                            value: 'edit',
+                                            child: Text('تعديل')),
+                                        if (customer.accountStatus ==
+                                            'archived')
+                                          const PopupMenuItem(
+                                            value: 'restore',
+                                            child: Text('استعادة العميل'),
+                                          )
+                                        else ...[
+                                          PopupMenuItem(
+                                              value: 'toggle',
+                                              child: Text(customer.active
+                                                  ? 'إيقاف العميل'
+                                                  : 'تفعيل العميل')),
+                                          const PopupMenuItem(
+                                              value: 'reset',
+                                              child: Text(
+                                                  'كلمة مرور ودعوة جديدة عبر واتساب')),
+                                          const PopupMenuDivider(),
+                                          const PopupMenuItem(
+                                            value: 'archive',
+                                            child: Text('أرشفة العميل'),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                            ),
+                          ),
+                      if (customers.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Center(
+                          child: Text(
+                            'تم عرض ${customers.length} من العملاء',
+                            style: const TextStyle(
+                              color: Colors.grey,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ),
-                        onSelected: (value) =>
-                            _handleCustomerAction(value, customer),
-                        itemBuilder: (context) => [
-                          const PopupMenuItem(
-                              value: 'edit', child: Text('تعديل')),
-                          PopupMenuItem(
-                              value: 'toggle',
-                              child: Text(customer.active
-                                  ? 'إيقاف العميل'
-                                  : 'تفعيل العميل')),
-                          const PopupMenuItem(
-                              value: 'reset',
-                              child: Text('إعادة تعيين كلمة المرور')),
-                          const PopupMenuItem(
-                              value: 'invite',
-                              child: Text('توليد رسالة واتساب')),
-                        ],
-                      ),
-                    ),
+                      ],
+                      if (hasMore || loadingMore) ...[
+                        const SizedBox(height: 12),
+                        Center(
+                          child: FilledButton.tonalIcon(
+                            key: const Key('admin-customers-load-more'),
+                            onPressed: loadingMore
+                                ? null
+                                : () => unawaited(_loadMoreCustomers()),
+                            icon: loadingMore
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.expand_more),
+                            label: Text(
+                              loadingMore
+                                  ? 'جارٍ تحميل المزيد...'
+                                  : 'تحميل المزيد',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-            ],
-          );
-        },
-      ),
+                ),
     );
   }
 
@@ -143,20 +324,111 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
       String action, BusinessCustomer customer) async {
     final repo = ref.read(adminRepositoryProvider);
     if (action == 'edit') return _showCustomerForm(customer);
+    if (action == 'restore') {
+      final confirmed = await _confirmCustomerAction(
+        title: 'استعادة العميل',
+        message:
+            'سيعود «${customer.businessName}» إلى قائمة العملاء النشطين ويمكنه تسجيل الدخول والطلب.',
+        confirmLabel: 'استعادة وتفعيل',
+      );
+      if (!confirmed) return;
+      await _runCustomerAction(customer.id, () async {
+        await repo.saveCustomer(customer.copyWith(accountStatus: 'active'));
+        if (mounted) await _refreshCustomers();
+      });
+      return;
+    }
+    if (action == 'archive') {
+      final confirmed = await _confirmCustomerAction(
+        title: 'تأكيد أرشفة العميل',
+        message:
+            'سيتم تعطيل حساب «${customer.businessName}» وإخفاؤه من القوائم التشغيلية. تبقى طلباته وسجلاته محفوظة ويمكن استعادته لاحقاً.',
+        confirmLabel: 'أرشفة الحساب',
+      );
+      if (!confirmed) return;
+      await _runCustomerAction(customer.id, () async {
+        await repo.saveCustomer(customer.copyWith(accountStatus: 'archived'));
+        if (mounted) await _refreshCustomers();
+      });
+      return;
+    }
     if (action == 'toggle') {
-      await repo.saveCustomer(customer.copyWith(
-          accountStatus: customer.active ? 'suspended' : 'active'));
-      setState(() => refreshKey++);
+      if (customer.active) {
+        final confirmed = await _confirmCustomerAction(
+          title: 'تأكيد إيقاف العميل',
+          message:
+              'لن يتمكن «${customer.businessName}» من تسجيل الطلبات حتى إعادة تفعيل الحساب.',
+          confirmLabel: 'إيقاف الحساب',
+        );
+        if (!confirmed) return;
+      }
+      await _runCustomerAction(customer.id, () async {
+        await repo.saveCustomer(customer.copyWith(
+            accountStatus: customer.active ? 'suspended' : 'active'));
+        if (mounted) await _refreshCustomers();
+      });
       return;
     }
     if (action == 'reset') {
-      final result = await repo.resetCustomerPassword(customer);
-      if (mounted) _showInviteResult(result);
+      final confirmed = await _confirmCustomerAction(
+        title: 'تأكيد إنشاء بيانات دخول جديدة',
+        message:
+            'سيتم تغيير كلمة مرور «${customer.businessName}» وإلغاء الدعوة السابقة. '
+            'لا تنفذ هذه العملية إلا إذا كان العميل مستعداً لاستلام الرابط الجديد.',
+        confirmLabel: 'إنشاء دعوة جديدة',
+      );
+      if (!confirmed) return;
+      await _runCustomerAction(customer.id, () async {
+        final result = await repo.resetCustomerPassword(customer);
+        if (mounted) _showInviteResult(result);
+      });
       return;
     }
-    if (action == 'invite') {
-      final result = await repo.createCustomerInvite(customer);
-      if (mounted) _showInviteResult(result);
+  }
+
+  Future<bool> _confirmCustomerAction({
+    required String title,
+    required String message,
+    required String confirmLabel,
+  }) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(title),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(confirmLabel),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _runCustomerAction(
+    String customerId,
+    Future<void> Function() action,
+  ) async {
+    if (busyCustomerIds.contains(customerId)) return;
+    setState(() => busyCustomerIds.add(customerId));
+    try {
+      await action();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر إكمال العملية. تحقق من الاتصال وحاول مجدداً.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => busyCustomerIds.remove(customerId));
     }
   }
 
@@ -173,130 +445,206 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
     final address = TextEditingController(text: customer.address);
     final credit =
         TextEditingController(text: customer.creditLimit.toStringAsFixed(0));
+    final outstanding = TextEditingController(
+        text: customer.outstandingBalance.toStringAsFixed(0));
+    final discount = TextEditingController(
+      text: _formatDiscountNumber(customer.discountPercent),
+    );
     var statusValue = customer.accountStatus;
+    String? validationMessage;
 
     final saved = await showDialog<BusinessCustomer>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(customer.id == 'new' ? 'إنشاء عميل' : 'تعديل عميل'),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(children: [
-                TextField(
-                    controller: business,
-                    decoration:
-                        const InputDecoration(labelText: 'اسم النشاط التجاري')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: username,
+      builder: (context) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text(customer.id == 'new' ? 'إنشاء عميل' : 'تعديل عميل'),
+            content: SizedBox(
+              width: 520,
+              child: SingleChildScrollView(
+                child: Column(children: [
+                  TextField(
+                      controller: business,
+                      decoration: const InputDecoration(
+                          labelText: 'اسم النشاط التجاري')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: username,
+                      enabled: customer.id == 'new',
+                      decoration: const InputDecoration(
+                        labelText: 'اسم المستخدم',
+                        helperText:
+                            '3-64 حرفاً لاتينياً أو رقماً، ويمكن استخدام . _ -',
+                      )),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: contact,
+                      decoration:
+                          const InputDecoration(labelText: 'الشخص المسؤول')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: phone,
+                      decoration: const InputDecoration(labelText: 'الهاتف')),
+                  const SizedBox(height: 10),
+                  ResponsiveFieldGroup(children: [
+                    TextField(
+                      controller: city,
+                      decoration: const InputDecoration(labelText: 'المدينة'),
+                    ),
+                    TextField(
+                      controller: area,
+                      decoration: const InputDecoration(labelText: 'المنطقة'),
+                    ),
+                  ]),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: address,
+                      decoration: const InputDecoration(labelText: 'العنوان')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: credit,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'حد الائتمان المرجعي',
+                        helperText:
+                            'للمتابعة اليدوية فقط؛ لا يمنع الطلبات تلقائياً.',
+                      )),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: outstanding,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'الرصيد المستحق المسجل يدوياً',
+                        helperText:
+                            'قيمة مرجعية فقط؛ لا تُنشئ فاتورة أو دفعة تلقائياً.',
+                      )),
+                  const SizedBox(height: 10),
+                  TextField(
+                    key: const ValueKey('admin-customer-discount-field'),
+                    controller: discount,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    textDirection: TextDirection.ltr,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                        RegExp(r'[0-9٠-٩۰-۹.,٫،]'),
+                      ),
+                    ],
                     decoration: const InputDecoration(
-                        labelText: 'اسم المستخدم / البريد / الهاتف')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: contact,
-                    decoration:
-                        const InputDecoration(labelText: 'الشخص المسؤول')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: phone,
-                    decoration: const InputDecoration(labelText: 'الهاتف')),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(
-                      child: TextField(
-                          controller: city,
-                          decoration:
-                              const InputDecoration(labelText: 'المدينة'))),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: TextField(
-                          controller: area,
-                          decoration:
-                              const InputDecoration(labelText: 'المنطقة'))),
-                ]),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: address,
-                    decoration: const InputDecoration(labelText: 'العنوان')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: credit,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                        labelText: 'حد الائتمان placeholder')),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  initialValue: statusValue,
-                  decoration: const InputDecoration(labelText: 'الحالة'),
-                  items: const [
-                    DropdownMenuItem(value: 'active', child: Text('نشط')),
-                    DropdownMenuItem(value: 'suspended', child: Text('موقوف')),
-                  ],
-                  onChanged: (value) =>
-                      setDialogState(() => statusValue = value ?? 'active'),
-                ),
-              ]),
-            ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إلغاء')),
-            FilledButton(
-              onPressed: () {
-                if (business.text.trim().isEmpty ||
-                    username.text.trim().isEmpty) {
-                  return;
-                }
-                Navigator.pop(
-                  context,
-                  customer.copyWith(
-                    businessName: business.text.trim(),
-                    username: username.text.trim(),
-                    contactPerson: contact.text.trim(),
-                    phone: phone.text.trim(),
-                    city: city.text.trim(),
-                    area: area.text.trim(),
-                    address: address.text.trim(),
-                    creditLimit: double.tryParse(credit.text) ?? 0,
-                    accountStatus: statusValue,
+                      labelText: 'خصم العميل على جميع المنتجات',
+                      helperText:
+                          'يُطبّق تلقائياً على السعر الأساسي. اكتب 0 لعدم تطبيق خصم.',
+                      suffixText: '%',
+                      prefixIcon: Icon(Icons.percent),
+                    ),
                   ),
-                );
-              },
-              child: const Text('حفظ'),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: statusValue,
+                    decoration: const InputDecoration(labelText: 'الحالة'),
+                    items: const [
+                      DropdownMenuItem(value: 'active', child: Text('نشط')),
+                      DropdownMenuItem(
+                          value: 'suspended', child: Text('موقوف')),
+                      DropdownMenuItem(value: 'archived', child: Text('مؤرشف')),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => statusValue = value ?? 'active'),
+                  ),
+                  if (validationMessage != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      validationMessage!,
+                      key: const ValueKey('admin-customer-form-validation'),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ]),
+              ),
             ),
-          ],
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('إلغاء')),
+              FilledButton(
+                onPressed: () {
+                  final parsedCredit = double.tryParse(credit.text.trim());
+                  final parsedOutstanding =
+                      double.tryParse(outstanding.text.trim());
+                  final parsedDiscount =
+                      _parseCustomerDiscountPercent(discount.text);
+                  if (parsedDiscount == null) {
+                    setDialogState(() {
+                      validationMessage =
+                          'نسبة الخصم يجب أن تكون بين 0 و99.99 وبحد أقصى منزلتين عشريتين.';
+                    });
+                    return;
+                  }
+                  if (business.text.trim().isEmpty ||
+                      username.text.trim().isEmpty ||
+                      parsedCredit == null ||
+                      !parsedCredit.isFinite ||
+                      parsedCredit < 0 ||
+                      parsedOutstanding == null ||
+                      !parsedOutstanding.isFinite ||
+                      parsedOutstanding < 0) {
+                    setDialogState(() {
+                      validationMessage =
+                          'أدخل اسم النشاط واسم المستخدم وحد ائتمان ورصيداً غير سالبين.';
+                    });
+                    return;
+                  }
+                  Navigator.pop(
+                    context,
+                    customer.copyWith(
+                      businessName: business.text.trim(),
+                      username: username.text.trim(),
+                      contactPerson: contact.text.trim(),
+                      phone: phone.text.trim(),
+                      city: city.text.trim(),
+                      area: area.text.trim(),
+                      address: address.text.trim(),
+                      creditLimit: parsedCredit,
+                      outstandingBalance: parsedOutstanding,
+                      discountPercent: parsedDiscount,
+                      accountStatus: statusValue,
+                    ),
+                  );
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          ),
         ),
       ),
     );
-    business.dispose();
-    username.dispose();
-    contact.dispose();
-    phone.dispose();
-    city.dispose();
-    area.dispose();
-    address.dispose();
-    credit.dispose();
-
     if (saved == null) return;
-    if (saved.id == 'new') {
-      final result =
-          await ref.read(adminRepositoryProvider).createCustomerInvite(saved);
-      if (mounted) _showInviteResult(result);
-    } else {
-      await ref.read(adminRepositoryProvider).saveCustomer(saved);
-    }
-    setState(() => refreshKey++);
+    await _runCustomerAction(saved.id, () async {
+      if (saved.id == 'new') {
+        final result =
+            await ref.read(adminRepositoryProvider).createCustomerInvite(saved);
+        if (mounted) _showInviteResult(result);
+      } else {
+        await ref.read(adminRepositoryProvider).saveCustomer(saved);
+      }
+      if (mounted) await _refreshCustomers();
+    });
   }
 
   void _showInviteResult(InviteResult result) {
+    final isDemo = AppConfig.isDemoMode;
     final normalizedPhone = _normalizeLibyanWhatsapp(result.customerPhone);
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('رسالة واتساب آمنة'),
+        title: Text(
+          isDemo ? 'حساب تجريبي محلي' : 'رسالة واتساب آمنة',
+        ),
         content: SizedBox(
           width: 560,
           child: SingleChildScrollView(
@@ -304,7 +652,20 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (normalizedPhone == null)
+                if (isDemo)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.orange.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Text(
+                      'هذه نسخة تجريبية: لم يتم إنشاء مستخدم حقيقي أو تغيير كلمة مرور في الخادم. بيانات الدعوة الوهمية غير صالحة ولا يجب إرسالها إلى عميل.',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  )
+                else if (normalizedPhone == null)
                   Container(
                     width: double.infinity,
                     margin: const EdgeInsets.only(bottom: 12),
@@ -324,11 +685,16 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
                     child: Row(children: [
                       const Icon(Icons.phone_android, color: AppTheme.green),
                       const SizedBox(width: 8),
-                      Text('سيتم فتح واتساب على الرقم: $normalizedPhone',
-                          style: const TextStyle(fontWeight: FontWeight.w800)),
+                      Expanded(
+                        child: Text(
+                          'سيتم نسخ الرسالة ثم فتح واتساب على الرقم: '
+                          '$normalizedPhone. الصق الرسالة داخل المحادثة.',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
                     ]),
                   ),
-                SelectableText(result.whatsappMessage),
+                if (!isDemo) SelectableText(result.whatsappMessage),
               ],
             ),
           ),
@@ -337,28 +703,30 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
           TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('إغلاق')),
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xff25d366)),
-            onPressed: normalizedPhone == null
-                ? null
-                : () => _openInviteWhatsapp(
-                      context,
-                      phone: normalizedPhone,
-                      message: result.whatsappMessage,
-                    ),
-            icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 18),
-            label: const Text('إرسال واتساب'),
-          ),
-          FilledButton.icon(
-            onPressed: () async {
-              await Clipboard.setData(
-                  ClipboardData(text: result.whatsappMessage));
-              if (context.mounted) Navigator.pop(context);
-            },
-            icon: const Icon(Icons.copy),
-            label: const Text('نسخ الرسالة'),
-          ),
+          if (!isDemo) ...[
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xff25d366)),
+              onPressed: normalizedPhone == null
+                  ? null
+                  : () => _openInviteWhatsapp(
+                        context,
+                        phone: normalizedPhone,
+                        message: result.whatsappMessage,
+                      ),
+              icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 18),
+              label: const Text('نسخ وفتح واتساب'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(
+                    ClipboardData(text: result.whatsappMessage));
+                if (context.mounted) Navigator.pop(context);
+              },
+              icon: const Icon(Icons.copy),
+              label: const Text('نسخ الرسالة'),
+            ),
+          ],
         ],
       ),
     );
@@ -380,14 +748,94 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
     required String message,
   }) async {
     final messenger = ScaffoldMessenger.of(context);
-    final url =
-        Uri.parse('https://wa.me/$phone?text=${Uri.encodeComponent(message)}');
-    final opened = await launchUrl(url, mode: LaunchMode.externalApplication);
-    if (opened) return;
     await Clipboard.setData(ClipboardData(text: message));
+    final url = inviteWhatsappContactUri(phone);
+    final opened = await launchUrl(url, mode: LaunchMode.externalApplication);
     if (!dialogContext.mounted) return;
     messenger.showSnackBar(
-      const SnackBar(content: Text('تعذر فتح واتساب. تم نسخ الرسالة.')),
+      SnackBar(
+        content: Text(
+          opened
+              ? 'تم نسخ الرسالة. الصقها داخل محادثة واتساب.'
+              : 'تعذر فتح واتساب، لكن تم نسخ الرسالة.',
+        ),
+      ),
+    );
+  }
+}
+
+String _formatDiscountNumber(double value) {
+  final fixed = value.toStringAsFixed(2);
+  return fixed.replaceFirst(RegExp(r'\.?0+$'), '');
+}
+
+String _formatDiscountPercent(double value) =>
+    '${_formatDiscountNumber(value)}%';
+
+double? _parseCustomerDiscountPercent(String value) {
+  final normalized = _normalizeLocalizedNumber(value);
+  if (!RegExp(r'^\d+(?:\.\d{1,2})?$').hasMatch(normalized)) return null;
+  final parsed = double.tryParse(normalized);
+  if (parsed == null) return null;
+  try {
+    return validatedCustomerDiscountPercent(parsed);
+  } on ArgumentError {
+    return null;
+  }
+}
+
+String _normalizeLocalizedNumber(String value) {
+  const easternArabicDigits = '٠١٢٣٤٥٦٧٨٩';
+  const persianDigits = '۰۱۲۳۴۵۶۷۸۹';
+  const westernDigits = '0123456789';
+  final buffer = StringBuffer();
+  for (final rune in value.trim().runes) {
+    final character = String.fromCharCode(rune);
+    final easternIndex = easternArabicDigits.indexOf(character);
+    final persianIndex = persianDigits.indexOf(character);
+    if (easternIndex >= 0) {
+      buffer.write(westernDigits[easternIndex]);
+    } else if (persianIndex >= 0) {
+      buffer.write(westernDigits[persianIndex]);
+    } else if (character == '٫' || character == '،' || character == ',') {
+      buffer.write('.');
+    } else {
+      buffer.write(character);
+    }
+  }
+  return buffer.toString();
+}
+
+class _CustomerLoadError extends StatelessWidget {
+  const _CustomerLoadError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_outlined, size: 52),
+            const SizedBox(height: 12),
+            Text(
+              'تعذر تحميل العملاء',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 6),
+            const Text('تحقق من الاتصال ثم أعد المحاولة.'),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('إعادة المحاولة'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

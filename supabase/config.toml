@@ -1,0 +1,35 @@
+project_id = "animal_supply_b2b_app"
+
+[db.migrations]
+enabled = true
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[auth]
+enabled = true
+site_url = "https://animal-supply-b2b.alnaagi-ai.workers.dev"
+additional_redirect_urls = [
+  "https://animal-supply-b2b.alnaagi-ai.workers.dev/invite",
+]
+enable_signup = false
+enable_anonymous_sign_ins = false
+minimum_password_length = 10
+password_requirements = "lower_upper_letters_digits_symbols"
+
+[auth.email]
+enable_signup = false
+enable_confirmations = false
+secure_password_change = true
+
+[auth.sms]
+enable_signup = false
+enable_confirmations = false
+
+# This worker is authenticated inside the function with
+# NOTIFICATION_DISPATCH_SECRET (or an exact active admin bearer token). Disabling
+# gateway JWT verification allows a scheduled cron request to use the dedicated
+# dispatch secret without exposing privileged database credentials.
+[functions.dispatch-notification-outbox]
+verify_jwt = false

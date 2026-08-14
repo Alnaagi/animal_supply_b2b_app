@@ -359,6 +359,7 @@ List<Product> _sortProductsNewest(Iterable<Product> products) {
 List<Product> _sortProductsForCatalog(
   Iterable<Product> products, {
   required String sort,
+  bool useBasePrice = false,
 }) {
   final normalizedSort = _normalizedCatalogSort(sort);
   if (normalizedSort == 'newest') {
@@ -368,11 +369,15 @@ List<Product> _sortProductsForCatalog(
   indexed.sort((first, second) {
     final firstProduct = first.$2;
     final secondProduct = second.$2;
+    final firstPrice =
+        useBasePrice ? firstProduct.basePrice : firstProduct.price;
+    final secondPrice =
+        useBasePrice ? secondProduct.basePrice : secondProduct.price;
     final comparison = switch (normalizedSort) {
       'oldest' => _compareProductDatesOldest(firstProduct, secondProduct),
       'name_asc' => _compareProductNames(firstProduct, secondProduct),
-      'price_asc' => firstProduct.price.compareTo(secondProduct.price),
-      'price_desc' => secondProduct.price.compareTo(firstProduct.price),
+      'price_asc' => firstPrice.compareTo(secondPrice),
+      'price_desc' => secondPrice.compareTo(firstPrice),
       'stock_asc' => _compareTrackedStock(firstProduct, secondProduct),
       'stock_desc' => _compareTrackedStock(
           firstProduct,
@@ -1225,6 +1230,7 @@ class CatalogRepository {
     final q = query.trim().toLowerCase();
     final normalizedAvailability = _normalizedAvailability(availability);
     return products.where((p) {
+      final visiblePrice = includeInactive ? p.basePrice : p.price;
       if (!includeInactive &&
           (!p.active ||
               p.isArchived ||
@@ -1235,8 +1241,8 @@ class CatalogRepository {
       if (brand != null && p.brand != brand) return false;
       if (animalType != null && p.animalType != animalType) return false;
       if (unitSize != null && p.effectivePackageSize != unitSize) return false;
-      if (minimumPrice != null && p.price < minimumPrice) return false;
-      if (maximumPrice != null && p.price > maximumPrice) return false;
+      if (minimumPrice != null && visiblePrice < minimumPrice) return false;
+      if (maximumPrice != null && visiblePrice > maximumPrice) return false;
       if (q.isNotEmpty &&
           !p.name.toLowerCase().contains(q) &&
           !p.brand.toLowerCase().contains(q) &&
@@ -1291,6 +1297,7 @@ class CatalogRepository {
     final sorted = _sortProductsForCatalog(
       filtered,
       sort: sort,
+      useBasePrice: includeInactive,
     );
     final candidates = offset >= sorted.length
         ? const <Product>[]

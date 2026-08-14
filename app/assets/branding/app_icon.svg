@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="128" y1="80" x2="896" y2="944" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#168A63"/>
+      <stop offset="1" stop-color="#173F32"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="420" y1="650" x2="660" y2="840" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFB45E"/>
+      <stop offset="1" stop-color="#FF8A2A"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#background)"/>
+  <circle cx="512" cy="500" r="330" fill="#F7F2EA"/>
+  <ellipse cx="512" cy="610" rx="174" ry="140" fill="#168A63"/>
+  <ellipse cx="337" cy="430" rx="67" ry="83" transform="rotate(-24 337 430)" fill="#168A63"/>
+  <ellipse cx="453" cy="350" rx="65" ry="84" transform="rotate(-8 453 350)" fill="#168A63"/>
+  <ellipse cx="571" cy="350" rx="65" ry="84" transform="rotate(8 571 350)" fill="#168A63"/>
+  <ellipse cx="687" cy="430" rx="67" ry="83" transform="rotate(24 687 430)" fill="#168A63"/>
+  <path d="M618 666c54 20 94 69 105 128-58-4-108-32-138-73 4-24 15-42 33-55Z" fill="url(#accent)"/>
+  <path d="M700 675c-31 55-73 91-126 108" fill="none" stroke="#F7F2EA" stroke-width="20" stroke-linecap="round"/>
+</svg>

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
   static const green = Color(0xff168a63);
@@ -21,10 +20,12 @@ class AppTheme {
       useMaterial3: true,
       colorScheme: scheme,
       scaffoldBackgroundColor: sand,
-      textTheme: GoogleFonts.cairoTextTheme().apply(
-        bodyColor: darkGreen,
-        displayColor: darkGreen,
-      ),
+      fontFamily: 'NotoSansArabic',
+      textTheme: ThemeData.light().textTheme.apply(
+            fontFamily: 'NotoSansArabic',
+            bodyColor: darkGreen,
+            displayColor: darkGreen,
+          ),
       appBarTheme: const AppBarTheme(centerTitle: true, backgroundColor: sand),
       cardTheme: CardThemeData(
         elevation: 2,

@@ -4,6 +4,42 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+def hasReleaseSigning = keystorePropertiesFile.exists()
+if (hasReleaseSigning) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+def releaseRequested = gradle.startParameter.taskNames.any {
+    it.toLowerCase().contains("release")
+}
+def requiredSigningProperties = [
+    "keyAlias",
+    "keyPassword",
+    "storeFile",
+    "storePassword",
+]
+def missingSigningProperties = hasReleaseSigning
+    ? requiredSigningProperties.findAll {
+        keystoreProperties[it]?.toString()?.trim()?.isEmpty() != false
+    }
+    : requiredSigningProperties
+def releaseStoreFile = hasReleaseSigning &&
+    keystoreProperties["storeFile"]?.toString()?.trim()
+    ? rootProject.file(keystoreProperties["storeFile"])
+    : null
+
+if (releaseRequested &&
+    (!hasReleaseSigning ||
+        !missingSigningProperties.isEmpty() ||
+        releaseStoreFile == null ||
+        !releaseStoreFile.exists())) {
+    throw new GradleException(
+        "Release signing is incomplete. Restore android/key.properties and " +
+        "the configured keystore before running a release task."
+    )
+}
+
 android {
     namespace = "ly.animalsupply.b2b"
     compileSdk = flutter.compileSdkVersion
@@ -20,17 +56,37 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
     }
 
     kotlinOptions {
         jvmTarget = "17"
     }
 
-    buildTypes {
-        release {
-            signingConfig = signingConfigs.debug
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                keyAlias = keystoreProperties["keyAlias"]
+                keyPassword = keystoreProperties["keyPassword"]
+                storeFile = releaseStoreFile
+                storePassword = keystoreProperties["storePassword"]
+            }
         }
     }
+
+    buildTypes {
+        release {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.release
+            }
+            minifyEnabled = true
+            shrinkResources = true
+        }
+    }
+}
+
+dependencies {
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
 }
 
 flutter {
