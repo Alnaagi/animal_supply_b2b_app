@@ -1046,8 +1046,54 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     var active =
         product?.isArchived == true ? false : product?.isActive ?? true;
     var hideWhenOutOfStock = product?.hideWhenOutOfStock ?? false;
-    String? validationMessage;
+    var fieldErrors = <_ProductFormField, String>{};
     final reservedQuantity = product?.reservedQuantity ?? 0;
+    final nameFocus = FocusNode();
+    final companyFocus = FocusNode();
+    final priceFocus = FocusNode();
+    final retailPriceFocus = FocusNode();
+    final bulkMinimumFocus = FocusNode();
+    final unitsPerBoxFocus = FocusNode();
+    final stockFocus = FocusNode();
+    FocusNode? categoryFocus;
+    final nameKey = GlobalKey();
+    final categoryKey = GlobalKey();
+    final companyKey = GlobalKey();
+    final priceKey = GlobalKey();
+    final retailPriceKey = GlobalKey();
+    final bulkMinimumKey = GlobalKey();
+    final unitsPerBoxKey = GlobalKey();
+    final stockKey = GlobalKey();
+    final trackingKey = GlobalKey();
+
+    void revealFirstInvalidField(Map<_ProductFormField, String> errors) {
+      final first = _ProductFormField.values.firstWhere(errors.containsKey);
+      final anchors = <_ProductFormField, GlobalKey>{
+        _ProductFormField.name: nameKey,
+        _ProductFormField.category: categoryKey,
+        _ProductFormField.company: companyKey,
+        _ProductFormField.price: priceKey,
+        _ProductFormField.retailPrice: retailPriceKey,
+        _ProductFormField.bulkMinimum: bulkMinimumKey,
+        _ProductFormField.unitsPerBox: unitsPerBoxKey,
+        _ProductFormField.stock: stockKey,
+        _ProductFormField.tracking: trackingKey,
+      };
+      final focuses = <_ProductFormField, FocusNode?>{
+        _ProductFormField.name: nameFocus,
+        _ProductFormField.category: categoryFocus,
+        _ProductFormField.company: companyFocus,
+        _ProductFormField.price: priceFocus,
+        _ProductFormField.retailPrice: retailPriceFocus,
+        _ProductFormField.bulkMinimum: bulkMinimumFocus,
+        _ProductFormField.unitsPerBox: unitsPerBoxFocus,
+        _ProductFormField.stock: stockFocus,
+        _ProductFormField.tracking: null,
+      };
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _revealInvalidFormField(anchors[first]!, focuses[first]);
+      });
+    }
 
     final navigator = Navigator.of(context, rootNavigator: true);
     final capturedThemes = InheritedTheme.capture(
@@ -1123,12 +1169,20 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        TextField(
-                          key: const ValueKey('product-name-field'),
-                          controller: name,
-                          textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
-                            labelText: 'اسم المنتج',
+                        KeyedSubtree(
+                          key: nameKey,
+                          child: TextField(
+                            key: const ValueKey('product-name-field'),
+                            controller: name,
+                            focusNode: nameFocus,
+                            textInputAction: TextInputAction.next,
+                            onChanged: (_) => setDialogState(() {
+                              fieldErrors.remove(_ProductFormField.name);
+                            }),
+                            decoration: InputDecoration(
+                              labelText: 'اسم المنتج',
+                              errorText: fieldErrors[_ProductFormField.name],
+                            ),
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -1145,7 +1199,9 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                           },
                           onSelected: (value) {
                             selectedCategory = value;
-                            validationMessage = null;
+                            setDialogState(() {
+                              fieldErrors.remove(_ProductFormField.category);
+                            });
                           },
                           fieldViewBuilder: (
                             context,
@@ -1153,61 +1209,102 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                             focusNode,
                             onFieldSubmitted,
                           ) {
-                            return TextField(
-                              key: const ValueKey('product-category-field'),
-                              controller: controller,
-                              focusNode: focusNode,
-                              textInputAction: TextInputAction.next,
-                              onChanged: (value) {
-                                selectedCategory = value;
-                              },
-                              onSubmitted: (_) => onFieldSubmitted(),
-                              decoration: const InputDecoration(
-                                prefixIcon: Icon(Icons.category_outlined),
-                                labelText: 'التصنيف',
-                                helperText:
-                                    'اختر تصنيفاً موجوداً أو اكتب اسماً جديداً؛ '
-                                    'سيُنشأ عند الحفظ.',
-                                helperMaxLines: 2,
+                            categoryFocus = focusNode;
+                            return KeyedSubtree(
+                              key: categoryKey,
+                              child: TextField(
+                                key: const ValueKey('product-category-field'),
+                                controller: controller,
+                                focusNode: focusNode,
+                                textInputAction: TextInputAction.next,
+                                onChanged: (value) {
+                                  selectedCategory = value;
+                                  setDialogState(() {
+                                    fieldErrors
+                                        .remove(_ProductFormField.category);
+                                  });
+                                },
+                                onSubmitted: (_) => onFieldSubmitted(),
+                                decoration: InputDecoration(
+                                  prefixIcon:
+                                      const Icon(Icons.category_outlined),
+                                  labelText: 'التصنيف',
+                                  helperText:
+                                      'اختر تصنيفاً موجوداً أو اكتب اسماً جديداً؛ '
+                                      'سيُنشأ عند الحفظ.',
+                                  helperMaxLines: 2,
+                                  errorText:
+                                      fieldErrors[_ProductFormField.category],
+                                ),
                               ),
                             );
                           },
                         ),
                         const SizedBox(height: 12),
-                        TextField(
-                          key: const ValueKey('product-company-field'),
-                          controller: company,
-                          textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
-                            labelText: 'اسم الشركة',
+                        KeyedSubtree(
+                          key: companyKey,
+                          child: TextField(
+                            key: const ValueKey('product-company-field'),
+                            controller: company,
+                            focusNode: companyFocus,
+                            textInputAction: TextInputAction.next,
+                            onChanged: (_) => setDialogState(() {
+                              fieldErrors.remove(_ProductFormField.company);
+                            }),
+                            decoration: InputDecoration(
+                              labelText: 'اسم الشركة',
+                              errorText: fieldErrors[_ProductFormField.company],
+                            ),
                           ),
                         ),
                         const SizedBox(height: 12),
                         ResponsiveFieldGroup(
                           children: [
-                            TextField(
-                              key: const ValueKey('product-price-field'),
-                              controller: price,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                decimal: true,
-                              ),
-                              decoration: const InputDecoration(
-                                labelText: 'سعر الجملة (د.ل)',
-                                helperText: 'هذا هو السعر المستخدم في الطلب.',
+                            KeyedSubtree(
+                              key: priceKey,
+                              child: TextField(
+                                key: const ValueKey('product-price-field'),
+                                controller: price,
+                                focusNode: priceFocus,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                onChanged: (_) => setDialogState(() {
+                                  fieldErrors.remove(_ProductFormField.price);
+                                }),
+                                decoration: InputDecoration(
+                                  labelText: 'سعر الجملة (د.ل)',
+                                  helperText:
+                                      'هذا هو السعر المستخدم في الطلب.',
+                                  errorText:
+                                      fieldErrors[_ProductFormField.price],
+                                ),
                               ),
                             ),
-                            TextField(
-                              key: const ValueKey('product-retail-price-field'),
-                              controller: retailPrice,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                decimal: true,
-                              ),
-                              decoration: const InputDecoration(
-                                labelText: 'سعر بيع الوحدة المقترح (د.ل)',
-                                helperText:
-                                    'مرجع للتاجر فقط ولا يدخل في الإجمالي.',
+                            KeyedSubtree(
+                              key: retailPriceKey,
+                              child: TextField(
+                                key: const ValueKey(
+                                  'product-retail-price-field',
+                                ),
+                                controller: retailPrice,
+                                focusNode: retailPriceFocus,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                onChanged: (_) => setDialogState(() {
+                                  fieldErrors
+                                      .remove(_ProductFormField.retailPrice);
+                                }),
+                                decoration: InputDecoration(
+                                  labelText: 'سعر بيع الوحدة المقترح (د.ل)',
+                                  helperText:
+                                      'مرجع للتاجر فقط ولا يدخل في الإجمالي.',
+                                  errorText: fieldErrors[
+                                      _ProductFormField.retailPrice],
+                                ),
                               ),
                             ),
                           ],
@@ -1215,56 +1312,100 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                         const SizedBox(height: 12),
                         ResponsiveFieldGroup(
                           children: [
-                            TextField(
-                              key: const ValueKey('product-bulk-minimum-field'),
-                              controller: bulkMinimum,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: 'الحد الأدنى لطلب الجملة',
-                                helperText: 'لا يمكن للعميل طلب كمية أقل.',
+                            KeyedSubtree(
+                              key: bulkMinimumKey,
+                              child: TextField(
+                                key: const ValueKey(
+                                  'product-bulk-minimum-field',
+                                ),
+                                controller: bulkMinimum,
+                                focusNode: bulkMinimumFocus,
+                                keyboardType: TextInputType.number,
+                                onChanged: (_) => setDialogState(() {
+                                  fieldErrors
+                                      .remove(_ProductFormField.bulkMinimum);
+                                }),
+                                decoration: InputDecoration(
+                                  labelText: 'الحد الأدنى لطلب الجملة',
+                                  helperText: 'لا يمكن للعميل طلب كمية أقل.',
+                                  errorText: fieldErrors[
+                                      _ProductFormField.bulkMinimum],
+                                ),
                               ),
                             ),
-                            TextField(
-                              key:
-                                  const ValueKey('product-units-per-box-field'),
-                              controller: unitsPerBox,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: 'الكمية في الصندوق (اختياري)',
-                                helperText:
-                                    'مثال: 12. لن تظهر إذا تركتها فارغة.',
+                            KeyedSubtree(
+                              key: unitsPerBoxKey,
+                              child: TextField(
+                                key: const ValueKey(
+                                  'product-units-per-box-field',
+                                ),
+                                controller: unitsPerBox,
+                                focusNode: unitsPerBoxFocus,
+                                keyboardType: TextInputType.number,
+                                onChanged: (_) => setDialogState(() {
+                                  fieldErrors
+                                      .remove(_ProductFormField.unitsPerBox);
+                                }),
+                                decoration: InputDecoration(
+                                  labelText: 'الكمية في الصندوق (اختياري)',
+                                  helperText:
+                                      'مثال: 12. لن تظهر إذا تركتها فارغة.',
+                                  errorText: fieldErrors[
+                                      _ProductFormField.unitsPerBox],
+                                ),
                               ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 8),
-                        SwitchListTile.adaptive(
-                          key: const ValueKey('product-track-stock-switch'),
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('تقييد الطلب حسب المخزون'),
-                          subtitle: const Text(
-                            'عند إيقافه يبقى العدد مسجلاً داخلياً، '
-                            'لكن يمكن الطلب دون حد مخزني.',
+                        KeyedSubtree(
+                          key: trackingKey,
+                          child: SwitchListTile.adaptive(
+                            key: const ValueKey('product-track-stock-switch'),
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('تقييد الطلب حسب المخزون'),
+                            subtitle: Text(
+                              fieldErrors[_ProductFormField.tracking] ??
+                                  'عند إيقافه يبقى العدد مسجلاً داخلياً، '
+                                      'لكن يمكن الطلب دون حد مخزني.',
+                              style: fieldErrors[_ProductFormField.tracking] ==
+                                      null
+                                  ? null
+                                  : TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .error,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                            ),
+                            value: stockTrackingEnabled,
+                            onChanged: (value) => setDialogState(() {
+                              stockTrackingEnabled = value;
+                              if (!value) {
+                                showStockQuantityToCustomers = false;
+                              }
+                              fieldErrors.remove(_ProductFormField.tracking);
+                            }),
                           ),
-                          value: stockTrackingEnabled,
-                          onChanged: (value) => setDialogState(() {
-                            stockTrackingEnabled = value;
-                            if (!value) {
-                              showStockQuantityToCustomers = false;
-                            }
-                            validationMessage = null;
-                          }),
                         ),
                         const SizedBox(height: 4),
-                        TextField(
-                          key: const ValueKey('product-stock-field'),
-                          controller: stock,
-                          keyboardType: TextInputType.number,
-                          decoration: InputDecoration(
-                            labelText: 'كمية المخزون الداخلية (مطلوبة)',
-                            helperText: reservedQuantity > 0
-                                ? 'منها $reservedQuantity محجوزة لطلبات قائمة.'
-                                : 'تُستخدم لإدارة المخزون حتى لو أخفيت العدد عن العملاء.',
+                        KeyedSubtree(
+                          key: stockKey,
+                          child: TextField(
+                            key: const ValueKey('product-stock-field'),
+                            controller: stock,
+                            focusNode: stockFocus,
+                            keyboardType: TextInputType.number,
+                            onChanged: (_) => setDialogState(() {
+                              fieldErrors.remove(_ProductFormField.stock);
+                            }),
+                            decoration: InputDecoration(
+                              labelText: 'كمية المخزون الداخلية (مطلوبة)',
+                              helperText: reservedQuantity > 0
+                                  ? 'منها $reservedQuantity محجوزة لطلبات قائمة.'
+                                  : 'تُستخدم لإدارة المخزون حتى لو أخفيت العدد عن العملاء.',
+                              errorText: fieldErrors[_ProductFormField.stock],
+                            ),
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -1286,7 +1427,6 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                           onChanged: stockTrackingEnabled
                               ? (value) => setDialogState(() {
                                     showStockQuantityToCustomers = value;
-                                    validationMessage = null;
                                   })
                               : null,
                         ),
@@ -1307,7 +1447,6 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                               ? null
                               : (value) => setDialogState(() {
                                     active = value;
-                                    validationMessage = null;
                                   }),
                         ),
                         if (stockTrackingEnabled) ...[
@@ -1326,19 +1465,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                             value: hideWhenOutOfStock,
                             onChanged: (value) => setDialogState(() {
                               hideWhenOutOfStock = value;
-                              validationMessage = null;
                             }),
-                          ),
-                        ],
-                        if (validationMessage != null) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            validationMessage!,
-                            key: const ValueKey('product-form-validation'),
-                            style: TextStyle(
-                              color: Theme.of(context).colorScheme.error,
-                              fontWeight: FontWeight.w700,
-                            ),
                           ),
                         ],
                       ],
@@ -1363,41 +1490,55 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                 final parsedUnitsPerBox = unitsPerBox.text.trim().isEmpty
                     ? null
                     : _parseLocalizedInt(unitsPerBox.text);
-                String? error;
+                final errors = <_ProductFormField, String>{};
                 if (name.text.trim().isEmpty) {
-                  error = 'أدخل اسم المنتج.';
-                } else if (selectedCategory.trim().isEmpty) {
-                  error = 'اختر تصنيفاً أو اكتب اسم تصنيف جديد.';
-                } else if (company.text.trim().isEmpty) {
-                  error = 'أدخل اسم الشركة.';
-                } else if (parsedPrice == null ||
+                  errors[_ProductFormField.name] = 'أدخل اسم المنتج.';
+                }
+                if (selectedCategory.trim().isEmpty) {
+                  errors[_ProductFormField.category] =
+                      'اختر تصنيفاً أو اكتب اسم تصنيف جديد.';
+                }
+                if (company.text.trim().isEmpty) {
+                  errors[_ProductFormField.company] = 'أدخل اسم الشركة.';
+                }
+                if (parsedPrice == null ||
                     !parsedPrice.isFinite ||
                     parsedPrice <= 0) {
-                  error = 'أدخل سعر جملة صحيحاً أكبر من صفر.';
-                } else if (parsedRetailPrice == null ||
+                  errors[_ProductFormField.price] =
+                      'أدخل سعر جملة صحيحاً أكبر من صفر.';
+                }
+                if (parsedRetailPrice == null ||
                     !parsedRetailPrice.isFinite ||
                     parsedRetailPrice <= 0) {
-                  error = 'أدخل سعر بيع وحدة مقترحاً صحيحاً أكبر من صفر.';
-                } else if (parsedBulkMinimum == null ||
+                  errors[_ProductFormField.retailPrice] =
+                      'أدخل سعر بيع وحدة مقترحاً صحيحاً أكبر من صفر.';
+                }
+                if (parsedBulkMinimum == null ||
                     parsedBulkMinimum < 1 ||
                     parsedBulkMinimum > 1000000) {
-                  error =
+                  errors[_ProductFormField.bulkMinimum] =
                       'الحد الأدنى لطلب الجملة يجب أن يكون رقماً صحيحاً موجباً.';
-                } else if (parsedUnitsPerBox != null &&
+                }
+                if (parsedUnitsPerBox != null &&
                     (parsedUnitsPerBox < 1 || parsedUnitsPerBox > 1000000)) {
-                  error = 'الكمية في الصندوق يجب أن تكون رقماً صحيحاً موجباً.';
-                } else if (parsedStock == null || parsedStock < 0) {
-                  error = 'أدخل كمية مخزون صحيحة لا تقل عن صفر.';
+                  errors[_ProductFormField.unitsPerBox] =
+                      'الكمية في الصندوق يجب أن تكون رقماً صحيحاً موجباً.';
+                }
+                if (parsedStock == null || parsedStock < 0) {
+                  errors[_ProductFormField.stock] =
+                      'أدخل كمية مخزون صحيحة لا تقل عن صفر.';
                 } else if (stockTrackingEnabled &&
                     parsedStock < reservedQuantity) {
-                  error =
+                  errors[_ProductFormField.stock] =
                       'لا يمكن خفض المخزون عن الكمية المحجوزة ($reservedQuantity).';
-                } else if (!stockTrackingEnabled && reservedQuantity > 0) {
-                  error =
+                }
+                if (!stockTrackingEnabled && reservedQuantity > 0) {
+                  errors[_ProductFormField.tracking] =
                       'لا يمكن إيقاف تتبع المخزون مع وجود $reservedQuantity قطعة محجوزة.';
                 }
-                if (error != null) {
-                  setDialogState(() => validationMessage = error);
+                if (errors.isNotEmpty) {
+                  setDialogState(() => fieldErrors = errors);
+                  revealFirstInvalidField(errors);
                   return;
                 }
 
@@ -1470,6 +1611,17 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
       unitsPerBox,
     ]) {
       controller.dispose();
+    }
+    for (final focus in [
+      nameFocus,
+      companyFocus,
+      priceFocus,
+      retailPriceFocus,
+      bulkMinimumFocus,
+      unitsPerBoxFocus,
+      stockFocus,
+    ]) {
+      focus.dispose();
     }
     scrollController.dispose();
     if (saved == null) return;
@@ -1595,6 +1747,31 @@ String _normalizeLocalizedNumber(String value) {
     }
   }
   return buffer.toString();
+}
+
+enum _ProductFormField {
+  name,
+  category,
+  company,
+  price,
+  retailPrice,
+  bulkMinimum,
+  unitsPerBox,
+  stock,
+  tracking,
+}
+
+void _revealInvalidFormField(GlobalKey key, FocusNode? focus) {
+  final target = key.currentContext;
+  if (target != null && target.mounted) {
+    Scrollable.ensureVisible(
+      target,
+      alignment: 0.12,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeInOut,
+    );
+  }
+  focus?.requestFocus();
 }
 
 double? _parseLocalizedDouble(String value) =>

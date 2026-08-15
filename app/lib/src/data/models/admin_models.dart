@@ -8,6 +8,7 @@ class BusinessCustomer {
     required this.username,
     this.contactPerson = '',
     this.phone = '',
+    this.phoneIsWhatsapp = true,
     this.city = '',
     this.area = '',
     this.address = '',
@@ -23,6 +24,7 @@ class BusinessCustomer {
   final String username;
   final String contactPerson;
   final String phone;
+  final bool phoneIsWhatsapp;
   final String city;
   final String area;
   final String address;
@@ -40,6 +42,7 @@ class BusinessCustomer {
     String? username,
     String? contactPerson,
     String? phone,
+    bool? phoneIsWhatsapp,
     String? city,
     String? area,
     String? address,
@@ -55,6 +58,7 @@ class BusinessCustomer {
       username: username ?? this.username,
       contactPerson: contactPerson ?? this.contactPerson,
       phone: phone ?? this.phone,
+      phoneIsWhatsapp: phoneIsWhatsapp ?? this.phoneIsWhatsapp,
       city: city ?? this.city,
       area: area ?? this.area,
       address: address ?? this.address,
@@ -74,6 +78,9 @@ class BusinessCustomer {
       username: profile is Map ? (profile['username'] ?? '').toString() : '',
       contactPerson: (row['contact_person'] ?? '').toString(),
       phone: (row['phone'] ?? '').toString(),
+      phoneIsWhatsapp: row['phone_is_whatsapp'] is bool
+          ? row['phone_is_whatsapp'] as bool
+          : true,
       city: (row['city'] ?? '').toString(),
       area: (row['area'] ?? '').toString(),
       address: (row['address'] ?? '').toString(),

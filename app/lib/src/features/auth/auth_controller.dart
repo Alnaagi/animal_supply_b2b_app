@@ -6,13 +6,16 @@ import 'package:supabase_flutter/supabase_flutter.dart' as supabase;
 import '../../core/config/app_config.dart';
 import '../../core/auth/login_identifier.dart';
 import '../../core/auth/account_bootstrap.dart';
+import '../../data/local/local_auth_session_store.dart';
 import '../../data/models/app_user.dart';
 import '../../data/remote/supabase_clients.dart';
 import '../../data/repositories/demo_data.dart';
 
 final authControllerProvider =
     StateNotifierProvider<AuthController, AuthState>((ref) {
-  return AuthController();
+  final controller = AuthController();
+  unawaited(controller.restoreSession());
+  return controller;
 });
 
 class AuthState {
@@ -22,6 +25,7 @@ class AuthState {
     this.bootstrapping = false,
     this.error,
     this.notice,
+    this.restoredRoute,
   });
 
   final AppUser? user;
@@ -29,35 +33,68 @@ class AuthState {
   final bool bootstrapping;
   final String? error;
   final String? notice;
+  final String? restoredRoute;
 
   bool get isAuthenticated => user != null;
   bool get requiresPasswordChange => user?.mustChangePassword ?? false;
 }
 
 class AuthController extends StateNotifier<AuthState> {
-  AuthController() : super(_initialState()) {
-    if (AppConfig.remoteBackendEnabled) {
-      unawaited(_bootstrapRemoteSession());
-    }
-  }
+  AuthController({LocalAuthSessionStore? sessionStore})
+      : _sessionStore = sessionStore ?? LocalAuthSessionStore.instance,
+        super(const AuthState(loading: true, bootstrapping: true));
 
+  final LocalAuthSessionStore _sessionStore;
   StreamSubscription<supabase.AuthState>? _authSubscription;
   bool _interactiveAuthInProgress = false;
   bool _disposed = false;
+  bool _restoreStarted = false;
   int _accountLoadRevision = 0;
+  String? _restoredRoute;
 
-  static AuthState _initialState() {
+  Future<void> restoreSession() async {
+    if (_restoreStarted || _disposed) return;
+    _restoreStarted = true;
+    _restoredRoute = await _sessionStore.readLastRoute();
+    if (_disposed) return;
+
     if (AppConfig.remoteBackendEnabled) {
-      return const AuthState(loading: true, bootstrapping: true);
+      await _bootstrapRemoteSession();
+      return;
     }
+    await _bootstrapLocalSession();
+  }
+
+  Future<void> _bootstrapLocalSession() async {
     final message = AppConfig.configurationMessageAr;
-    return AuthState(
-      error: AppConfig.configurationBlocked ? message : null,
-      notice: AppConfig.configurationBlocked ? null : message,
+    if (!AppConfig.allowsDemoCredentials) {
+      await _sessionStore.clearDemoUser();
+      if (_disposed) return;
+      state = AuthState(
+        error: AppConfig.configurationBlocked ? message : null,
+        notice: AppConfig.configurationBlocked ? null : message,
+      );
+      return;
+    }
+
+    final user = await _sessionStore.readDemoUser();
+    if (_disposed) return;
+    if (user == null) {
+      state = AuthState(
+        error: AppConfig.configurationBlocked ? message : null,
+        notice: AppConfig.configurationBlocked ? null : message,
+      );
+      return;
+    }
+    state = AuthState(
+      user: user,
+      notice: 'حساب تجريبي: أي تغييرات هنا ليست بيانات تشغيل حقيقية.',
+      restoredRoute: _restoredRoute,
     );
   }
 
   Future<void> _bootstrapRemoteSession() async {
+    await _sessionStore.clearDemoUser();
     final client = supabaseClient;
     if (client == null) {
       if (!_disposed) {
@@ -70,17 +107,25 @@ class AuthController extends StateNotifier<AuthState> {
       (event) {
         if (_disposed) return;
         if (event.event == supabase.AuthChangeEvent.signedOut) {
+          if (_interactiveAuthInProgress || client.auth.currentUser != null) {
+            return;
+          }
           state = AuthState(
             notice:
                 AppConfig.isDemoMode ? AppConfig.configurationMessageAr : null,
           );
           return;
         }
-        if (_interactiveAuthInProgress ||
-            event.event == supabase.AuthChangeEvent.initialSession) {
+        if (_interactiveAuthInProgress) return;
+        final authUser = event.session?.user ?? client.auth.currentUser;
+        if (event.event == supabase.AuthChangeEvent.initialSession) {
+          if (authUser != null) {
+            unawaited(_loadAndPublishAccount(authUser, bootstrapping: true));
+          } else if (state.bootstrapping && state.user == null) {
+            state = const AuthState();
+          }
           return;
         }
-        final authUser = event.session?.user;
         if (authUser != null &&
             (event.event == supabase.AuthChangeEvent.signedIn ||
                 event.event == supabase.AuthChangeEvent.userUpdated ||
@@ -98,7 +143,7 @@ class AuthController extends StateNotifier<AuthState> {
       },
     );
 
-    final authUser = client.auth.currentUser;
+    final authUser = client.auth.currentUser ?? client.auth.currentSession?.user;
     if (authUser == null) {
       if (!_disposed) state = const AuthState();
       return;
@@ -129,7 +174,7 @@ class AuthController extends StateNotifier<AuthState> {
     String? inviteToken,
     String? clientCode,
   }) async {
-    if (state.loading) return;
+    if (state.loading || state.bootstrapping) return;
 
     final normalized = username.trim().toLowerCase();
     if (normalized.isEmpty || password.isEmpty) {
@@ -263,9 +308,12 @@ class AuthController extends StateNotifier<AuthState> {
       );
       return;
     }
+    await _sessionStore.saveDemoUser(user);
+    if (_disposed) return;
     state = AuthState(
       user: user,
       notice: 'حساب تجريبي: أي تغييرات هنا ليست بيانات تشغيل حقيقية.',
+      restoredRoute: _restoredRoute,
     );
   }
 
@@ -302,13 +350,14 @@ class AuthController extends StateNotifier<AuthState> {
         loading: true,
         bootstrapping: bootstrapping,
         user: state.user?.id == authUser.id ? state.user : null,
+        restoredRoute: _restoredRoute,
       );
     }
 
     try {
       final appUser = await _fetchRemoteAccount(authUser);
       if (_disposed || revision != _accountLoadRevision) return;
-      state = AuthState(user: appUser);
+      state = AuthState(user: appUser, restoredRoute: _restoredRoute);
     } on _AccountRejected catch (error) {
       if (_disposed || revision != _accountLoadRevision) return;
       await _signOutSilently();
@@ -444,6 +493,7 @@ class AuthController extends StateNotifier<AuthState> {
 
   Future<void> logout() async {
     ++_accountLoadRevision;
+    _restoredRoute = null;
     final client = supabaseClient;
     if (client != null) {
       try {
@@ -458,10 +508,97 @@ class AuthController extends StateNotifier<AuthState> {
         return;
       }
     }
+    await _sessionStore.clear();
     if (!_disposed) {
       state = AuthState(
         notice: AppConfig.isDemoMode ? AppConfig.configurationMessageAr : null,
       );
+    }
+  }
+
+  /// Confirms the signed-in admin password without changing session state
+  /// on success. Demo accounts use the labelled local credentials only.
+  Future<String?> verifyCurrentPassword(String password) async {
+    if (password.trim().isEmpty) {
+      return 'أدخل كلمة مرور حساب الإدارة.';
+    }
+    final user = state.user;
+    if (user == null) {
+      return 'انتهت جلسة الدخول. سجل الدخول من جديد ثم أعد المحاولة.';
+    }
+
+    if (!AppConfig.remoteBackendEnabled) {
+      if (!user.isDemo || !AppConfig.allowsDemoCredentials) {
+        return 'تعذر التحقق من كلمة المرور في هذا الوضع.';
+      }
+      final expected = user.isAdmin
+          ? 'Admin123!'
+          : user.isStaff
+              ? 'Staff123!'
+              : 'Customer123!';
+      if (password != expected) {
+        return 'كلمة المرور غير صحيحة.';
+      }
+      return null;
+    }
+
+    final client = supabaseClient;
+    final email = client?.auth.currentUser?.email?.trim() ?? '';
+    if (client == null || email.isEmpty) {
+      return 'تعذر التحقق من كلمة المرور من الخادم.';
+    }
+    try {
+      await client.auth.signInWithPassword(email: email, password: password);
+      return null;
+    } on supabase.AuthException {
+      return 'كلمة المرور غير صحيحة.';
+    } catch (_) {
+      return 'تعذر التحقق من كلمة المرور. تحقق من الاتصال ثم أعد المحاولة.';
+    }
+  }
+
+  Future<void> enterLocalDemoSession() async {
+    await _authSubscription?.cancel();
+    _authSubscription = null;
+    if (!AppConfig.allowsDemoCredentials) {
+      await _sessionStore.clearDemoUser();
+      if (!_disposed) {
+        state = AuthState(
+          error: AppConfig.configurationMessageAr ??
+              'الوضع التجريبي غير متاح في هذه النسخة.',
+        );
+      }
+      return;
+    }
+    final user = demoAdmin.copyWith(isDemo: true);
+    await _sessionStore.saveDemoUser(user);
+    if (!_disposed) {
+      state = AuthState(
+        user: user,
+        notice: 'حساب تجريبي: أي تغييرات هنا ليست بيانات تشغيل حقيقية.',
+      );
+    }
+  }
+
+  Future<void> rebindAfterRuntimeModeChange() async {
+    ++_accountLoadRevision;
+    await _authSubscription?.cancel();
+    _authSubscription = null;
+    if (AppConfig.remoteBackendEnabled) {
+      await _sessionStore.clearDemoUser();
+      if (!_disposed) {
+        state = const AuthState(loading: true, bootstrapping: true);
+      }
+      await _bootstrapRemoteSession();
+      return;
+    }
+    if (AppConfig.allowsDemoCredentials) {
+      await enterLocalDemoSession();
+      return;
+    }
+    await _sessionStore.clear();
+    if (!_disposed) {
+      state = AuthState(error: AppConfig.configurationMessageAr);
     }
   }
 

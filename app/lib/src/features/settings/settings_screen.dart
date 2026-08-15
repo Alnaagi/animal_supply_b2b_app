@@ -10,6 +10,7 @@ import '../../core/widgets/responsive_field_group.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
+import 'admin_data_mode_card.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -85,6 +86,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             label: const Text('تعديل الإعدادات')),
                       ]),
                 ),
+              ),
+              const SizedBox(height: 14),
+              AdminDataModeCard(
+                onLocalDataReset: () => setState(() => refreshKey++),
               ),
               const SizedBox(height: 14),
               const PushPermissionCard(),

@@ -190,6 +190,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final categoryField = find.byKey(const ValueKey('product-category-field'));
+    final scrollView = find.byKey(const ValueKey('product-form-scroll-view'));
     final stockField = find.byKey(const ValueKey('product-stock-field'));
     final quantityVisibilitySwitch = find.byKey(
       const ValueKey('product-show-stock-quantity-switch'),
@@ -231,11 +232,20 @@ void main() {
     expect(repository.savedProduct, isNull);
     expect(
       find.byKey(const ValueKey('product-form-validation')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
-      find.text('أدخل كمية مخزون صحيحة لا تقل عن صفر.'),
-      findsOneWidget,
+      tester.widget<TextField>(stockField).decoration!.errorText,
+      'أدخل كمية مخزون صحيحة لا تقل عن صفر.',
+    );
+    expect(tester.widget<TextField>(stockField).focusNode!.hasFocus, isTrue);
+
+    final scrollViewRect = tester.getRect(scrollView);
+    final stockRect = tester.getRect(stockField);
+    expect(
+      scrollViewRect.overlaps(stockRect),
+      isTrue,
+      reason: 'invalid stock field should be scrolled into view',
     );
 
     await tester.enterText(stockField, '37');
@@ -250,6 +260,45 @@ void main() {
     expect(saved.stockTrackingEnabled, isTrue);
     expect(saved.showStockQuantityToCustomers, isTrue);
     expect(saved.minOrderQty, 3);
+  });
+
+  testWidgets(
+      'invalid product fields show inline errors and focus the first one',
+      (tester) async {
+    final repository = _RecordingCatalogRepository();
+    await _pumpAdminProducts(tester, repository);
+    await tester.tap(find.byTooltip('منتج جديد'));
+    await tester.pumpAndSettle();
+
+    final nameField = find.byKey(const ValueKey('product-name-field'));
+    final categoryField = find.byKey(const ValueKey('product-category-field'));
+    final companyField = find.byKey(const ValueKey('product-company-field'));
+    final priceField = find.byKey(const ValueKey('product-price-field'));
+
+    await tester.tap(find.widgetWithText(FilledButton, 'حفظ المنتج'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('product-form-validation')), findsNothing);
+    expect(
+      tester.widget<TextField>(nameField).decoration!.errorText,
+      'أدخل اسم المنتج.',
+    );
+    expect(
+      tester.widget<TextField>(categoryField).decoration!.errorText,
+      'اختر تصنيفاً أو اكتب اسم تصنيف جديد.',
+    );
+    expect(
+      tester.widget<TextField>(companyField).decoration!.errorText,
+      'أدخل اسم الشركة.',
+    );
+    expect(
+      tester.widget<TextField>(priceField).decoration!.errorText,
+      'أدخل سعر جملة صحيحاً أكبر من صفر.',
+    );
+    expect(tester.widget<TextField>(nameField).focusNode!.hasFocus, isTrue);
+    expect(repository.savedProduct, isNull);
   });
 }
 

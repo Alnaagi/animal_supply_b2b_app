@@ -67,6 +67,7 @@ abstract interface class OrdersPagedRemoteGateway {
   Future<List<Map<String, dynamic>>> queryOrdersPage({
     String? customerId,
     String? status,
+    List<String>? statuses,
     DateTime? createdFrom,
     DateTime? createdUntil,
     required DateTime snapshotAt,
@@ -143,6 +144,7 @@ class SupabaseOrdersRemoteGateway
   Future<List<Map<String, dynamic>>> queryOrdersPage({
     String? customerId,
     String? status,
+    List<String>? statuses,
     DateTime? createdFrom,
     DateTime? createdUntil,
     required DateTime snapshotAt,
@@ -153,7 +155,15 @@ class SupabaseOrdersRemoteGateway
     if (customerId != null && customerId.isNotEmpty) {
       query = query.eq('customer_id', customerId);
     }
-    if (status != null && status.isNotEmpty) {
+    final statusIn = [
+      for (final value in statuses ?? const <String>[])
+        if (value.trim().isNotEmpty) value.trim(),
+    ];
+    if (statusIn.length > 1) {
+      query = query.inFilter('status', statusIn);
+    } else if (statusIn.length == 1) {
+      query = query.eq('status', statusIn.single);
+    } else if (status != null && status.isNotEmpty) {
       query = query.eq('status', status);
     }
     if (createdFrom != null) {
@@ -291,6 +301,7 @@ class OrdersRepository {
   Future<OrdersPage> ordersPage({
     String? customerId,
     OrderStatus? status,
+    Iterable<OrderStatus>? statuses,
     DateTime? createdFrom,
     DateTime? createdUntil,
     DateTime? snapshotAt,
@@ -301,12 +312,14 @@ class OrdersRepository {
     final safePageSize = pageSize.clamp(1, 100).toInt();
     final safeSnapshot = (snapshotAt ?? DateTime.now()).toUtc();
     final normalizedCustomerId = _nonEmptyOrNull(customerId);
+    final statusQuery = _statusQuery(status: status, statuses: statuses);
     final remote = _remote;
 
     if (remote case final OrdersPagedRemoteGateway pagedRemote) {
       final rows = await pagedRemote.queryOrdersPage(
         customerId: normalizedCustomerId,
-        status: status?.value,
+        status: statusQuery.single,
+        statuses: statusQuery.multiple,
         createdFrom: createdFrom?.toUtc(),
         createdUntil: createdUntil?.toUtc(),
         snapshotAt: safeSnapshot,
@@ -343,6 +356,7 @@ class OrdersRepository {
       source,
       customerId: normalizedCustomerId,
       status: status,
+      statuses: statuses,
       createdFrom: createdFrom,
       createdUntil: createdUntil,
       snapshotAt: safeSnapshot,
@@ -788,10 +802,31 @@ class OrdersRepository {
     );
   }
 
+  static ({String? single, List<String>? multiple}) _statusQuery({
+    OrderStatus? status,
+    Iterable<OrderStatus>? statuses,
+  }) {
+    final selected = {
+      if (statuses != null) ...statuses else if (status != null) status,
+    };
+    if (selected.isEmpty || selected.length == OrderStatus.values.length) {
+      return (single: null, multiple: null);
+    }
+    final ordered = [
+      for (final value in OrderStatus.values)
+        if (selected.contains(value)) value.value,
+    ];
+    if (ordered.length == 1) {
+      return (single: ordered.single, multiple: null);
+    }
+    return (single: null, multiple: ordered);
+  }
+
   static List<Order> _filterAndSortOrders(
     Iterable<Order> source, {
     String? customerId,
     OrderStatus? status,
+    Iterable<OrderStatus>? statuses,
     DateTime? createdFrom,
     DateTime? createdUntil,
     required DateTime snapshotAt,
@@ -799,10 +834,17 @@ class OrdersRepository {
     final from = createdFrom?.toUtc();
     final until = createdUntil?.toUtc();
     final snapshot = snapshotAt.toUtc();
+    final allowed = {
+      if (statuses != null) ...statuses else if (status != null) status,
+    };
     final filtered = source.where((order) {
       final created = order.createdAt.toUtc();
       if (customerId != null && order.customerId != customerId) return false;
-      if (status != null && order.status != status) return false;
+      if (allowed.isNotEmpty &&
+          allowed.length != OrderStatus.values.length &&
+          !allowed.contains(order.status)) {
+        return false;
+      }
       if (created.isAfter(snapshot)) return false;
       if (from != null && created.isBefore(from)) return false;
       if (until != null && !created.isBefore(until)) return false;

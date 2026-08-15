@@ -20,6 +20,7 @@ const allowedFields = new Set([
   "account_status",
   "credit_limit",
   "outstanding_balance",
+  "phone_is_whatsapp",
 ]);
 
 const requiredFields = [
@@ -48,6 +49,7 @@ export interface CustomerUpdateInput {
   accountStatus: "active" | "suspended" | "archived";
   creditLimit: number;
   outstandingBalance: number;
+  phoneIsWhatsapp: boolean;
 }
 
 export function parseCustomerUpdateBody(
@@ -122,7 +124,26 @@ export function parseCustomerUpdateBody(
     accountStatus: accountStatus as CustomerUpdateInput["accountStatus"],
     creditLimit: accountAmountField(body, "credit_limit"),
     outstandingBalance: accountAmountField(body, "outstanding_balance"),
+    phoneIsWhatsapp: optionalBooleanField(body, "phone_is_whatsapp", true),
   };
+}
+
+function optionalBooleanField(
+  body: Record<string, unknown>,
+  key: string,
+  defaultValue: boolean,
+): boolean {
+  if (!Object.prototype.hasOwnProperty.call(body, key)) return defaultValue;
+  const value = body[key];
+  if (typeof value !== "boolean") {
+    throw new HttpError(
+      422,
+      "VALIDATION_ERROR",
+      `${key} must be a boolean.`,
+      { field: key },
+    );
+  }
+  return value;
 }
 
 function optionalDiscountPercentField(

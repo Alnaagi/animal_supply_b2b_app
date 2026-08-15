@@ -5,8 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
   testWidgets('unauthenticated protected links preserve a safe next route',
       (tester) async {
     final harness = await _pumpRouter(tester, const AuthState());
@@ -106,18 +112,68 @@ void main() {
       '/admin/orders?order=order-1&period=today',
     );
   });
+  testWidgets('bootstrap keeps a protected screen instead of the landing page',
+      (tester) async {
+    final auth = _MutableAuthController(
+      const AuthState(loading: true, bootstrapping: true),
+    );
+    final harness = await _pumpRouterWithController(tester, auth);
+    addTearDown(harness.dispose);
+
+    harness.router.go('/admin/reports');
+    await _pumpNavigation(tester);
+
+    var uri = harness.router.routeInformationProvider.value.uri;
+    expect(uri.path, '/auth-loading');
+    expect(uri.queryParameters['next'], '/admin/reports');
+
+    auth.emit(AuthState(user: _user(role: 'admin')));
+    await _pumpNavigation(tester);
+
+    uri = harness.router.routeInformationProvider.value.uri;
+    expect(uri.path, '/admin/reports');
+  });
+
+  testWidgets('restored route resumes after a login-style public location',
+      (tester) async {
+    final harness = await _pumpRouter(
+      tester,
+      AuthState(
+        user: _user(role: 'admin'),
+        restoredRoute: '/admin/reports',
+      ),
+    );
+    addTearDown(harness.dispose);
+
+    harness.router.go('/login');
+    await _pumpNavigation(tester);
+
+    expect(
+      harness.router.routeInformationProvider.value.uri.path,
+      '/admin/reports',
+    );
+  });
 }
 
 Future<_RouterHarness> _pumpRouter(
   WidgetTester tester,
   AuthState state,
+) {
+  return _pumpRouterWithController(tester, _FixedAuthController(state));
+}
+
+Future<_RouterHarness> _pumpRouterWithController(
+  WidgetTester tester,
+  AuthController controller,
 ) async {
   final container = ProviderContainer(
     overrides: [
-      authControllerProvider.overrideWith((ref) => _FixedAuthController(state)),
+      authControllerProvider.overrideWith((ref) => controller),
     ],
   );
   final router = container.read(appRouterProvider);
+  await tester.binding.setSurfaceSize(const Size(1280, 1800));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
@@ -163,6 +219,14 @@ class _FixedAuthController extends AuthController {
   _FixedAuthController(AuthState initial) {
     state = initial;
   }
+}
+
+class _MutableAuthController extends AuthController {
+  _MutableAuthController(AuthState initial) {
+    state = initial;
+  }
+
+  void emit(AuthState next) => state = next;
 }
 
 class _RouterHarness {

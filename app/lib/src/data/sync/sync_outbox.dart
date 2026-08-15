@@ -451,6 +451,31 @@ class SyncOutbox {
     return true;
   }
 
+  /// Drops in-memory and SharedPreferences outbox queues.
+  ///
+  /// Does not talk to Supabase and must not be described as a remote wipe.
+  Future<void> clearAllLocalEntries() async {
+    final owners = [..._entriesByOwner.keys];
+    _entriesByOwner.clear();
+    _loadedOwners.clear();
+    _loadFuturesByOwner.clear();
+    _removedIdsByOwner.clear();
+    _legacyQuarantineFuture = null;
+    final prefs = await _store();
+    if (prefs != null) {
+      final keys = prefs
+          .getKeys()
+          .where((key) => key.startsWith('sync_outbox.'))
+          .toList(growable: false);
+      for (final key in keys) {
+        await prefs.remove(key);
+      }
+    }
+    for (final owner in owners) {
+      _notifyOwner(owner);
+    }
+  }
+
   Future<void> _quarantineLegacyEntries() {
     return _legacyQuarantineFuture ??= _quarantineLegacyEntriesBody();
   }

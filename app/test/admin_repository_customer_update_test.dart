@@ -35,6 +35,7 @@ void main() {
         'business_name',
         'contact_person',
         'phone',
+        'phone_is_whatsapp',
         'city',
         'area',
         'address',
@@ -44,6 +45,8 @@ void main() {
         'outstanding_balance',
       ]),
     );
+    expect(payload['phone_is_whatsapp'], isTrue);
+    expect(payload, isNot(contains('password')));
     expect(payload, isNot(contains('profile_id')));
     expect(payload, isNot(contains('username')));
     expect(payload, isNot(contains('role')));
@@ -60,6 +63,7 @@ void main() {
         'business_name',
         'contact_person',
         'phone',
+        'phone_is_whatsapp',
         'city',
         'area',
         'address',
@@ -68,7 +72,19 @@ void main() {
         'credit_limit',
       ]),
     );
-    expect(payload, isNot(contains('price_group_id')));
+    expect(payload['phone_is_whatsapp'], isTrue);
+    expect(payload, isNot(contains('password')));
+  });
+
+  test('customer create payload includes an admin-chosen password only when set',
+      () {
+    final payload = AdminRepository.customerCreatePayload(
+      customer,
+      password: 'Temp-Pass-42!',
+    );
+
+    expect(payload['password'], 'Temp-Pass-42!');
+    expect(payload, isNot(contains('invite_link')));
   });
 
   test('customer update response parses the server-enriched customer', () {
@@ -81,6 +97,7 @@ void main() {
           'business_name': customer.businessName,
           'contact_person': customer.contactPerson,
           'phone': customer.phone,
+          'phone_is_whatsapp': false,
           'city': customer.city,
           'area': customer.area,
           'address': customer.address,
@@ -98,6 +115,7 @@ void main() {
     expect(saved.accountStatus, 'suspended');
     expect(saved.creditLimit, 3000);
     expect(saved.discountPercent, 17.25);
+    expect(saved.phoneIsWhatsapp, isFalse);
   });
 
   test('customer payload rejects invalid discount percentages', () {

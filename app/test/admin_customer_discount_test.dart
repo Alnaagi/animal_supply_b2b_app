@@ -20,6 +20,8 @@ void main() {
             id: 'customer-discount',
             businessName: 'متجر الاختبار',
             username: 'discount-shop',
+            contactPerson: 'سالم علي',
+            phone: '+218910000009',
             city: 'طرابلس',
             area: 'الأندلس',
             discountPercent: 5,

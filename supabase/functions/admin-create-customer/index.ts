@@ -17,6 +17,7 @@ import {
   inviteUrl,
   secureToken,
   sha256Hex,
+  strongPassword,
   temporaryPassword,
   validatedCustomerLoginDomain,
   validatedInviteBaseUrl,
@@ -58,6 +59,7 @@ serve(async (req) => {
     });
     const contactPerson = optionalStringField(body, "contact_person", 160);
     const phone = optionalStringField(body, "phone", 32);
+    const phoneIsWhatsapp = optionalBooleanField(body, "phone_is_whatsapp", true);
     const city = optionalStringField(body, "city", 100);
     const area = optionalStringField(body, "area", 120);
     const address = optionalStringField(body, "address", 500);
@@ -86,7 +88,17 @@ serve(async (req) => {
       );
     }
 
-    const password = temporaryPassword();
+    const providedPassword = Object.prototype.hasOwnProperty.call(
+        body,
+        "password",
+      )
+      ? body.password
+      : undefined;
+    const password = providedPassword !== undefined &&
+        providedPassword !== null &&
+        String(providedPassword).trim() !== ""
+      ? strongPassword(providedPassword)
+      : temporaryPassword();
     const token = secureToken();
     const tokenHash = await sha256Hex(token);
     const expiresAt = new Date(
@@ -158,6 +170,7 @@ serve(async (req) => {
           business_name: businessName,
           contact_person: contactPerson,
           phone,
+          phone_is_whatsapp: phoneIsWhatsapp,
           city,
           area,
           address,
@@ -263,6 +276,24 @@ serve(async (req) => {
     return errorResponse(req, error);
   }
 });
+
+function optionalBooleanField(
+  body: Record<string, unknown>,
+  key: string,
+  defaultValue: boolean,
+): boolean {
+  if (!Object.prototype.hasOwnProperty.call(body, key)) return defaultValue;
+  const value = body[key];
+  if (typeof value !== "boolean") {
+    throw new HttpError(
+      422,
+      "VALIDATION_ERROR",
+      `${key} must be a boolean.`,
+      { field: key },
+    );
+  }
+  return value;
+}
 
 function normalizeUsername(value: string): string {
   const username = value.toLowerCase();

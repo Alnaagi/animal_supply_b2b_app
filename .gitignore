@@ -2,6 +2,9 @@
 .env
 .env.*
 !.env.example
+cloudflare.public.json
+mobile.public.json
+.wrangler/
 *.jks
 *.keystore
 **/key.properties

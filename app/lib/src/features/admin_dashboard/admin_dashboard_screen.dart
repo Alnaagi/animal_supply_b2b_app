@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../data/local/local_cache.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/order.dart';
 import '../../data/models/product.dart';
@@ -12,6 +13,8 @@ import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/orders_repository.dart';
 import '../auth/auth_controller.dart';
 import 'admin_shell.dart';
+import 'dashboard_fullness.dart';
+import 'dashboard_widget_visibility.dart';
 
 class AdminDashboardScreen extends ConsumerStatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -24,18 +27,49 @@ class AdminDashboardScreen extends ConsumerStatefulWidget {
 class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   int refreshKey = 0;
 
-  Future<AdminDashboardData> _loadDashboard() async {
+  Future<_LoadedDashboard> _loadDashboard() async {
     final repository = ref.read(adminRepositoryProvider);
     if (repository.hasRemoteBackend) {
-      return repository.dashboardData();
+      final results = await Future.wait<Object>([
+        repository.dashboardData(),
+        ref.read(localCacheProvider).cachedProducts(),
+      ]);
+      final cached = results[1] as List<Product>;
+      return _LoadedDashboard(
+        data: results[0] as AdminDashboardData,
+        fullness: estimateDashboardFullness(
+          demoOrOffline: false,
+          productCount: cached.length,
+        ),
+      );
     }
     final results = await Future.wait<Object>([
       ref.read(catalogRepositoryProvider).products(),
       ref.read(ordersRepositoryProvider).allOrders(),
     ]);
-    return repository.dashboardData(
-      products: results[0] as List<Product>,
-      orders: results[1] as List<Order>,
+    final products = results[0] as List<Product>;
+    final orders = results[1] as List<Order>;
+    return _LoadedDashboard(
+      data: await repository.dashboardData(
+        products: products,
+        orders: orders,
+      ),
+      fullness: estimateDashboardFullness(
+        demoOrOffline: true,
+        productCount: products.length,
+        orderCount: orders.length,
+      ),
+    );
+  }
+
+  Future<void> _openLayoutSettings() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return const _DashboardLayoutSheet();
+      },
     );
   }
 
@@ -44,9 +78,18 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
     final isAdmin = ref.watch(
       authControllerProvider.select((state) => state.user?.isAdmin == true),
     );
+    final visibility = ref.watch(dashboardWidgetVisibilityProvider);
     return AdminShell(
       title: 'لوحة الإدارة',
-      child: FutureBuilder<AdminDashboardData>(
+      actions: [
+        IconButton(
+          key: const Key('admin-dashboard-layout-settings'),
+          tooltip: 'تخصيص عناصر اللوحة',
+          icon: const Icon(Icons.settings),
+          onPressed: _openLayoutSettings,
+        ),
+      ],
+      child: FutureBuilder<_LoadedDashboard>(
         key: ValueKey(refreshKey),
         future: _loadDashboard(),
         builder: (context, snapshot) {
@@ -58,19 +101,29 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
               onRetry: () => setState(() => refreshKey++),
             );
           }
-          final data = snapshot.data ??
-              const AdminDashboardData(
-                stats: AdminDashboardStats(
-                  totalCustomers: 0,
-                  activeCustomers: 0,
-                  pendingOrders: 0,
-                  todayOrders: 0,
-                  lowStockCount: 0,
-                  monthSales: 0,
+          final loaded = snapshot.data ??
+              const _LoadedDashboard(
+                data: AdminDashboardData(
+                  stats: AdminDashboardStats(
+                    totalCustomers: 0,
+                    activeCustomers: 0,
+                    pendingOrders: 0,
+                    todayOrders: 0,
+                    lowStockCount: 0,
+                    monthSales: 0,
+                  ),
+                  pendingOrders: [],
+                  lowStockProducts: [],
                 ),
-                pendingOrders: [],
-                lowStockProducts: [],
+                fullness: DashboardFullnessEstimate(
+                  percent: 0,
+                  kind: DashboardFullnessKind.demoCatalog,
+                  titleAr: 'امتلاء البيانات',
+                  captionAr:
+                      'تقدير تجريبي من الكتالوج والطلبات المحلية — غير تشغيلي',
+                ),
               );
+          final data = loaded.data;
           final stats = data.stats;
           return ListView(
             padding: const EdgeInsets.all(18),
@@ -86,10 +139,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                   final cardWidth =
                       (constraints.maxWidth - spacing * (columns - 1)) /
                           columns;
-                  return Wrap(
-                    spacing: spacing,
-                    runSpacing: spacing,
-                    children: [
+                  final cards = <Widget>[
+                    if (visibility.isVisible(DashboardWidgetId.customers))
                       _StatCard(
                           width: cardWidth,
                           label: 'العملاء',
@@ -97,6 +148,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           icon: Icons.groups,
                           color: AppTheme.green,
                           onTap: () => context.go('/admin/customers')),
+                    if (visibility.isVisible(DashboardWidgetId.activeCustomers))
                       _StatCard(
                           width: cardWidth,
                           label: 'نشطين',
@@ -104,6 +156,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           icon: Icons.verified_user,
                           color: AppTheme.darkGreen,
                           onTap: () => context.go('/admin/customers')),
+                    if (visibility
+                        .isVisible(DashboardWidgetId.pendingOrdersStat))
                       _StatCard(
                           width: cardWidth,
                           label: 'طلبات معلقة',
@@ -111,6 +165,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           icon: Icons.pending_actions,
                           color: AppTheme.orange,
                           onTap: () => context.go('/admin/orders')),
+                    if (visibility.isVisible(DashboardWidgetId.todayOrders))
                       _StatCard(
                           width: cardWidth,
                           label: 'طلبات اليوم',
@@ -119,6 +174,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           color: AppTheme.brown,
                           onTap: () =>
                               context.go('/admin/orders?period=today')),
+                    if (visibility.isVisible(DashboardWidgetId.lowStockStat))
                       _StatCard(
                           width: cardWidth,
                           label: 'مخزون منخفض',
@@ -126,6 +182,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           icon: Icons.warning_amber,
                           color: AppTheme.red,
                           onTap: () => context.go('/admin/products')),
+                    if (visibility.isVisible(DashboardWidgetId.monthSales))
                       _StatCard(
                           width: cardWidth,
                           label: 'مبيعات الشهر',
@@ -135,7 +192,17 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           onTap: isAdmin
                               ? () => context.go('/admin/reports')
                               : null),
-                    ],
+                    if (visibility.isVisible(DashboardWidgetId.dataFullness))
+                      _FullnessCard(
+                        width: cardWidth,
+                        estimate: loaded.fullness,
+                      ),
+                  ];
+                  if (cards.isEmpty) return const SizedBox.shrink();
+                  return Wrap(
+                    spacing: spacing,
+                    runSpacing: spacing,
+                    children: cards,
                   );
                 },
               ),
@@ -167,17 +234,21 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
               const SizedBox(height: 18),
               LayoutBuilder(builder: (context, constraints) {
                 final wide = constraints.maxWidth > 850;
-                final children = [
-                  _Panel(
-                      title: 'طلبات تحتاج مراجعة',
-                      icon: Icons.receipt_long,
-                      child: _PendingOrders(orders: data.pendingOrders)),
-                  _Panel(
-                      title: 'مخزون منخفض',
-                      icon: Icons.inventory,
-                      child: _LowStock(products: data.lowStockProducts)),
+                final children = <Widget>[
+                  if (visibility
+                      .isVisible(DashboardWidgetId.pendingOrdersPanel))
+                    _Panel(
+                        title: 'طلبات تحتاج مراجعة',
+                        icon: Icons.receipt_long,
+                        child: _PendingOrders(orders: data.pendingOrders)),
+                  if (visibility.isVisible(DashboardWidgetId.lowStockPanel))
+                    _Panel(
+                        title: 'مخزون منخفض',
+                        icon: Icons.inventory,
+                        child: _LowStock(products: data.lowStockProducts)),
                 ];
-                return wide
+                if (children.isEmpty) return const SizedBox.shrink();
+                return wide && children.length > 1
                     ? Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -190,7 +261,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           ])
                     : Column(children: children);
               }),
-              if (isAdmin) ...[
+              if (isAdmin &&
+                  visibility.isVisible(DashboardWidgetId.appUpdates)) ...[
                 const SizedBox(height: 18),
                 FutureBuilder<AppVersionInfo>(
                   future: ref.read(adminRepositoryProvider).latestVersion(),
@@ -217,6 +289,96 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _LoadedDashboard {
+  const _LoadedDashboard({required this.data, required this.fullness});
+
+  final AdminDashboardData data;
+  final DashboardFullnessEstimate fullness;
+}
+
+class _DashboardLayoutSheet extends ConsumerWidget {
+  const _DashboardLayoutSheet();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final visibility = ref.watch(dashboardWidgetVisibilityProvider);
+    final isAdmin = ref.watch(
+      authControllerProvider.select((state) => state.user?.isAdmin == true),
+    );
+    final statIds = [
+      DashboardWidgetId.customers,
+      DashboardWidgetId.activeCustomers,
+      DashboardWidgetId.pendingOrdersStat,
+      DashboardWidgetId.todayOrders,
+      DashboardWidgetId.lowStockStat,
+      DashboardWidgetId.monthSales,
+      DashboardWidgetId.dataFullness,
+    ];
+    final panelIds = [
+      DashboardWidgetId.pendingOrdersPanel,
+      DashboardWidgetId.lowStockPanel,
+      if (isAdmin) DashboardWidgetId.appUpdates,
+    ];
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'تخصيص عناصر اللوحة',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'أخفِ البطاقات غير المطلوبة. يُحفظ الاختيار على هذا الجهاز.',
+                  style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'بطاقات الملخص',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+                for (final id in statIds)
+                  SwitchListTile(
+                    key: Key('admin-dashboard-widget-toggle-${id.storageKey}'),
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(id.labelAr),
+                    value: visibility.isVisible(id),
+                    onChanged: (value) => ref
+                        .read(dashboardWidgetVisibilityProvider.notifier)
+                        .setVisible(id, value),
+                  ),
+                const SizedBox(height: 8),
+                const Text(
+                  'اللوحات السفلية',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+                for (final id in panelIds)
+                  SwitchListTile(
+                    key: Key('admin-dashboard-widget-toggle-${id.storageKey}'),
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(id.labelAr),
+                    value: visibility.isVisible(id),
+                    onChanged: (value) => ref
+                        .read(dashboardWidgetVisibilityProvider.notifier)
+                        .setVisible(id, value),
+                  ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -296,6 +458,90 @@ class _StatCard extends StatelessWidget {
                   style: const TextStyle(
                       color: Colors.grey, fontWeight: FontWeight.w700)),
             ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FullnessCard extends StatelessWidget {
+  const _FullnessCard({required this.width, required this.estimate});
+
+  final double width;
+  final DashboardFullnessEstimate estimate;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = estimate.percent.clamp(0, 100) / 100;
+    return SizedBox(
+      width: width,
+      child: Card(
+        key: const Key('admin-dashboard-fullness-card'),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Text(
+                estimate.titleAr,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: 92,
+                height: 92,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    SizedBox.expand(
+                      child: CircularProgressIndicator(
+                        value: progress,
+                        strokeWidth: 8,
+                        color: AppTheme.green,
+                        backgroundColor:
+                            AppTheme.green.withValues(alpha: 0.14),
+                      ),
+                    ),
+                    Text(
+                      '${estimate.percent}%',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              if (estimate.isDemoEstimate)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppTheme.green.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'تجريبي',
+                    style: TextStyle(
+                      color: AppTheme.darkGreen,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 8),
+              Text(
+                estimate.captionAr,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.grey,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+            ],
           ),
         ),
       ),

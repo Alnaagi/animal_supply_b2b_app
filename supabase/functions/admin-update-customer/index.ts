@@ -118,7 +118,29 @@ serve(async (req) => {
       );
     }
 
-    return successResponse(req, { customer }, 200, { customer });
+    const { data: whatsappRow, error: whatsappError } = await adminClient
+      .from("business_customers")
+      .update({ phone_is_whatsapp: input.phoneIsWhatsapp })
+      .eq("id", input.customerId)
+      .select("id, phone_is_whatsapp")
+      .maybeSingle();
+    if (whatsappError || !whatsappRow) {
+      console.error("Customer WhatsApp preference update failed", whatsappError);
+      throw new HttpError(
+        500,
+        "CUSTOMER_UPDATE_FAILED",
+        "The customer WhatsApp preference could not be saved.",
+      );
+    }
+
+    const savedCustomer = {
+      ...(customer as Record<string, unknown>),
+      phone_is_whatsapp: whatsappRow.phone_is_whatsapp === true,
+    };
+
+    return successResponse(req, { customer: savedCustomer }, 200, {
+      customer: savedCustomer,
+    });
   } catch (error) {
     return errorResponse(req, error);
   }

@@ -10,12 +10,17 @@ The uploaded pet shopping image was used only as a moodboard for quality, hierar
 
 - Login screen has a polished card layout and fast demo access buttons.
 - Home screen has greeting, area line, hero offer banner, category circles, top-selling products, offers, reorder card, and WhatsApp support.
-- Catalog supports search, category chips, filter placeholder, modern product cards, and product detail navigation.
-- Product details include large image placeholder, favorite/share placeholders, supplier, price, old price, SKU, stock, MOQ, package options, description, quantity selector, and add-to-cart.
+- Catalog supports debounced search, category chips, advanced responsive
+  filters, bounded load-more paging, modern product cards, and product detail
+  navigation that preserves back history.
+- Product details include uploaded/external image support with fallback,
+  favorite/share placeholders, supplier, price, old price, SKU, stock, MOQ,
+  package options, description, quantity selector, and add-to-cart.
 - Cart has rounded item cards, quantity controls, remove button, promo placeholder, subtotal, handling placeholder, and total.
 - Checkout reviews customer info/items/note and creates a demo order with a WhatsApp summary copy action.
 - Orders show cards, status chips, details, reorder, and WhatsApp summary copy.
-- Profile uses a business account card and clear account/support/logout actions.
+- Profile uses a business account card, visible notification-permission state,
+  and clear account/support/logout actions.
 
 ## Customer Flow
 
@@ -30,10 +35,17 @@ The uploaded pet shopping image was used only as a moodboard for quality, hierar
 
 ## Known Limitations
 
-- Product imagery uses generic external placeholder URLs with icon fallback instead of real uploaded product images.
-- Promo code, notifications, favorite/share, and WhatsApp opening are placeholders.
-- Full offline sync is still planned for Phase 2B.
-- Supabase repositories remain ready but demo mode is still the default.
+- The demo catalog still uses generic placeholder image URLs and sample prices.
+  Admin upload to controlled Supabase Storage is implemented, but the client
+  must provide licensed production images.
+- Promo codes and favorite/share persistence remain outside the current MVP.
+- In-app notification history and campaign administration are implemented;
+  actual push delivery still requires the client Firebase/APNs/web setup.
+- Catalog/cart caching and queued-order retry are implemented. The server
+  remains authoritative for price, stock, customer status, and final order
+  creation after connectivity returns.
+- The public review deployment remains demo mode until a client-owned Supabase
+  project is migrated, configured, and RLS-tested.
 
 ## Demo Catalog Warning
 
@@ -41,8 +53,8 @@ Realistic product-style names and common brand references are used for presentat
 
 ## Next UI Improvements
 
-- Add real product images through Supabase Storage.
+- Import the approved catalog and licensed product images.
 - Add product grid toggle for tablets.
 - Add animated order success screen.
-- Add real deep-link parsing for invite tokens.
-- Add admin-specific responsive desktop dashboard polish.
+- Finish physical-device push/deep-link QA after Firebase/APNs setup.
+- Run client acceptance testing on target phone, tablet, and desktop sizes.

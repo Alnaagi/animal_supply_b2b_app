@@ -12,6 +12,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/status_chip.dart';
+import '../../data/local/admin_orders_filter_store.dart';
 import '../../data/models/order.dart';
 import '../../data/repositories/notifications_repository.dart';
 import '../../data/repositories/orders_repository.dart';
@@ -37,10 +38,14 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     with WidgetsBindingObserver {
   static const _pageSize = OrdersRepository.defaultPageSize;
 
-  OrderStatus? filter;
+  Set<OrderStatus> includedStatuses = AdminOrdersFilterStore.productDefault;
+  Set<OrderStatus> savedIncludedStatuses =
+      AdminOrdersFilterStore.productDefault;
   late bool todayOnly;
   late bool soundEnabled;
   late bool soundReady;
+  final ScrollController listScrollController = ScrollController();
+  final Map<String, GlobalKey> orderCardKeys = {};
   List<Order> orders = const [];
   bool initialLoading = true;
   bool refreshing = false;
@@ -78,7 +83,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     _startAutoRefresh();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        unawaited(_reload(showFullLoading: true));
+        unawaited(_bootstrapOrders());
       }
     });
   }
@@ -115,6 +120,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
   void dispose() {
     autoRefreshTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    listScrollController.dispose();
     super.dispose();
   }
 
@@ -132,6 +138,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
               : RefreshIndicator(
                   onRefresh: _manualRefresh,
                   child: ListView(
+                    controller: listScrollController,
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: EdgeInsets.fromLTRB(
                       compactLayout ? 12 : 18,
@@ -156,26 +163,35 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                       const SizedBox(height: 12),
                       _AdminOrdersFilterPanel(
                         todayOnly: todayOnly,
-                        status: filter,
+                        includedStatuses: includedStatuses,
                         orderCount: orders.length,
                         hasMore: hasMore,
                         onTodayOnlyChanged: _setTodayOnly,
-                        onStatusChanged: _setFilter,
+                        onStatusPresetChanged: _setStatusPreset,
+                        onOpenSettings: () => unawaited(_showFilterSettings()),
                       ),
                       const SizedBox(height: 14),
                       if (orders.isEmpty)
                         _AdminOrdersEmptyState(
-                          hasActiveFilters: todayOnly || filter != null,
+                          hasActiveFilters: todayOnly ||
+                              !AdminOrdersFilterStore.sameSet(
+                                includedStatuses,
+                                AdminOrdersFilterStore.allStatuses,
+                              ),
                           onClearFilters: _clearFilters,
                         )
                       else
                         for (final order in orders)
                           _AdminOrderCard(
                             key: ValueKey('admin-order-card-${order.id}'),
+                            cardKey: _cardKeyFor(order.id),
                             order: order,
                             highlighted: order.id == highlightedOrderId,
                             updating: updatingOrderId == order.id,
-                            onChangeStatus: () => _showStatusDialog(order),
+                            onExpanded: () => _scrollOrderIntoView(order.id),
+                            onSelectStatus: (status, note) => unawaited(
+                              _applyStatus(order, status, note: note),
+                            ),
                             onCopy: () => _copySummary(order),
                           ),
                       if (hasMore)
@@ -218,19 +234,188 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     unawaited(_reload(showFullLoading: true));
   }
 
-  void _setFilter(OrderStatus? value) {
-    if (filter == value) return;
-    setState(() => filter = value);
+  void _setStatusPreset(String preset) {
+    final next = switch (preset) {
+      'all' => AdminOrdersFilterStore.allStatuses,
+      'except_delivered' => AdminOrdersFilterStore.productDefault,
+      'custom' => includedStatuses,
+      _ => {
+          for (final status in OrderStatus.values)
+            if (status.value == preset) status,
+        },
+    };
+    if (next.isEmpty ||
+        AdminOrdersFilterStore.sameSet(next, includedStatuses)) {
+      return;
+    }
+    setState(() => includedStatuses = next);
     unawaited(_reload(showFullLoading: true));
   }
 
   void _clearFilters() {
-    if (!todayOnly && filter == null) return;
+    final restored = {...savedIncludedStatuses};
+    if (!todayOnly &&
+        AdminOrdersFilterStore.sameSet(includedStatuses, restored)) {
+      return;
+    }
     setState(() {
       todayOnly = false;
-      filter = null;
+      includedStatuses = restored;
     });
     unawaited(_reload(showFullLoading: true));
+  }
+
+  GlobalKey _cardKeyFor(String orderId) =>
+      orderCardKeys.putIfAbsent(orderId, GlobalKey.new);
+
+  ({OrderStatus? status, List<OrderStatus>? statuses}) get _statusQuery =>
+      AdminOrdersFilterStore.queryArgs(includedStatuses);
+
+  Future<void> _bootstrapOrders() async {
+    await _reload(showFullLoading: true);
+    await _restoreSavedFilterPrefs();
+  }
+
+  Future<void> _restoreSavedFilterPrefs() async {
+    final saved = await ref.read(adminOrdersFilterStoreProvider).load();
+    if (!mounted) return;
+    final alreadyApplied = AdminOrdersFilterStore.sameSet(
+          saved,
+          includedStatuses,
+        ) &&
+        AdminOrdersFilterStore.sameSet(saved, savedIncludedStatuses);
+    setState(() {
+      savedIncludedStatuses = saved;
+      includedStatuses = saved;
+    });
+    if (alreadyApplied) return;
+    await _reload(showFullLoading: true);
+    final highlightedId = widget.highlightedOrderId?.trim() ?? '';
+    if (highlightedId.isNotEmpty) {
+      _scrollOrderIntoView(highlightedId);
+    }
+  }
+
+  void _scrollOrderIntoView(String orderId) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_ensureOrderVisible(orderId));
+    });
+  }
+
+  Future<void> _ensureOrderVisible(String orderId) async {
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    if (!mounted) return;
+    final context = _cardKeyFor(orderId).currentContext;
+    if (context == null || !context.mounted) return;
+    await Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      alignment: 0.08,
+    );
+  }
+
+  Future<void> _showFilterSettings() async {
+    final draft = {...includedStatuses};
+    final saved = await showDialog<Set<OrderStatus>>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final canSave = draft.isNotEmpty;
+            return AlertDialog(
+              title: const Text('إعدادات التصفية'),
+              content: SizedBox(
+                width: 420,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'اختر الحالات التي تظهر افتراضياً عند فتح إدارة الطلبات. يتم حفظ الاختيار على هذا الجهاز فقط.',
+                        style: TextStyle(fontSize: 13, height: 1.45),
+                      ),
+                      const SizedBox(height: 12),
+                      for (final status in OrderStatus.values)
+                        CheckboxListTile(
+                          key: ValueKey(
+                            'admin-orders-filter-pref-${status.value}',
+                          ),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          value: draft.contains(status),
+                          title: Text(status.label),
+                          controlAffinity: ListTileControlAffinity.leading,
+                          onChanged: (selected) {
+                            setDialogState(() {
+                              if (selected == true) {
+                                draft.add(status);
+                              } else {
+                                draft.remove(status);
+                              }
+                            });
+                          },
+                        ),
+                      if (!canSave)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 4),
+                          child: Text(
+                            'اختر حالة واحدة على الأقل.',
+                            style: TextStyle(
+                              color: AppTheme.red,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    setDialogState(() {
+                      draft
+                        ..clear()
+                        ..addAll(AdminOrdersFilterStore.productDefault);
+                    });
+                  },
+                  child: const Text('إعادة الافتراضي'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('إلغاء'),
+                ),
+                FilledButton(
+                  onPressed: canSave
+                      ? () => Navigator.pop(dialogContext, {...draft})
+                      : null,
+                  child: const Text('حفظ الإعدادات'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (saved == null || !mounted) return;
+    final persisted = await ref.read(adminOrdersFilterStoreProvider).save(saved);
+    if (!mounted) return;
+    setState(() {
+      savedIncludedStatuses = saved;
+      includedStatuses = saved;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          persisted
+              ? 'تم حفظ إعدادات التصفية على هذا الجهاز.'
+              : 'تعذر حفظ الإعدادات على الجهاز، لكن سيتم استخدامها في هذه الجلسة.',
+        ),
+      ),
+    );
+    await _reload(showFullLoading: true);
   }
 
   ({DateTime? from, DateTime? until}) _dateRange() {
@@ -277,7 +462,8 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
       final notificationIds = await _latestNewOrderNotificationIds();
       final repository = ref.read(ordersRepositoryProvider);
       final page = await repository.ordersPage(
-        status: filter,
+        status: _statusQuery.status,
+        statuses: _statusQuery.statuses,
         createdFrom: range.from,
         createdUntil: range.until,
         pageSize: _pageSize,
@@ -285,8 +471,6 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
       var loaded = page.orders;
       final highlightedId = widget.highlightedOrderId?.trim() ?? '';
       if (highlightedId.isNotEmpty &&
-          filter == null &&
-          !todayOnly &&
           !loaded.any((order) => order.id == highlightedId)) {
         try {
           final highlighted = await repository.orderById(highlightedId);
@@ -375,7 +559,8 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     setState(() => loadingMore = true);
     try {
       final page = await ref.read(ordersRepositoryProvider).ordersPage(
-            status: filter,
+            status: _statusQuery.status,
+            statuses: _statusQuery.statuses,
             createdFrom: range.from,
             createdUntil: range.until,
             snapshotAt: pageSnapshot,
@@ -503,7 +688,11 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
 
     final shouldOfferSoundAction =
         soundEnabled && sound.isAvailable && !played && !soundBlockedHintShown;
-    final filteredView = filter != null || todayOnly;
+    final filteredView = todayOnly ||
+        !AdminOrdersFilterStore.sameSet(
+          includedStatuses,
+          savedIncludedStatuses,
+        );
     setState(() {
       if (soundEnabled && sound.isAvailable) {
         soundReady = played;
@@ -531,104 +720,43 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     );
   }
 
-  Future<void> _showStatusDialog(Order order) async {
-    if (order.allowedNextStatuses.isEmpty) {
+  Future<void> _applyStatus(
+    Order order,
+    OrderStatus status, {
+    String note = '',
+  }) async {
+    if (!order.allowedNextStatuses.contains(status)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             order.status == OrderStatus.delivered
                 ? 'الطلب مسلّم ولا توجد حالة تالية.'
-                : 'الطلب ملغي ولا يمكن تغيير حالته.',
+                : order.status == OrderStatus.cancelled
+                    ? 'الطلب ملغي ولا يمكن تغيير حالته.'
+                    : 'لا يمكن نقل الطلب مباشرةً إلى هذه الحالة.',
           ),
         ),
       );
       return;
     }
 
-    var selected = order.allowedNextStatuses.first;
-    final note = TextEditingController();
-    final update = await showDialog<_StatusUpdate>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('تغيير حالة الطلب ${order.displayNumber}'),
-          content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('الحالة الحالية: ${order.status.label}'),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<OrderStatus>(
-                  initialValue: selected,
-                  decoration:
-                      const InputDecoration(labelText: 'الحالة التالية'),
-                  items: [
-                    for (final status in order.allowedNextStatuses)
-                      DropdownMenuItem(
-                        value: status,
-                        child: Text(status.label),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setDialogState(() => selected = value);
-                    }
-                  },
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: note,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'ملاحظة الإدارة (اختيارية)',
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'سيُحفظ تغيير الحالة في السجل ويُستخدم لإشعار العميل.',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(
-                dialogContext,
-                _StatusUpdate(status: selected, note: note.text.trim()),
-              ),
-              child: const Text('حفظ'),
-            ),
-          ],
-        ),
-      ),
-    );
-    note.dispose();
-    if (update == null || !mounted) return;
-
     setState(() => updatingOrderId = order.id);
     try {
       await ref.read(ordersRepositoryProvider).transitionOrderStatus(
             order.id,
-            update.status,
-            adminNote: update.note,
+            status,
+            adminNote: note,
           );
       if (AppConfig.isDemoMode) {
         ref.read(notificationsRepositoryProvider).addDemoOrderStatus(
               orderId: order.id,
-              statusLabel: update.status.label,
+              statusLabel: status.label,
             );
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('تم تحديث الطلب إلى: ${update.status.label}'),
+          content: Text('تم تحديث الطلب إلى: ${status.label}'),
         ),
       );
       await _reload();
@@ -897,19 +1025,21 @@ class _OrdersStatusPill extends StatelessWidget {
 class _AdminOrdersFilterPanel extends StatelessWidget {
   const _AdminOrdersFilterPanel({
     required this.todayOnly,
-    required this.status,
+    required this.includedStatuses,
     required this.orderCount,
     required this.hasMore,
     required this.onTodayOnlyChanged,
-    required this.onStatusChanged,
+    required this.onStatusPresetChanged,
+    required this.onOpenSettings,
   });
 
   final bool todayOnly;
-  final OrderStatus? status;
+  final Set<OrderStatus> includedStatuses;
   final int orderCount;
   final bool hasMore;
   final ValueChanged<bool> onTodayOnlyChanged;
-  final ValueChanged<OrderStatus?> onStatusChanged;
+  final ValueChanged<String> onStatusPresetChanged;
+  final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -919,8 +1049,9 @@ class _AdminOrdersFilterPanel extends StatelessWidget {
       onChanged: onTodayOnlyChanged,
     );
     final statusControl = _AdminOrdersStatusFilter(
-      status: status,
-      onChanged: onStatusChanged,
+      includedStatuses: includedStatuses,
+      onPresetChanged: onStatusPresetChanged,
+      onOpenSettings: onOpenSettings,
     );
 
     return Container(
@@ -967,7 +1098,7 @@ class _AdminOrdersFilterPanel extends StatelessWidget {
                     ),
                     SizedBox(height: 1),
                     Text(
-                      'اختر الفترة والحالة للوصول أسرع',
+                      'اختر الفترة والحالات للوصول أسرع',
                       style: TextStyle(color: Colors.grey, fontSize: 11),
                     ),
                   ],
@@ -1098,22 +1229,55 @@ class _AdminOrdersDateFilter extends StatelessWidget {
 
 class _AdminOrdersStatusFilter extends StatelessWidget {
   const _AdminOrdersStatusFilter({
-    required this.status,
-    required this.onChanged,
+    required this.includedStatuses,
+    required this.onPresetChanged,
+    required this.onOpenSettings,
   });
 
-  final OrderStatus? status;
-  final ValueChanged<OrderStatus?> onChanged;
+  final Set<OrderStatus> includedStatuses;
+  final ValueChanged<String> onPresetChanged;
+  final VoidCallback onOpenSettings;
+
+  String get _value {
+    if (AdminOrdersFilterStore.sameSet(
+      includedStatuses,
+      AdminOrdersFilterStore.allStatuses,
+    )) {
+      return 'all';
+    }
+    if (AdminOrdersFilterStore.sameSet(
+      includedStatuses,
+      AdminOrdersFilterStore.productDefault,
+    )) {
+      return 'except_delivered';
+    }
+    if (includedStatuses.length == 1) return includedStatuses.single.value;
+    return 'custom';
+  }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final value = _value;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'الحالة',
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'الحالة',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+              ),
+            ),
+            IconButton(
+              key: const ValueKey('admin-orders-filter-settings'),
+              tooltip: 'إعدادات التصفية',
+              visualDensity: VisualDensity.compact,
+              onPressed: onOpenSettings,
+              icon: const Icon(Icons.settings_outlined, size: 20),
+            ),
+          ],
         ),
         const SizedBox(height: 6),
         Row(
@@ -1136,37 +1300,52 @@ class _AdminOrdersStatusFilter extends StatelessWidget {
                     borderSide: BorderSide(color: scheme.outlineVariant),
                   ),
                 ),
-                isEmpty: status == null,
                 child: DropdownButtonHideUnderline(
-                  child: DropdownButton<OrderStatus>(
+                  child: DropdownButton<String>(
                     key: const ValueKey('admin-orders-status-filter'),
-                    value: status,
+                    value: value,
                     isDense: true,
                     isExpanded: true,
                     borderRadius: BorderRadius.circular(14),
-                    hint: const Text('كل الحالات'),
                     icon: const Icon(Icons.keyboard_arrow_down),
                     items: [
-                      for (final value in OrderStatus.values)
-                        DropdownMenuItem<OrderStatus>(
+                      const DropdownMenuItem<String>(
+                        key: ValueKey('admin-orders-status-except-delivered'),
+                        value: 'except_delivered',
+                        child: Text('كل الحالات ما عدا المُسلَّم'),
+                      ),
+                      const DropdownMenuItem<String>(
+                        key: ValueKey('admin-orders-status-all-option'),
+                        value: 'all',
+                        child: Text('كل الحالات'),
+                      ),
+                      if (value == 'custom')
+                        const DropdownMenuItem<String>(
+                          value: 'custom',
+                          child: Text('حسب إعداداتك'),
+                        ),
+                      for (final status in OrderStatus.values)
+                        DropdownMenuItem<String>(
                           key: ValueKey(
-                            'admin-orders-status-${value.value}',
+                            'admin-orders-status-${status.value}',
                           ),
-                          value: value,
-                          child: Text(value.label),
+                          value: status.value,
+                          child: Text(status.label),
                         ),
                     ],
-                    onChanged: onChanged,
+                    onChanged: (selected) {
+                      if (selected != null) onPresetChanged(selected);
+                    },
                   ),
                 ),
               ),
             ),
-            if (status != null) ...[
+            if (value != 'except_delivered') ...[
               const SizedBox(width: 6),
               IconButton.filledTonal(
                 key: const ValueKey('admin-orders-status-all'),
-                onPressed: () => onChanged(null),
-                tooltip: 'عرض كل الحالات',
+                onPressed: () => onPresetChanged('except_delivered'),
+                tooltip: 'عرض كل الحالات ما عدا المُسلَّم',
                 icon: const Icon(Icons.close, size: 18),
               ),
             ],
@@ -1241,7 +1420,7 @@ class _AdminOrdersEmptyState extends StatelessWidget {
               key: const ValueKey('admin-orders-clear-filters'),
               onPressed: onClearFilters,
               icon: const Icon(Icons.restart_alt),
-              label: const Text('مسح التصفية'),
+              label: const Text('إعادة التصفية الافتراضية'),
             ),
           ],
         ],
@@ -1255,16 +1434,20 @@ class _AdminOrderCard extends StatelessWidget {
     required this.order,
     required this.highlighted,
     required this.updating,
-    required this.onChangeStatus,
+    required this.onExpanded,
+    required this.onSelectStatus,
     required this.onCopy,
+    this.cardKey,
     super.key,
   });
 
   final Order order;
   final bool highlighted;
   final bool updating;
-  final VoidCallback onChangeStatus;
+  final VoidCallback onExpanded;
+  final void Function(OrderStatus status, String note) onSelectStatus;
   final VoidCallback onCopy;
+  final Key? cardKey;
 
   @override
   Widget build(BuildContext context) {
@@ -1274,6 +1457,7 @@ class _AdminOrderCard extends StatelessWidget {
     final hasNotes = order.customerNote.trim().isNotEmpty ||
         order.adminNote.trim().isNotEmpty;
     return Card(
+      key: cardKey,
       clipBehavior: Clip.antiAlias,
       margin: const EdgeInsets.only(bottom: 12),
       elevation: highlighted ? 3 : 1,
@@ -1290,6 +1474,9 @@ class _AdminOrderCard extends StatelessWidget {
         key: PageStorageKey<String>('admin-order-expansion-${order.id}'),
         initiallyExpanded: highlighted,
         maintainState: true,
+        onExpansionChanged: (expanded) {
+          if (expanded) onExpanded();
+        },
         tilePadding: const EdgeInsetsDirectional.fromSTEB(14, 10, 10, 10),
         childrenPadding: EdgeInsets.zero,
         iconColor: scheme.primary,
@@ -1320,7 +1507,7 @@ class _AdminOrderCard extends StatelessWidget {
                 _AdminOrderActions(
                   order: order,
                   updating: updating,
-                  onChangeStatus: onChangeStatus,
+                  onSelectStatus: onSelectStatus,
                   onCopy: onCopy,
                 ),
               ],
@@ -2019,48 +2206,229 @@ class _AdminOrderHistoryEntry extends StatelessWidget {
   }
 }
 
-class _AdminOrderActions extends StatelessWidget {
+class _AdminOrderActions extends StatefulWidget {
   const _AdminOrderActions({
     required this.order,
     required this.updating,
-    required this.onChangeStatus,
+    required this.onSelectStatus,
     required this.onCopy,
   });
 
   final Order order;
   final bool updating;
-  final VoidCallback onChangeStatus;
+  final void Function(OrderStatus status, String note) onSelectStatus;
   final VoidCallback onCopy;
 
   @override
+  State<_AdminOrderActions> createState() => _AdminOrderActionsState();
+}
+
+class _AdminOrderActionsState extends State<_AdminOrderActions> {
+  final TextEditingController note = TextEditingController();
+  OrderStatus? pendingConfirm;
+
+  @override
+  void didUpdateWidget(covariant _AdminOrderActions oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.order.id != widget.order.id ||
+        oldWidget.order.status != widget.order.status) {
+      pendingConfirm = null;
+      note.clear();
+    }
+  }
+
+  @override
+  void dispose() {
+    note.dispose();
+    super.dispose();
+  }
+
+  bool _needsConfirm(OrderStatus status) =>
+      status == OrderStatus.cancelled || status == OrderStatus.delivered;
+
+  void _onStatusPressed(OrderStatus status) {
+    if (widget.updating) return;
+    if (_needsConfirm(status)) {
+      setState(() => pendingConfirm = status);
+      return;
+    }
+    widget.onSelectStatus(status, note.text.trim());
+  }
+
+  void _confirmPending() {
+    final status = pendingConfirm;
+    if (status == null || widget.updating) return;
+    widget.onSelectStatus(status, note.text.trim());
+    setState(() => pendingConfirm = null);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final order = widget.order;
     final scheme = Theme.of(context).colorScheme;
-    final canChangeStatus = order.allowedNextStatuses.isNotEmpty;
-    final changeStatusButton = SizedBox(
-      height: 48,
-      child: FilledButton.icon(
-        key: ValueKey('admin-order-change-status-${order.id}'),
-        onPressed: updating || !canChangeStatus ? null : onChangeStatus,
-        icon: updating
-            ? const SizedBox.square(
-                dimension: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : const Icon(Icons.edit_note),
-        label: Text(updating ? 'جارٍ التحديث...' : 'تغيير حالة الطلب'),
-      ),
-    );
+    final nextStatuses = order.allowedNextStatuses;
     final copyButton = SizedBox(
       height: 48,
       child: OutlinedButton.icon(
         key: ValueKey('admin-order-copy-summary-${order.id}'),
-        onPressed: updating ? null : onCopy,
+        onPressed: widget.updating ? null : widget.onCopy,
         icon: const Icon(Icons.copy),
         label: const Text('نسخ ملخص واتساب'),
       ),
+    );
+    final statusActions = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              'الحالة الحالية',
+              style: TextStyle(
+                color: scheme.onSurfaceVariant,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            StatusChip.order(order.status),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (nextStatuses.isEmpty)
+          Row(
+            children: [
+              Icon(
+                order.status == OrderStatus.delivered
+                    ? Icons.task_alt
+                    : Icons.block_outlined,
+                size: 18,
+                color: scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  order.status == OrderStatus.delivered
+                      ? 'اكتملت دورة هذا الطلب.'
+                      : 'لا يمكن تغيير حالة هذا الطلب.',
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          )
+        else ...[
+          Text(
+            widget.updating ? 'جارٍ التحديث...' : 'الخطوة التالية',
+            style: TextStyle(
+              color: scheme.onSurfaceVariant,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ConstrainedBox(
+            key: ValueKey('admin-order-change-status-${order.id}'),
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final status in nextStatuses)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    child: status == OrderStatus.cancelled
+                        ? OutlinedButton(
+                            key: ValueKey(
+                              'admin-order-next-status-${order.id}-${status.value}',
+                            ),
+                            onPressed: widget.updating
+                                ? null
+                                : () => _onStatusPressed(status),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: scheme.error,
+                              side: BorderSide(color: scheme.error),
+                            ),
+                            child: Text(status.label),
+                          )
+                        : FilledButton(
+                            key: ValueKey(
+                              'admin-order-next-status-${order.id}-${status.value}',
+                            ),
+                            onPressed: widget.updating
+                                ? null
+                                : () => _onStatusPressed(status),
+                            child: Text(status.label),
+                          ),
+                  ),
+              ],
+            ),
+          ),
+          if (pendingConfirm != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: scheme.errorContainer.withValues(alpha: .35),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    pendingConfirm == OrderStatus.cancelled
+                        ? 'إلغاء الطلب نهائي ولا يمكن التراجع عنه.'
+                        : 'تسليم الطلب نهائي ولا يمكن التراجع عنه.',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton(
+                          key: ValueKey(
+                            'admin-order-confirm-status-${order.id}',
+                          ),
+                          onPressed: widget.updating ? null : _confirmPending,
+                          child: Text(
+                            pendingConfirm == OrderStatus.cancelled
+                                ? 'تأكيد الإلغاء'
+                                : 'تأكيد التسليم',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: widget.updating
+                            ? null
+                            : () => setState(() => pendingConfirm = null),
+                        child: const Text('تراجع'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          TextField(
+            controller: note,
+            enabled: !widget.updating,
+            maxLines: 2,
+            decoration: const InputDecoration(
+              isDense: true,
+              labelText: 'ملاحظة الإدارة (اختيارية)',
+            ),
+          ),
+        ],
+      ],
     );
 
     return Container(
@@ -2075,60 +2443,9 @@ class _AdminOrderActions extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (!canChangeStatus) ...[
-            Row(
-              children: [
-                Icon(
-                  order.status == OrderStatus.delivered
-                      ? Icons.task_alt
-                      : Icons.block_outlined,
-                  size: 18,
-                  color: scheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    order.status == OrderStatus.delivered
-                        ? 'اكتملت دورة هذا الطلب.'
-                        : 'لا يمكن تغيير حالة هذا الطلب.',
-                    style: TextStyle(
-                      color: scheme.onSurfaceVariant,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 9),
-          ],
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final enlargedText =
-                  MediaQuery.textScalerOf(context).scale(1) >= 1.3;
-              if (canChangeStatus &&
-                  constraints.maxWidth >= 480 &&
-                  !enlargedText) {
-                return Row(
-                  children: [
-                    Expanded(child: changeStatusButton),
-                    const SizedBox(width: 9),
-                    Expanded(child: copyButton),
-                  ],
-                );
-              }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (canChangeStatus) ...[
-                    changeStatusButton,
-                    const SizedBox(height: 8),
-                  ],
-                  copyButton,
-                ],
-              );
-            },
-          ),
+          statusActions,
+          const SizedBox(height: 9),
+          copyButton,
         ],
       ),
     );
@@ -2663,13 +2980,6 @@ class _AdminOrdersError extends StatelessWidget {
       ),
     );
   }
-}
-
-class _StatusUpdate {
-  const _StatusUpdate({required this.status, required this.note});
-
-  final OrderStatus status;
-  final String note;
 }
 
 String _date(DateTime date) => '${date.year}/${date.month}/${date.day}';

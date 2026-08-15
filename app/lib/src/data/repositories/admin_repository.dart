@@ -840,6 +840,7 @@ class AdminRepository {
         'business_name': customer.businessName,
         'contact_person': customer.contactPerson,
         'phone': customer.phone,
+        'phone_is_whatsapp': customer.phoneIsWhatsapp,
         'city': customer.city,
         'area': customer.area,
         'address': customer.address,
@@ -851,20 +852,25 @@ class AdminRepository {
       };
 
   static Map<String, dynamic> customerCreatePayload(
-    BusinessCustomer customer,
-  ) =>
-      {
-        'business_name': customer.businessName,
-        'contact_person': customer.contactPerson,
-        'phone': customer.phone,
-        'city': customer.city,
-        'area': customer.area,
-        'address': customer.address,
-        'username': customer.username,
-        'discount_percent':
-            validatedCustomerDiscountPercent(customer.discountPercent),
-        'credit_limit': customer.creditLimit,
-      };
+    BusinessCustomer customer, {
+    String? password,
+  }) {
+    final trimmedPassword = password?.trim() ?? '';
+    return {
+      'business_name': customer.businessName,
+      'contact_person': customer.contactPerson,
+      'phone': customer.phone,
+      'phone_is_whatsapp': customer.phoneIsWhatsapp,
+      'city': customer.city,
+      'area': customer.area,
+      'address': customer.address,
+      'username': customer.username,
+      'discount_percent':
+          validatedCustomerDiscountPercent(customer.discountPercent),
+      'credit_limit': customer.creditLimit,
+      if (trimmedPassword.isNotEmpty) 'password': trimmedPassword,
+    };
+  }
 
   static BusinessCustomer customerFromUpdateResponse(Object? responseData) {
     final root = _stringKeyedMap(responseData);
@@ -880,12 +886,15 @@ class AdminRepository {
     return BusinessCustomer.fromSupabase(customer);
   }
 
-  Future<InviteResult> createCustomerInvite(BusinessCustomer customer) async {
+  Future<InviteResult> createCustomerInvite(
+    BusinessCustomer customer, {
+    String? password,
+  }) async {
     final client = supabaseClient;
     if (client != null) {
       final response = await client.functions.invoke(
         'admin-create-customer',
-        body: customerCreatePayload(customer),
+        body: customerCreatePayload(customer, password: password),
       );
       return InviteResult.fromFunctionResponse(
         response.data,
@@ -896,7 +905,8 @@ class AdminRepository {
     final id = customer.id == 'new' ? const Uuid().v4() : customer.id;
     final saved = customer.copyWith(id: id, accountStatus: 'active');
     await saveCustomer(saved);
-    const temporaryPassword = 'Temp-92841!';
+    final temporaryPassword =
+        (password?.trim().isNotEmpty ?? false) ? password!.trim() : 'Temp-92841!';
     final token = 'inv_${const Uuid().v4().substring(0, 8)}';
     final inviteLink =
         'animalsupplyb2b://invite?token=$token&client=${Uri.encodeComponent(saved.username)}';
@@ -910,32 +920,68 @@ class AdminRepository {
         customerPhone: saved.phone);
   }
 
+  Map<String, dynamic> _customerPasswordResetBody(BusinessCustomer customer) {
+    final profileId = customer.profileId?.trim() ?? '';
+    final customerId = customer.id.trim();
+    if (profileId.isEmpty && (customerId.isEmpty || customerId == 'new')) {
+      throw StateError(
+        'A saved customer ID is required for a secure password reset.',
+      );
+    }
+    return <String, dynamic>{
+      if (profileId.isNotEmpty)
+        'user_id': profileId
+      else
+        'customer_id': customerId,
+    };
+  }
+
+  Future<Object?> _invokeCustomerPasswordReset(Map<String, dynamic> body) async {
+    final client = supabaseClient;
+    if (_edgeFunctionInvoker != null) {
+      return _edgeFunctionInvoker(
+        'admin-reset-customer-password',
+        body,
+      );
+    }
+    if (client == null) return null;
+    return (await client.functions.invoke(
+      'admin-reset-customer-password',
+      body: body,
+    ))
+        .data;
+  }
+
+  Future<void> setCustomerPassword(
+    BusinessCustomer customer, {
+    required String password,
+  }) async {
+    final trimmed = password.trim();
+    if (trimmed.isEmpty) return;
+    final body = {
+      ..._customerPasswordResetBody(customer),
+      'password': trimmed,
+    };
+    final responseData = await _invokeCustomerPasswordReset(body);
+    if (responseData == null) {
+      // Demo/offline: Auth is not available, so nothing is stored locally.
+      return;
+    }
+    final root = _stringKeyedMap(responseData);
+    final nested = _stringKeyedMap(root['data']);
+    final updated = root['password_updated'] == true ||
+        nested['password_updated'] == true;
+    if (!updated) {
+      throw StateError('The customer password was not updated on the server.');
+    }
+  }
+
   Future<InviteResult> resetCustomerPassword(BusinessCustomer customer) async {
     final client = supabaseClient;
     if (client != null || _edgeFunctionInvoker != null) {
-      final profileId = customer.profileId?.trim() ?? '';
-      final customerId = customer.id.trim();
-      if (profileId.isEmpty && (customerId.isEmpty || customerId == 'new')) {
-        throw StateError(
-          'A saved customer ID is required for a secure password reset.',
-        );
-      }
-      final body = <String, dynamic>{
-        if (profileId.isNotEmpty)
-          'user_id': profileId
-        else
-          'customer_id': customerId,
-      };
-      final responseData = _edgeFunctionInvoker != null
-          ? await _edgeFunctionInvoker(
-              'admin-reset-customer-password',
-              body,
-            )
-          : (await client!.functions.invoke(
-              'admin-reset-customer-password',
-              body: body,
-            ))
-              .data;
+      final responseData = await _invokeCustomerPasswordReset(
+        _customerPasswordResetBody(customer),
+      );
       return InviteResult.fromFunctionResponse(
         responseData,
         fallbackUsername: customer.username,

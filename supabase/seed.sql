@@ -101,23 +101,34 @@ active = excluded.active,
 is_featured = excluded.is_featured,
 is_top_selling = excluded.is_top_selling;
 
+-- Demo-only retail references. Replace these generated presentation values
+-- with client-approved reseller prices before production.
+update products
+set retail_unit_price = round(
+  coalesce(old_price, base_price * 1.20),
+  2
+)
+where retail_unit_price is null;
+
 insert into app_settings (key, value) values
 ('shop_name','متجر أعلاف ومستلزمات الحيوانات'),
-('shop_whatsapp','+218910000000'),
-('support_whatsapp','+218910000000'),
-('app_download_link','https://example.com/animal-supply.apk'),
-('download_link','https://example.com/animal-supply.apk'),
-('apk_link','https://example.com/downloads/animal-supply-b2b.apk'),
+('shop_whatsapp',''),
+('support_whatsapp',''),
+('download_link',''),
+('apk_link',''),
 ('delivery_policy','يتم الاتفاق على التسليم بعد تأكيد الطلب.'),
 ('currency','LYD'),
 ('minimum_order_amount','0'),
+('delivery_fee','0'),
+('handling_fee','0'),
 ('maintenance_mode','false'),
 ('demo_price_notice','الأسعار الموجودة في النسخة التجريبية افتراضية وليست أسعار بيع فعلية.')
 on conflict (key) do update set value = excluded.value;
 
-insert into app_versions (platform, version_name, version_code, apk_url, required_update, release_notes, published)
-values ('android', '1.0.0', 1, 'https://example.com/downloads/animal-supply-b2b.apk', false, 'نسخة اختبار أولية للتوزيع المباشر خارج المتجر.', true)
+insert into app_versions (platform, version_name, version_code, minimum_supported_code, apk_url, required_update, release_notes, published)
+values ('android', '1.0.4', 5, 1, null, false, 'إصدار تجريبي محسن للإطلاق يضيف صفحة توزيع آمنة، إشعارات موجهة حسب الدور، عداداً دقيقاً، وتسعير الجملة وضوابط المخزون. أضف رابط APK الموقّع وبصمته وحجمه قبل النشر.', false)
 on conflict (platform, version_code) do update set
+minimum_supported_code = excluded.minimum_supported_code,
 apk_url = excluded.apk_url,
 required_update = excluded.required_update,
 release_notes = excluded.release_notes,

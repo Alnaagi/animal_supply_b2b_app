@@ -3,7 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/config/app_config.dart';
 
 SupabaseClient? get supabaseClient {
-  if (!AppConfig.hasSupabase) return null;
+  if (!AppConfig.hasSupabase || AppConfig.isDemoMode) return null;
   return Supabase.instance.client;
 }
 

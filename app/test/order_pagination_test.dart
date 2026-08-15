@@ -111,6 +111,45 @@ void main() {
       expect(page.orders.map((order) => order.id), ['confirmed-today']);
     });
 
+    test('demo mixed status filter keeps active work and hides delivered',
+        () async {
+      final repository = OrdersRepository.demo(
+        seed: [
+          _order(
+            id: 'open',
+            customerId: 'customer-a',
+            createdAt: DateTime.utc(2026, 7, 22, 11),
+          ),
+          _order(
+            id: 'done',
+            customerId: 'customer-a',
+            status: OrderStatus.delivered,
+            createdAt: DateTime.utc(2026, 7, 22, 10),
+          ),
+          _order(
+            id: 'cancelled',
+            customerId: 'customer-a',
+            status: OrderStatus.cancelled,
+            createdAt: DateTime.utc(2026, 7, 22, 9),
+          ),
+        ],
+      );
+
+      final page = await repository.ordersPage(
+        customerId: 'customer-a',
+        statuses: {
+          OrderStatus.pending,
+          OrderStatus.confirmed,
+          OrderStatus.preparing,
+          OrderStatus.ready,
+          OrderStatus.cancelled,
+        },
+        snapshotAt: DateTime.utc(2026, 7, 22, 12),
+      );
+
+      expect(page.orders.map((order) => order.id), ['open', 'cancelled']);
+    });
+
     test('paged gateways receive server filters and a page-size lookahead',
         () async {
       final gateway = _PagedGateway(
@@ -333,6 +372,16 @@ void main() {
     final dateCall = repository.pageCalls.last;
     expect(dateCall.offset, 0);
     expect(dateCall.status, isNull);
+    expect(
+      dateCall.statuses,
+      [
+        'pending',
+        'confirmed',
+        'preparing',
+        'ready',
+        'cancelled',
+      ],
+    );
     expect(dateCall.createdFrom, isNotNull);
     expect(dateCall.createdUntil, isNotNull);
 
@@ -357,6 +406,7 @@ void main() {
     final combinedFilterCall = repository.pageCalls.last;
     expect(combinedFilterCall.offset, 0);
     expect(combinedFilterCall.status, OrderStatus.confirmed);
+    expect(combinedFilterCall.statuses, isNull);
     expect(combinedFilterCall.createdFrom, dateCall.createdFrom);
     expect(combinedFilterCall.createdUntil, dateCall.createdUntil);
     expect(combinedFilterCall.snapshotAt, isNull);
@@ -374,6 +424,7 @@ void main() {
     final paginationCall = repository.pageCalls.last;
     expect(paginationCall.offset, 1);
     expect(paginationCall.status, OrderStatus.confirmed);
+    expect(paginationCall.statuses, isNull);
     expect(paginationCall.createdFrom, combinedFilterCall.createdFrom);
     expect(paginationCall.createdUntil, combinedFilterCall.createdUntil);
     expect(paginationCall.snapshotAt, _ScreenOrdersRepository.time);
@@ -385,6 +436,16 @@ void main() {
     final clearedStatusCall = repository.pageCalls.last;
     expect(clearedStatusCall.offset, 0);
     expect(clearedStatusCall.status, isNull);
+    expect(
+      clearedStatusCall.statuses,
+      [
+        'pending',
+        'confirmed',
+        'preparing',
+        'ready',
+        'cancelled',
+      ],
+    );
     expect(clearedStatusCall.createdFrom, combinedFilterCall.createdFrom);
     expect(clearedStatusCall.createdUntil, combinedFilterCall.createdUntil);
     expect(clearedStatusCall.snapshotAt, isNull);
@@ -432,6 +493,7 @@ class _PagedGateway implements OrdersRemoteGateway, OrdersPagedRemoteGateway {
   Future<List<Map<String, dynamic>>> queryOrdersPage({
     String? customerId,
     String? status,
+    List<String>? statuses,
     DateTime? createdFrom,
     DateTime? createdUntil,
     required DateTime snapshotAt,
@@ -441,8 +503,9 @@ class _PagedGateway implements OrdersRemoteGateway, OrdersPagedRemoteGateway {
     pageCalls.add(
       _PageCall(
         customerId: customerId,
-        statusValue: status,
         status: status == null ? null : OrderStatus.values.byName(status),
+        statusValue: status,
+        statuses: statuses,
         createdFrom: createdFrom,
         createdUntil: createdUntil,
         snapshotAt: snapshotAt,
@@ -504,6 +567,7 @@ class _ScreenOrdersRepository extends OrdersRepository {
   Future<OrdersPage> ordersPage({
     String? customerId,
     OrderStatus? status,
+    Iterable<OrderStatus>? statuses,
     DateTime? createdFrom,
     DateTime? createdUntil,
     DateTime? snapshotAt,
@@ -515,6 +579,9 @@ class _ScreenOrdersRepository extends OrdersRepository {
         customerId: customerId,
         status: status,
         statusValue: status?.value,
+        statuses: statuses == null
+            ? null
+            : [for (final value in statuses) value.value],
         createdFrom: createdFrom,
         createdUntil: createdUntil,
         snapshotAt: snapshotAt,
@@ -552,6 +619,7 @@ class _PageCall {
     required this.customerId,
     required this.status,
     required this.statusValue,
+    required this.statuses,
     required this.createdFrom,
     required this.createdUntil,
     required this.snapshotAt,
@@ -562,6 +630,7 @@ class _PageCall {
   final String? customerId;
   final OrderStatus? status;
   final String? statusValue;
+  final List<String>? statuses;
   final DateTime? createdFrom;
   final DateTime? createdUntil;
   final DateTime? snapshotAt;

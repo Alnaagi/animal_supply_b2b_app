@@ -9,7 +9,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/config/app_config.dart';
 import '../../core/support/invite_delivery.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/utils/formatters.dart';
 import '../../core/widgets/responsive_field_group.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
@@ -230,7 +229,17 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
                                   style: const TextStyle(
                                       fontWeight: FontWeight.w900)),
                               subtitle: Text(
-                                '${customer.username} • ${customer.city} ${customer.area} • خصم ${_formatDiscountPercent(customer.discountPercent)}\nرصيد مسجل يدوياً: ${lyd(customer.outstandingBalance)} • حد ائتمان مرجعي: ${lyd(customer.creditLimit)}',
+                                [
+                                  if (customer.contactPerson.trim().isNotEmpty)
+                                    customer.contactPerson.trim(),
+                                  customer.username,
+                                  if (customer.phone.trim().isNotEmpty)
+                                    customer.phoneIsWhatsapp
+                                        ? 'واتساب ${customer.phone}'
+                                        : customer.phone,
+                                  '${customer.city} ${customer.area}'.trim(),
+                                  'خصم ${_formatDiscountPercent(customer.discountPercent)}',
+                                ].where((part) => part.isNotEmpty).join(' • '),
                                 key: ValueKey(
                                   'admin-customer-discount-${customer.id}',
                                 ),
@@ -436,6 +445,7 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
       id: 'new', businessName: '', username: '', city: 'طرابلس', area: ''));
 
   Future<void> _showCustomerForm(BusinessCustomer customer) async {
+    final isNew = customer.id == 'new';
     final business = TextEditingController(text: customer.businessName);
     final username = TextEditingController(text: customer.username);
     final contact = TextEditingController(text: customer.contactPerson);
@@ -443,6 +453,8 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
     final city = TextEditingController(text: customer.city);
     final area = TextEditingController(text: customer.area);
     final address = TextEditingController(text: customer.address);
+    final password = TextEditingController();
+    final passwordConfirm = TextEditingController();
     final credit =
         TextEditingController(text: customer.creditLimit.toStringAsFixed(0));
     final outstanding = TextEditingController(
@@ -451,186 +463,364 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
       text: _formatDiscountNumber(customer.discountPercent),
     );
     var statusValue = customer.accountStatus;
+    var phoneIsWhatsapp = customer.phoneIsWhatsapp;
+    var obscurePassword = true;
     String? validationMessage;
 
-    final saved = await showDialog<BusinessCustomer>(
+    final saved = await showDialog<_CustomerFormResult>(
       context: context,
       builder: (context) => Directionality(
         textDirection: TextDirection.rtl,
         child: StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: Text(customer.id == 'new' ? 'إنشاء عميل' : 'تعديل عميل'),
-            content: SizedBox(
-              width: 520,
-              child: SingleChildScrollView(
-                child: Column(children: [
-                  TextField(
-                      controller: business,
-                      decoration: const InputDecoration(
-                          labelText: 'اسم النشاط التجاري')),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: username,
-                      enabled: customer.id == 'new',
-                      decoration: const InputDecoration(
-                        labelText: 'اسم المستخدم',
-                        helperText:
-                            '3-64 حرفاً لاتينياً أو رقماً، ويمكن استخدام . _ -',
-                      )),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: contact,
-                      decoration:
-                          const InputDecoration(labelText: 'الشخص المسؤول')),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: phone,
-                      decoration: const InputDecoration(labelText: 'الهاتف')),
-                  const SizedBox(height: 10),
-                  ResponsiveFieldGroup(children: [
-                    TextField(
-                      controller: city,
-                      decoration: const InputDecoration(labelText: 'المدينة'),
-                    ),
-                    TextField(
-                      controller: area,
-                      decoration: const InputDecoration(labelText: 'المنطقة'),
-                    ),
-                  ]),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: address,
-                      decoration: const InputDecoration(labelText: 'العنوان')),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: credit,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'حد الائتمان المرجعي',
-                        helperText:
-                            'للمتابعة اليدوية فقط؛ لا يمنع الطلبات تلقائياً.',
-                      )),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: outstanding,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'الرصيد المستحق المسجل يدوياً',
-                        helperText:
-                            'قيمة مرجعية فقط؛ لا تُنشئ فاتورة أو دفعة تلقائياً.',
-                      )),
-                  const SizedBox(height: 10),
-                  TextField(
-                    key: const ValueKey('admin-customer-discount-field'),
-                    controller: discount,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    textDirection: TextDirection.ltr,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(
-                        RegExp(r'[0-9٠-٩۰-۹.,٫،]'),
+              title: Text(isNew ? 'إنشاء عميل' : 'تعديل عميل'),
+              content: SizedBox(
+                width: 540,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (AppConfig.isDemoMode) ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppTheme.orange.withValues(alpha: .12),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Text(
+                            'وضع تجريبي محلي: لا يُنشأ حساب حقيقي في الخادم، '
+                            'ولا تُحفظ كلمة المرور على الجهاز.',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      TextField(
+                        key: const ValueKey('admin-customer-contact-field'),
+                        controller: contact,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'الشخص المسؤول',
+                          helperText: 'الاسم واللقب',
+                          prefixIcon: Icon(Icons.person_outline),
+                        ),
                       ),
-                    ],
-                    decoration: const InputDecoration(
-                      labelText: 'خصم العميل على جميع المنتجات',
-                      helperText:
-                          'يُطبّق تلقائياً على السعر الأساسي. اكتب 0 لعدم تطبيق خصم.',
-                      suffixText: '%',
-                      prefixIcon: Icon(Icons.percent),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    initialValue: statusValue,
-                    decoration: const InputDecoration(labelText: 'الحالة'),
-                    items: const [
-                      DropdownMenuItem(value: 'active', child: Text('نشط')),
-                      DropdownMenuItem(
-                          value: 'suspended', child: Text('موقوف')),
-                      DropdownMenuItem(value: 'archived', child: Text('مؤرشف')),
-                    ],
-                    onChanged: (value) =>
-                        setDialogState(() => statusValue = value ?? 'active'),
-                  ),
-                  if (validationMessage != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      validationMessage!,
-                      key: const ValueKey('admin-customer-form-validation'),
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                        fontWeight: FontWeight.w700,
+                      const SizedBox(height: 10),
+                      TextField(
+                        key: const ValueKey('admin-customer-business-field'),
+                        controller: business,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'اسم النشاط التجاري',
+                          prefixIcon: Icon(Icons.storefront_outlined),
+                        ),
                       ),
-                    ),
-                  ],
-                ]),
+                      const SizedBox(height: 10),
+                      TextField(
+                        key: const ValueKey('admin-customer-phone-field'),
+                        controller: phone,
+                        keyboardType: TextInputType.phone,
+                        textDirection: TextDirection.ltr,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: phoneIsWhatsapp
+                              ? 'رقم الهاتف (واتساب)'
+                              : 'رقم الهاتف',
+                          prefixIcon: Icon(
+                            phoneIsWhatsapp
+                                ? Icons.chat_outlined
+                                : Icons.phone_outlined,
+                          ),
+                        ),
+                      ),
+                      CheckboxListTile(
+                        key: const ValueKey(
+                          'admin-customer-whatsapp-preferred',
+                        ),
+                        value: phoneIsWhatsapp,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: const Text('هذا الرقم لواتساب (مفضّل)'),
+                        subtitle: const Text(
+                          'يُستخدم للتواصل والدعوات عبر واتساب.',
+                        ),
+                        onChanged: (value) => setDialogState(
+                          () => phoneIsWhatsapp = value ?? true,
+                        ),
+                      ),
+                      ResponsiveFieldGroup(children: [
+                        TextField(
+                          controller: city,
+                          textInputAction: TextInputAction.next,
+                          decoration:
+                              const InputDecoration(labelText: 'المدينة'),
+                        ),
+                        TextField(
+                          controller: area,
+                          textInputAction: TextInputAction.next,
+                          decoration:
+                              const InputDecoration(labelText: 'المنطقة'),
+                        ),
+                      ]),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: username,
+                        enabled: isNew,
+                        textDirection: TextDirection.ltr,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: 'اسم المستخدم',
+                          helperText: isNew
+                              ? '3-64 حرفاً لاتينياً أو رقماً، ويمكن استخدام . _ -'
+                              : 'لا يمكن تغيير اسم المستخدم بعد الإنشاء',
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        key: const ValueKey('admin-customer-password-field'),
+                        controller: password,
+                        obscureText: obscurePassword,
+                        textDirection: TextDirection.ltr,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: isNew ? 'كلمة المرور' : 'كلمة مرور جديدة',
+                          helperText: isNew
+                              ? 'اختياري. إن تُركت فارغة يولّد الخادم كلمة مرور مؤقتة. لا تُوضع في الرابط.'
+                              : 'اتركه فارغاً للإبقاء على كلمة المرور الحالية. تُحفظ في الخادم فقط.',
+                          prefixIcon: const Icon(Icons.lock_outline),
+                          suffixIcon: IconButton(
+                            onPressed: () => setDialogState(
+                              () => obscurePassword = !obscurePassword,
+                            ),
+                            icon: Icon(
+                              obscurePassword
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        key: const ValueKey(
+                          'admin-customer-password-confirm-field',
+                        ),
+                        controller: passwordConfirm,
+                        obscureText: obscurePassword,
+                        textDirection: TextDirection.ltr,
+                        decoration: const InputDecoration(
+                          labelText: 'تأكيد كلمة المرور',
+                          helperText: 'مطلوب فقط عند إدخال كلمة مرور.',
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        key: const ValueKey('admin-customer-discount-field'),
+                        controller: discount,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        textDirection: TextDirection.ltr,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r'[0-9٠-٩۰-۹.,٫،]'),
+                          ),
+                        ],
+                        decoration: const InputDecoration(
+                          labelText: 'خصم العميل',
+                          helperText:
+                              'يُطبّق تلقائياً على السعر الأساسي. اكتب 0 لعدم تطبيق خصم.',
+                          suffixText: '%',
+                          prefixIcon: Icon(Icons.percent),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Card(
+                        key: const ValueKey(
+                          'admin-customer-secondary-fields',
+                        ),
+                        margin: EdgeInsets.zero,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Text(
+                                'عنوان وائتمان مرجعي',
+                                style: TextStyle(fontWeight: FontWeight.w800),
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'حقول محاسبية وعنوان تفصيلي؛ ليست أساسية للطلب.',
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                              const SizedBox(height: 10),
+                              TextField(
+                                controller: address,
+                                decoration:
+                                    const InputDecoration(labelText: 'العنوان'),
+                              ),
+                              const SizedBox(height: 10),
+                              TextField(
+                                controller: credit,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'حد الائتمان المرجعي',
+                                  helperText:
+                                      'للمتابعة اليدوية فقط؛ لا يمنع الطلبات تلقائياً.',
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              TextField(
+                                controller: outstanding,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'الرصيد المستحق المسجل يدوياً',
+                                  helperText:
+                                      'قيمة مرجعية فقط؛ لا تُنشئ فاتورة أو دفعة تلقائياً.',
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              DropdownButtonFormField<String>(
+                                initialValue: statusValue,
+                                decoration:
+                                    const InputDecoration(labelText: 'الحالة'),
+                                items: const [
+                                  DropdownMenuItem(
+                                      value: 'active', child: Text('نشط')),
+                                  DropdownMenuItem(
+                                      value: 'suspended',
+                                      child: Text('موقوف')),
+                                  DropdownMenuItem(
+                                      value: 'archived', child: Text('مؤرشف')),
+                                ],
+                                onChanged: (value) => setDialogState(
+                                  () => statusValue = value ?? 'active',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (validationMessage != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          validationMessage!,
+                          key: const ValueKey('admin-customer-form-validation'),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
-            ),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(context),
                   child: const Text('إلغاء')),
-              FilledButton(
-                onPressed: () {
-                  final parsedCredit = double.tryParse(credit.text.trim());
-                  final parsedOutstanding =
-                      double.tryParse(outstanding.text.trim());
-                  final parsedDiscount =
-                      _parseCustomerDiscountPercent(discount.text);
-                  if (parsedDiscount == null) {
-                    setDialogState(() {
-                      validationMessage =
-                          'نسبة الخصم يجب أن تكون بين 0 و99.99 وبحد أقصى منزلتين عشريتين.';
-                    });
-                    return;
-                  }
-                  if (business.text.trim().isEmpty ||
-                      username.text.trim().isEmpty ||
-                      parsedCredit == null ||
-                      !parsedCredit.isFinite ||
-                      parsedCredit < 0 ||
-                      parsedOutstanding == null ||
-                      !parsedOutstanding.isFinite ||
-                      parsedOutstanding < 0) {
-                    setDialogState(() {
-                      validationMessage =
-                          'أدخل اسم النشاط واسم المستخدم وحد ائتمان ورصيداً غير سالبين.';
-                    });
-                    return;
-                  }
-                  Navigator.pop(
-                    context,
-                    customer.copyWith(
-                      businessName: business.text.trim(),
-                      username: username.text.trim(),
-                      contactPerson: contact.text.trim(),
-                      phone: phone.text.trim(),
-                      city: city.text.trim(),
-                      area: area.text.trim(),
-                      address: address.text.trim(),
-                      creditLimit: parsedCredit,
-                      outstandingBalance: parsedOutstanding,
-                      discountPercent: parsedDiscount,
-                      accountStatus: statusValue,
-                    ),
-                  );
-                },
-                child: const Text('حفظ'),
-              ),
-            ],
+                FilledButton(
+                  onPressed: () {
+                    final parsedCredit = double.tryParse(credit.text.trim());
+                    final parsedOutstanding =
+                        double.tryParse(outstanding.text.trim());
+                    final parsedDiscount =
+                        _parseCustomerDiscountPercent(discount.text);
+                    final nextPassword = password.text.trim();
+                    if (parsedDiscount == null) {
+                      setDialogState(() {
+                        validationMessage =
+                            'نسبة الخصم يجب أن تكون بين 0 و99.99 وبحد أقصى منزلتين عشريتين.';
+                      });
+                      return;
+                    }
+                    if (contact.text.trim().isEmpty ||
+                        business.text.trim().isEmpty ||
+                        username.text.trim().isEmpty ||
+                        phone.text.trim().isEmpty ||
+                        city.text.trim().isEmpty ||
+                        parsedCredit == null ||
+                        !parsedCredit.isFinite ||
+                        parsedCredit < 0 ||
+                        parsedOutstanding == null ||
+                        !parsedOutstanding.isFinite ||
+                        parsedOutstanding < 0) {
+                      setDialogState(() {
+                        validationMessage =
+                            'أدخل الشخص المسؤول واسم النشاط والهاتف والمدينة واسم المستخدم، مع حد ائتمان ورصيد غير سالبين.';
+                      });
+                      return;
+                    }
+                    if (nextPassword.isNotEmpty ||
+                        passwordConfirm.text.trim().isNotEmpty) {
+                      final passwordError = _adminCustomerPasswordError(
+                        nextPassword,
+                        passwordConfirm.text,
+                      );
+                      if (passwordError != null) {
+                        setDialogState(() => validationMessage = passwordError);
+                        return;
+                      }
+                    }
+                    Navigator.pop(
+                      context,
+                      _CustomerFormResult(
+                        customer: customer.copyWith(
+                          businessName: business.text.trim(),
+                          username: username.text.trim(),
+                          contactPerson: contact.text.trim(),
+                          phone: phone.text.trim(),
+                          phoneIsWhatsapp: phoneIsWhatsapp,
+                          city: city.text.trim(),
+                          area: area.text.trim(),
+                          address: address.text.trim(),
+                          creditLimit: parsedCredit,
+                          outstandingBalance: parsedOutstanding,
+                          discountPercent: parsedDiscount,
+                          accountStatus: statusValue,
+                        ),
+                        password: nextPassword,
+                      ),
+                    );
+                  },
+                  child: const Text('حفظ'),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
     if (saved == null) return;
-    await _runCustomerAction(saved.id, () async {
-      if (saved.id == 'new') {
-        final result =
-            await ref.read(adminRepositoryProvider).createCustomerInvite(saved);
+    await _runCustomerAction(saved.customer.id, () async {
+      final repo = ref.read(adminRepositoryProvider);
+      if (saved.customer.id == 'new') {
+        final result = await repo.createCustomerInvite(
+          saved.customer,
+          password: saved.password.isEmpty ? null : saved.password,
+        );
         if (mounted) _showInviteResult(result);
       } else {
-        await ref.read(adminRepositoryProvider).saveCustomer(saved);
+        await repo.saveCustomer(saved.customer);
+        if (saved.password.isNotEmpty) {
+          await repo.setCustomerPassword(
+            saved.customer,
+            password: saved.password,
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  AppConfig.isDemoMode
+                      ? 'وضع تجريبي: لم تُحدَّث كلمة المرور في الخادم.'
+                      : 'تم تعيين كلمة المرور في الخادم. لن تُرسل داخل الرابط أو الدعوة.',
+                ),
+              ),
+            );
+          }
+        }
       }
       if (mounted) await _refreshCustomers();
     });
@@ -762,6 +952,35 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
       ),
     );
   }
+}
+
+class _CustomerFormResult {
+  const _CustomerFormResult({
+    required this.customer,
+    required this.password,
+  });
+
+  final BusinessCustomer customer;
+  final String password;
+}
+
+String? _adminCustomerPasswordError(String password, String confirmation) {
+  if (password != confirmation.trim()) {
+    return 'كلمتا المرور غير متطابقتين.';
+  }
+  if (password.length < 10) {
+    return 'استخدم كلمة مرور من 10 أحرف على الأقل.';
+  }
+  if (password.length > 128) {
+    return 'يجب ألا تتجاوز كلمة المرور 128 حرفاً.';
+  }
+  if (!RegExp('[A-Z]').hasMatch(password) ||
+      !RegExp('[a-z]').hasMatch(password) ||
+      !RegExp('[0-9]').hasMatch(password) ||
+      !RegExp(r'[^A-Za-z0-9]').hasMatch(password)) {
+    return 'يجب أن تحتوي كلمة المرور على حرف إنجليزي كبير وصغير ورقم ورمز.';
+  }
+  return null;
 }
 
 String _formatDiscountNumber(double value) {

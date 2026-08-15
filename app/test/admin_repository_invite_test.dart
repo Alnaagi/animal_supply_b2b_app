@@ -173,6 +173,67 @@ void main() {
       expect(invoked, isFalse);
     });
   });
+
+  group('AdminRepository.setCustomerPassword', () {
+    test('sends the chosen password to the reset function without invite fields',
+        () async {
+      String? invokedFunction;
+      Map<String, dynamic>? invokedBody;
+      final repository = AdminRepository(
+        edgeFunctionInvoker: (functionName, body) async {
+          invokedFunction = functionName;
+          invokedBody = body;
+          return {
+            'ok': true,
+            'data': {
+              'username': 'shop-profile',
+              'password_updated': true,
+            },
+          };
+        },
+      );
+
+      await repository.setCustomerPassword(
+        const BusinessCustomer(
+          id: '10000000-0000-4000-8000-000000000001',
+          profileId: '20000000-0000-4000-8000-000000000001',
+          businessName: 'متجر الاختبار',
+          username: 'shop-profile',
+          phone: '+218910000001',
+        ),
+        password: 'Admin-Set-42!',
+      );
+
+      expect(invokedFunction, 'admin-reset-customer-password');
+      expect(invokedBody, {
+        'user_id': '20000000-0000-4000-8000-000000000001',
+        'password': 'Admin-Set-42!',
+      });
+      expect(invokedBody, isNot(contains('invite_link')));
+    });
+
+    test('skips the server call when the password field is empty', () async {
+      var invoked = false;
+      final repository = AdminRepository(
+        edgeFunctionInvoker: (functionName, body) async {
+          invoked = true;
+          return const <String, dynamic>{};
+        },
+      );
+
+      await repository.setCustomerPassword(
+        const BusinessCustomer(
+          id: '10000000-0000-4000-8000-000000000001',
+          profileId: '20000000-0000-4000-8000-000000000001',
+          businessName: 'متجر الاختبار',
+          username: 'shop-profile',
+        ),
+        password: '   ',
+      );
+
+      expect(invoked, isFalse);
+    });
+  });
 }
 
 Map<String, dynamic> _secureResetResponse({

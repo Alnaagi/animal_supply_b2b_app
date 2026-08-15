@@ -22,9 +22,20 @@ Deno.test("customer update contract normalizes a complete valid request", () => 
     parsed.businessName !== validBody.business_name ||
     parsed.discountPercent !== validBody.discount_percent ||
     parsed.accountStatus !== "active" ||
-    parsed.creditLimit !== 2500.5
+    parsed.creditLimit !== 2500.5 ||
+    parsed.phoneIsWhatsapp !== true
   ) {
     throw new Error("The customer update request was not parsed correctly.");
+  }
+});
+
+Deno.test("customer update contract accepts an explicit WhatsApp preference", () => {
+  const parsed = parseCustomerUpdateBody({
+    ...validBody,
+    phone_is_whatsapp: false,
+  });
+  if (parsed.phoneIsWhatsapp !== false) {
+    throw new Error("phone_is_whatsapp false was not preserved.");
   }
 });
 

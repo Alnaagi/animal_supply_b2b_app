@@ -311,6 +311,29 @@ class LocalCache {
     return null;
   }
 
+  /// Drops in-memory and SharedPreferences catalog/cart snapshots.
+  ///
+  /// Does not remove runtime mode flags or talk to Supabase.
+  Future<void> clearAllLocalSnapshots() async {
+    _cachedProducts = [];
+    _cachedProductsByOwner.clear();
+    _loadedProductOwners.clear();
+    _cachedCarts.clear();
+    _loadedCartOwners.clear();
+    _pendingRequests.clear();
+    _loadedPendingRequestOwners.clear();
+    _legacyQuarantineFuture = null;
+    final prefs = await _store();
+    if (prefs == null) return;
+    final keys = prefs
+        .getKeys()
+        .where((key) => key.startsWith('local_cache.'))
+        .toList(growable: false);
+    for (final key in keys) {
+      await prefs.remove(key);
+    }
+  }
+
   /// Kept for callers that still stage a draft order object locally.
   Future<void> saveDraftOrder(Order order) async {
     // Draft order rows are represented by the durable cart + outbox entries.

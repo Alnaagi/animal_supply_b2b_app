@@ -1,58 +1,99 @@
-import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
+import { requireCaller, serviceClient } from "../_shared/auth.ts";
+import {
+  errorResponse,
+  handlePreflight,
+  HttpError,
+  readJsonObject,
+  requirePost,
+  successResponse,
+  uuidField,
+} from "../_shared/http.ts";
+
+// Compatibility endpoint for older clients. New-order notifications are created
+// atomically by place_order_transaction; this endpoint never trusts a client to
+// author notification content or create duplicate notifications.
 serve(async (req) => {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const serviceRole = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-  const adminClient = createClient(supabaseUrl, serviceRole);
-  const userClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
-  });
+  try {
+    const preflight = handlePreflight(req);
+    if (preflight) return preflight;
+    requirePost(req);
 
-  const { data: caller } = await userClient.from('profiles').select('role').single();
-  if (!caller) return new Response('Forbidden', { status: 403 });
+    const adminClient = serviceClient();
+    const caller = await requireCaller(
+      req,
+      ["admin", "staff", "customer"],
+      adminClient,
+    );
+    const body = await readJsonObject(req);
+    const orderId = uuidField(body, "order_id")!;
 
-  const { order_id } = await req.json();
-  const order = await adminClient
-    .from('orders')
-    .select('id, subtotal, business_customers(business_name)')
-    .eq('id', order_id)
-    .single();
-  if (order.error) return Response.json({ error: order.error.message }, { status: 400 });
+    const { data: order, error: orderError } = await adminClient
+      .from("orders")
+      .select("id, customer_id")
+      .eq("id", orderId)
+      .maybeSingle();
+    if (orderError) {
+      console.error(
+        "Notification compatibility order lookup failed",
+        orderError,
+      );
+      throw new HttpError(
+        500,
+        "ORDER_LOOKUP_FAILED",
+        "The order could not be verified.",
+      );
+    }
+    if (!order) {
+      throw new HttpError(404, "ORDER_NOT_FOUND", "The order was not found.");
+    }
+    if (
+      caller.role === "customer" &&
+      caller.customer?.id !== order.customer_id
+    ) {
+      throw new HttpError(
+        403,
+        "FORBIDDEN",
+        "The order belongs to another customer.",
+      );
+    }
 
-  const businessName = order.data.business_customers?.business_name ?? 'عميل B2B';
-  const title = 'طلب جديد';
-  const body = `${businessName} أرسل طلب رقم ${order.data.id} بقيمة ${Number(order.data.subtotal ?? 0).toFixed(2)} د.ل`;
-  const payload = { order_id: order.data.id, type: 'new_order' };
+    const { count, error: notificationError } = await adminClient
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .like("dedupe_key", `order:new:${order.id}:%`);
+    if (notificationError) {
+      console.error(
+        "Notification compatibility lookup failed",
+        notificationError,
+      );
+      throw new HttpError(
+        500,
+        "NOTIFICATION_LOOKUP_FAILED",
+        "The notification state could not be verified.",
+      );
+    }
 
-  await adminClient.from('notifications').insert({
-    recipient_role: 'admin',
-    type: 'new_order',
-    title,
-    body,
-    payload,
-  });
-  await adminClient.from('notifications').insert({
-    recipient_role: 'staff',
-    type: 'new_order',
-    title,
-    body,
-    payload,
-  });
+    if (!count) {
+      throw new HttpError(
+        409,
+        "NOTIFICATION_NOT_ENQUEUED",
+        "Use place-order so the order and notification are committed together.",
+      );
+    }
 
-  const tokens = await adminClient
-    .from('admin_device_tokens')
-    .select('fcm_token')
-    .eq('active', true);
-
-  // Production FCM HTTP v1 requires Firebase service account credentials and an OAuth access token.
-  // Keep that secret server-side only. This MVP function records notifications now and is the only
-  // place where FCM delivery should be added.
-  return Response.json({
-    ok: true,
-    stored: true,
-    tokenCount: tokens.data?.length ?? 0,
-    fcmDelivery: 'TODO: configure Firebase HTTP v1 credentials in Edge Function secrets',
-  });
+    const data = {
+      stored: true,
+      notification_count: count,
+      managed_by: "place-order",
+    };
+    return successResponse(req, data, 200, {
+      stored: true,
+      tokenCount: 0,
+      fcmDelivery: "queued",
+    });
+  } catch (error) {
+    return errorResponse(req, error);
+  }
 });

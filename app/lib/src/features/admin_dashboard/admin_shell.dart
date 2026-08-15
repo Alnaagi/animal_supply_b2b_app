@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/config/app_runtime_mode.dart';
 import '../../core/notifications/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/repositories/notifications_repository.dart';
@@ -63,7 +64,9 @@ class AdminShell extends ConsumerWidget {
           Expanded(
             child: Column(
               children: [
-                if (AppConfig.isDemoMode || user?.isDemo == true)
+                if (AppConfig.isDemoMode ||
+                    ref.watch(appRuntimeModeProvider) ||
+                    user?.isDemo == true)
                   const AdminDemoModeNotice(),
                 Expanded(child: child),
               ],

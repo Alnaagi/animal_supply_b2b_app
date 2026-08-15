@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../data/local/local_auth_session_store.dart';
 import '../../data/models/app_user.dart';
 import '../../features/admin_archive/admin_archive_screen.dart';
 import '../../features/admin_banners/admin_banners_screen.dart';
@@ -35,7 +38,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     });
 
   return GoRouter(
-    initialLocation: '/login',
+    // Use the current browser/deep-link path so a refresh keeps the same
+    // screen instead of forcing /login and then the role landing page.
+    initialLocation: _startupLocation(),
     refreshListenable: refresh,
     redirect: (context, state) {
       final auth = ref.read(authControllerProvider);
@@ -50,6 +55,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final isPublicLocation = isPublicAuthLocation || isPublicContentLocation;
       final nextLocation = _safeNextLocation(state.uri.queryParameters['next']);
       final requestedLocation = _safeNextLocation(state.uri.toString());
+      final resumeLocation =
+          nextLocation ?? _safeNextLocation(auth.restoredRoute);
 
       if (auth.bootstrapping) {
         // Keep an incoming invite URI intact while the saved session is
@@ -83,9 +90,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       if (isPublicAuthLocation ||
           location == '/auth-loading' ||
           location == '/change-password') {
-        return nextLocation == null
+        return resumeLocation == null
             ? landingLocation
-            : _authorizedDestination(user, nextLocation);
+            : _authorizedDestination(user, resumeLocation);
       }
 
       if (user.isAdminLike && location == '/orders') {
@@ -104,6 +111,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         return '/admin';
       }
 
+      _rememberAuthenticatedRoute(state.uri);
       return null;
     },
     errorBuilder: (context, state) => _RouteNotFoundScreen(
@@ -214,6 +222,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+String _startupLocation() {
+  final name = WidgetsBinding.instance.platformDispatcher.defaultRouteName;
+  if (name.isEmpty) return '/';
+  return name.startsWith('/') ? name : '/$name';
+}
+
+void _rememberAuthenticatedRoute(Uri uri) {
+  final saved = _safeNextLocation(uri.toString());
+  if (saved == null) return;
+  unawaited(LocalAuthSessionStore.instance.saveLastRoute(saved));
+}
 
 LoginScreen _loginScreenFromState(GoRouterState state) {
   return LoginScreen(

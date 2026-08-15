@@ -16,9 +16,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
 
   testWidgets(
     'visible refresh establishes a silent baseline and sounds once per new batch',
@@ -197,6 +202,8 @@ void main() {
       await _flushImmediateWork(tester);
       final callsBeforePause = orders.pageCalls;
 
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
       await tester.pump();
       orders.current = [_order('order-2'), _order('order-1')];
@@ -207,6 +214,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
       expect(orders.pageCalls, callsBeforePause);
 
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await _flushImmediateWork(tester);
 
@@ -441,13 +450,25 @@ void main() {
       );
       await tester.ensureVisible(actions);
       await tester.pumpAndSettle();
-      expect(changeStatus.hitTestable(), findsOneWidget);
+      final confirmedStatus = find.byKey(
+        const ValueKey('admin-order-next-status-invoice-order-confirmed'),
+      );
+      expect(changeStatus, findsOneWidget);
       expect(copySummary.hitTestable(), findsOneWidget);
+      expect(confirmedStatus.hitTestable(), findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-cancelled'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('الخطوة التالية'), findsOneWidget);
+      expect(find.text('تغيير حالة الطلب'), findsNothing);
       final changeRect = tester.getRect(changeStatus);
       final copyRect = tester.getRect(copySummary);
       expect(changeRect.height, greaterThanOrEqualTo(48));
       expect(copyRect.height, greaterThanOrEqualTo(48));
-      expect(changeRect.top, closeTo(copyRect.top, .5));
+      expect(copyRect.top, greaterThan(changeRect.bottom - .5));
       _expectHorizontallyWithinViewport(tester, actions, surfaceSize);
       expect(tester.takeException(), isNull);
     },
@@ -585,14 +606,163 @@ void main() {
       );
       await tester.ensureVisible(actions);
       await tester.pumpAndSettle();
-      expect(changeStatus.hitTestable(), findsOneWidget);
+      expect(changeStatus, findsOneWidget);
       expect(copySummary.hitTestable(), findsOneWidget);
+      expect(
+        find
+            .byKey(
+              const ValueKey('admin-order-next-status-invoice-order-confirmed'),
+            )
+            .hitTestable(),
+        findsOneWidget,
+      );
       final changeRect = tester.getRect(changeStatus);
       final copyRect = tester.getRect(copySummary);
       expect(changeRect.height, greaterThanOrEqualTo(48));
       expect(copyRect.height, greaterThanOrEqualTo(48));
       expect(copyRect.top, greaterThan(changeRect.bottom));
       _expectHorizontallyWithinViewport(tester, actions, surfaceSize);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'default filter hides delivered and settings wheel persists a custom set',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final orders = _MutableOrdersRepository([
+        _order('order-1'),
+        _invoiceOrder(),
+      ]);
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('كل الحالات ما عدا المُسلَّم'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('admin-orders-filter-settings')),
+        findsOneWidget,
+      );
+      expect(orders.lastStatus, isNull);
+      expect(
+        orders.lastStatuses,
+        [
+          OrderStatus.pending,
+          OrderStatus.confirmed,
+          OrderStatus.preparing,
+          OrderStatus.ready,
+          OrderStatus.cancelled,
+        ],
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-filter-settings')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('إعدادات التصفية'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-filter-pref-cancelled')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('حفظ الإعدادات'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('تم حفظ إعدادات التصفية'), findsOneWidget);
+      expect(orders.lastStatuses, isNot(contains(OrderStatus.cancelled)));
+      expect(orders.lastStatuses, isNot(contains(OrderStatus.delivered)));
+    },
+  );
+
+  testWidgets(
+    'inline next-status buttons update without a dialog',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final orders = _MutableOrdersRepository([_invoiceOrder()]);
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('تغيير حالة الطلب'), findsNothing);
+      expect(find.text('الحالة التالية'), findsNothing);
+      await _tapVisible(
+        tester,
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-confirmed'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(orders.lastTransition, OrderStatus.confirmed);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.textContaining('تم تحديث الطلب إلى'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'expanding an order card scrolls that card back into view',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final orders = _MutableOrdersRepository([
+        _order('order-1'),
+        _order('order-2'),
+      ]);
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('طلب ORD-order-1'), findsOneWidget);
+      expect(find.text('طلب ORD-order-2'), findsOneWidget);
+
+      final lastSummary = find.byKey(
+        const ValueKey('admin-order-summary-order-2'),
+      );
+      final lastCard = find.byKey(
+        const ValueKey('admin-order-card-order-2'),
+      );
+      expect(lastSummary, findsOneWidget);
+      await _tapVisible(tester, lastSummary);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('admin-order-details-order-2')),
+        findsOneWidget,
+      );
+      final rect = tester.getRect(lastCard);
+      expect(rect.top, greaterThanOrEqualTo(-1));
+      expect(rect.top, lessThan(surfaceSize.height));
       expect(tester.takeException(), isNull);
     },
   );
@@ -633,6 +803,10 @@ void main() {
       );
 
       orders.current = [_order('new-order'), original];
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('admin-orders-live-status')),
+      );
+      await tester.pumpAndSettle();
       await _tapVisible(
         tester,
         find.byKey(const ValueKey('refresh-admin-orders-button')),
@@ -801,11 +975,15 @@ class _MutableOrdersRepository extends OrdersRepository {
   List<Order> current;
   bool failNext = false;
   int pageCalls = 0;
+  OrderStatus? lastStatus;
+  List<OrderStatus>? lastStatuses;
+  OrderStatus? lastTransition;
 
   @override
   Future<OrdersPage> ordersPage({
     String? customerId,
     OrderStatus? status,
+    Iterable<OrderStatus>? statuses,
     DateTime? createdFrom,
     DateTime? createdUntil,
     DateTime? snapshotAt,
@@ -813,6 +991,8 @@ class _MutableOrdersRepository extends OrdersRepository {
     int pageSize = OrdersRepository.defaultPageSize,
   }) async {
     pageCalls++;
+    lastStatuses = statuses?.toList();
+    lastStatus = status;
     if (failNext) {
       failNext = false;
       throw StateError('temporary refresh failure');
@@ -823,6 +1003,23 @@ class _MutableOrdersRepository extends OrdersRepository {
       nextOffset: current.length,
       snapshotAt: snapshotAt ?? snapshot,
     );
+  }
+
+  @override
+  Future<Order> transitionOrderStatus(
+    String orderId,
+    OrderStatus status, {
+    String adminNote = '',
+  }) async {
+    lastTransition = status;
+    current = [
+      for (final order in current)
+        if (order.id == orderId)
+          order.copyWith(status: status, adminNote: adminNote)
+        else
+          order,
+    ];
+    return current.firstWhere((order) => order.id == orderId);
   }
 }
 
@@ -955,7 +1152,8 @@ Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
   expect(finder, findsOneWidget);
   await tester.ensureVisible(finder);
   await tester.pumpAndSettle();
-  await tester.tapAt(tester.getCenter(finder));
+  final rect = tester.getRect(finder);
+  await tester.tapAt(Offset(rect.center.dx, rect.top + 16));
 }
 
 void _expectHorizontallyWithinViewport(

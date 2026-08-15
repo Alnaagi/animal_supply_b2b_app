@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../auth/login_identifier.dart';
 import 'app_config_validation.dart';
+import 'app_runtime_mode.dart';
 
 enum AppEnvironment {
   demo,
@@ -143,15 +144,21 @@ class AppConfig {
   static bool get isStaging => environment == AppEnvironment.staging;
   static bool get hasValidEnvironment => environment != AppEnvironment.invalid;
 
-  /// Demo remains available for an explicit demo build and as a clearly
-  /// labelled fallback for an unconfigured non-production build.
+  /// True when this process already initialized the public Supabase client.
+  static bool get hasInitializedRemoteBackend =>
+      (isProduction || isStaging) && _supabaseInitialized;
+
+  /// Demo remains available for an explicit demo build, a labelled local
+  /// overlay on a production/staging build, and as a fallback for an
+  /// unconfigured non-production build.
   static bool get isDemoMode =>
+      AppRuntimeMode.preferLocalDemo ||
       environment == AppEnvironment.demo ||
       (environment == AppEnvironment.staging && !_supabaseInitialized);
 
   static bool get allowsDemoCredentials => isDemoMode;
   static bool get remoteBackendEnabled =>
-      (isProduction || isStaging) && _supabaseInitialized;
+      hasInitializedRemoteBackend && !AppRuntimeMode.preferLocalDemo;
   static bool get hasValidCustomerLoginDomain =>
       isValidCustomerLoginDomain(customerLoginDomain);
   static String? get publicAppOriginIssueAr =>
@@ -161,7 +168,8 @@ class AppConfig {
   static bool get configurationBlocked =>
       !hasValidEnvironment ||
       (isProduction &&
-          (!remoteBackendEnabled ||
+          !AppRuntimeMode.preferLocalDemo &&
+          (!hasInitializedRemoteBackend ||
               !hasValidCustomerLoginDomain ||
               publicAppOriginIssueAr != null ||
               !hasFirebaseConfigurationForCurrentPlatform));
@@ -185,6 +193,10 @@ class AppConfig {
     }
     if (isProduction && firebaseConfigurationIssueAr != null) {
       return firebaseConfigurationIssueAr;
+    }
+    if (AppRuntimeMode.preferLocalDemo) {
+      return 'وضع تجريبي محلي: البيانات المعروضة تجريبية وغير تشغيلية. '
+          'خادم الإنتاج لم يُمسح.';
     }
     if (environment == AppEnvironment.demo) {
       return 'وضع تجريبي: البيانات محلية وليست بيانات تشغيل حقيقية.';
