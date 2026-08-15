@@ -153,7 +153,9 @@ void main() {
         _notification('notification-2'),
         _notification('notification-1'),
       ];
-      final todayFilter = find.widgetWithText(ChoiceChip, 'اليوم');
+      final todayFilter = find.byKey(
+        const ValueKey('admin-orders-date-today'),
+      );
       await tester.ensureVisible(todayFilter);
       await tester.tap(todayFilter);
       await tester.pumpAndSettle();
@@ -263,9 +265,10 @@ void main() {
   });
 
   testWidgets(
-    'expanded order shows a wide invoice with snapshot product details',
+    '646px order card exposes organized details, history, and actions',
     (tester) async {
-      await tester.binding.setSurfaceSize(const Size(646, 838));
+      const surfaceSize = Size(646, 838);
+      await tester.binding.setSurfaceSize(surfaceSize);
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
       final orders = _MutableOrdersRepository([_invoiceOrder()]);
@@ -279,9 +282,24 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final orderTitle = find.text('طلب INV-1001');
-      await tester.ensureVisible(orderTitle);
-      await tester.tap(orderTitle);
+      final filterPanel = find.byKey(
+        const ValueKey('admin-orders-filter-panel'),
+      );
+      final card = find.byKey(
+        const ValueKey('admin-order-card-invoice-order'),
+      );
+      final summary = find.byKey(
+        const ValueKey('admin-order-summary-invoice-order'),
+      );
+      final details = find.byKey(
+        const ValueKey('admin-order-details-invoice-order'),
+      );
+
+      _expectHorizontallyWithinViewport(tester, filterPanel, surfaceSize);
+      _expectHorizontallyWithinViewport(tester, card, surfaceSize);
+      expect(details, findsNothing);
+
+      await _tapVisible(tester, summary);
       await tester.pumpAndSettle();
 
       final invoice = find.byKey(
@@ -291,7 +309,10 @@ void main() {
         const ValueKey('admin-invoice-line-cat-001-0'),
       );
 
+      expect(details, findsOneWidget);
       expect(invoice, findsOneWidget);
+      _expectHorizontallyWithinViewport(tester, details, surfaceSize);
+      _expectHorizontallyWithinViewport(tester, invoice, surfaceSize);
       expect(
         find.byKey(
           const ValueKey('admin-order-items-wide-invoice-order'),
@@ -362,17 +383,86 @@ void main() {
       );
       expect(productName.maxLines, isNull);
       expect(productName.overflow, isNull);
+
+      final customerDelivery = find.byKey(
+        const ValueKey('admin-order-customer-delivery-invoice-order'),
+      );
+      expect(customerDelivery, findsOneWidget);
+      _expectHorizontallyWithinViewport(
+        tester,
+        customerDelivery,
+        surfaceSize,
+      );
+      expect(find.text('أحمد الفيتوري'), findsOneWidget);
+      expect(find.text('0912345678'), findsOneWidget);
+      expect(find.text('طرابلس، طريق المطار'), findsOneWidget);
+      expect(find.text('يرجى الاتصال قبل الوصول.'), findsOneWidget);
+      final customerHeading = find.text('بيانات العميل');
+      final deliveryHeading = find.text('بيانات التسليم');
+      expect(
+        tester.getTopLeft(customerHeading).dy,
+        closeTo(tester.getTopLeft(deliveryHeading).dy, .5),
+      );
+
+      final notes = find.byKey(
+        const ValueKey('admin-order-notes-invoice-order'),
+      );
+      expect(notes, findsOneWidget);
+      expect(find.text('يفضل التسليم صباحاً.'), findsOneWidget);
+      expect(find.text('تمت مراجعة بيانات التسليم.'), findsOneWidget);
+      _expectHorizontallyWithinViewport(tester, notes, surfaceSize);
+
+      final history = find.byKey(
+        const ValueKey('admin-order-history-invoice-order'),
+      );
+      final historyToggle = find.byKey(
+        const ValueKey('admin-order-history-toggle-invoice-order'),
+      );
+      final historyBody = find.byKey(
+        const ValueKey('admin-order-history-body-invoice-order'),
+      );
+      expect(history, findsOneWidget);
+      expect(historyBody, findsNothing);
+      await _tapVisible(tester, historyToggle);
+      await tester.pumpAndSettle();
+      expect(historyBody, findsOneWidget);
+      expect(find.text('بدأ الطلب بحالة قيد المراجعة'), findsOneWidget);
+      expect(find.text('تم إنشاء الطلب للمراجعة.'), findsOneWidget);
+      _expectHorizontallyWithinViewport(tester, history, surfaceSize);
+
+      final actions = find.byKey(
+        const ValueKey('admin-order-actions-invoice-order'),
+      );
+      final changeStatus = find.byKey(
+        const ValueKey('admin-order-change-status-invoice-order'),
+      );
+      final copySummary = find.byKey(
+        const ValueKey('admin-order-copy-summary-invoice-order'),
+      );
+      await tester.ensureVisible(actions);
+      await tester.pumpAndSettle();
+      expect(changeStatus.hitTestable(), findsOneWidget);
+      expect(copySummary.hitTestable(), findsOneWidget);
+      final changeRect = tester.getRect(changeStatus);
+      final copyRect = tester.getRect(copySummary);
+      expect(changeRect.height, greaterThanOrEqualTo(48));
+      expect(copyRect.height, greaterThanOrEqualTo(48));
+      expect(changeRect.top, closeTo(copyRect.top, .5));
+      _expectHorizontallyWithinViewport(tester, actions, surfaceSize);
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'expanded order uses the compact invoice layout on mobile',
+    '390px order card stacks details, omits empty notes, and reaches actions',
     (tester) async {
-      await tester.binding.setSurfaceSize(const Size(390, 844));
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      final orders = _MutableOrdersRepository([_invoiceOrder()]);
+      final orders = _MutableOrdersRepository([
+        _invoiceOrder(customerNote: '', adminNote: ''),
+      ]);
 
       await _pumpOrdersScreen(
         tester,
@@ -383,9 +473,24 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final orderTitle = find.text('طلب INV-1001');
-      await tester.ensureVisible(orderTitle);
-      await tester.tap(orderTitle);
+      final filterPanel = find.byKey(
+        const ValueKey('admin-orders-filter-panel'),
+      );
+      final card = find.byKey(
+        const ValueKey('admin-order-card-invoice-order'),
+      );
+      final summary = find.byKey(
+        const ValueKey('admin-order-summary-invoice-order'),
+      );
+      final details = find.byKey(
+        const ValueKey('admin-order-details-invoice-order'),
+      );
+
+      _expectHorizontallyWithinViewport(tester, filterPanel, surfaceSize);
+      _expectHorizontallyWithinViewport(tester, card, surfaceSize);
+      expect(details, findsNothing);
+
+      await _tapVisible(tester, summary);
       await tester.pumpAndSettle();
 
       final compact = find.byKey(
@@ -395,6 +500,7 @@ void main() {
         const ValueKey('admin-invoice-line-cat-001-0'),
       );
 
+      expect(details, findsOneWidget);
       expect(compact, findsOneWidget);
       expect(
         find.byKey(
@@ -434,7 +540,122 @@ void main() {
         find.descendant(of: line, matching: find.text(lyd(37.5))),
         findsOneWidget,
       );
-      expect(tester.getRect(compact).width, lessThanOrEqualTo(390));
+      _expectHorizontallyWithinViewport(tester, details, surfaceSize);
+      _expectHorizontallyWithinViewport(tester, compact, surfaceSize);
+
+      final customerDelivery = find.byKey(
+        const ValueKey('admin-order-customer-delivery-invoice-order'),
+      );
+      expect(customerDelivery, findsOneWidget);
+      expect(find.text('يرجى الاتصال قبل الوصول.'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('بيانات التسليم')).dy,
+        greaterThan(tester.getTopLeft(find.text('بيانات العميل')).dy),
+      );
+      _expectHorizontallyWithinViewport(
+        tester,
+        customerDelivery,
+        surfaceSize,
+      );
+      expect(
+        find.byKey(const ValueKey('admin-order-notes-invoice-order')),
+        findsNothing,
+      );
+      expect(find.text('الملاحظات'), findsNothing);
+
+      final historyToggle = find.byKey(
+        const ValueKey('admin-order-history-toggle-invoice-order'),
+      );
+      final historyBody = find.byKey(
+        const ValueKey('admin-order-history-body-invoice-order'),
+      );
+      expect(historyBody, findsNothing);
+      await _tapVisible(tester, historyToggle);
+      await tester.pumpAndSettle();
+      expect(historyBody, findsOneWidget);
+
+      final actions = find.byKey(
+        const ValueKey('admin-order-actions-invoice-order'),
+      );
+      final changeStatus = find.byKey(
+        const ValueKey('admin-order-change-status-invoice-order'),
+      );
+      final copySummary = find.byKey(
+        const ValueKey('admin-order-copy-summary-invoice-order'),
+      );
+      await tester.ensureVisible(actions);
+      await tester.pumpAndSettle();
+      expect(changeStatus.hitTestable(), findsOneWidget);
+      expect(copySummary.hitTestable(), findsOneWidget);
+      final changeRect = tester.getRect(changeStatus);
+      final copyRect = tester.getRect(copySummary);
+      expect(changeRect.height, greaterThanOrEqualTo(48));
+      expect(copyRect.height, greaterThanOrEqualTo(48));
+      expect(copyRect.top, greaterThan(changeRect.bottom));
+      _expectHorizontallyWithinViewport(tester, actions, surfaceSize);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'expanded order stays attached when refresh prepends a new order',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final original = _invoiceOrder(
+        customerNote: '',
+        adminNote: '',
+        includeHistory: false,
+      );
+      final orders = _MutableOrdersRepository([original]);
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+
+      await _tapVisible(
+        tester,
+        find.byKey(
+          const ValueKey('admin-order-summary-invoice-order'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('admin-order-details-invoice-order')),
+        findsOneWidget,
+      );
+
+      orders.current = [_order('new-order'), original];
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('refresh-admin-orders-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('admin-order-card-new-order')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('admin-order-details-new-order')),
+        findsNothing,
+      );
+      final originalDetails = find.byKey(
+        const ValueKey('admin-order-details-invoice-order'),
+      );
+      expect(originalDetails, findsOneWidget);
+      _expectHorizontallyWithinViewport(
+        tester,
+        originalDetails,
+        surfaceSize,
+      );
       expect(tester.takeException(), isNull);
     },
   );
@@ -466,9 +687,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final orderTitle = find.text('طلب INV-1001');
-      await tester.ensureVisible(orderTitle);
-      await tester.tap(orderTitle);
+      await _tapVisible(
+        tester,
+        find.byKey(
+          const ValueKey('admin-order-summary-invoice-order'),
+        ),
+      );
       await tester.pumpAndSettle();
 
       final line = find.byKey(
@@ -668,6 +892,9 @@ Order _invoiceOrder({
   int quantity = 3,
   double unitPrice = 12.5,
   double lineTotal = 37.5,
+  String customerNote = 'يفضل التسليم صباحاً.',
+  String adminNote = 'تمت مراجعة بيانات التسليم.',
+  bool includeHistory = true,
 }) {
   const currentProduct = Product(
     id: 'cat-001',
@@ -699,12 +926,45 @@ Order _invoiceOrder({
     orderNumber: 'INV-1001',
     customerId: 'customer-test',
     businessName: 'متجر الاختبار',
+    contactPerson: 'أحمد الفيتوري',
+    contactPhone: '0912345678',
     status: OrderStatus.pending,
     items: [orderItem],
     createdAt: DateTime.utc(2026, 8, 14, 12),
+    deliveryAddress: 'طرابلس، طريق المطار',
+    deliveryNote: 'يرجى الاتصال قبل الوصول.',
+    customerNote: customerNote,
+    adminNote: adminNote,
+    statusHistory: includeHistory
+        ? [
+            OrderStatusHistoryEntry(
+              toStatus: OrderStatus.pending,
+              note: 'تم إنشاء الطلب للمراجعة.',
+              changedAt: DateTime.utc(2026, 8, 14, 10),
+            ),
+          ]
+        : const [],
     subtotal: lineTotal,
     deliveryFee: 2,
     handlingFee: 4,
     total: lineTotal + 6,
   );
+}
+
+Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
+  expect(finder, findsOneWidget);
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tapAt(tester.getCenter(finder));
+}
+
+void _expectHorizontallyWithinViewport(
+  WidgetTester tester,
+  Finder finder,
+  Size surfaceSize,
+) {
+  expect(finder, findsOneWidget);
+  final rect = tester.getRect(finder);
+  expect(rect.left, greaterThanOrEqualTo(-.5));
+  expect(rect.right, lessThanOrEqualTo(surfaceSize.width + .5));
 }

@@ -258,9 +258,10 @@ void main() {
     expect(repository.pageCalls.last.snapshotAt, _ScreenOrdersRepository.time);
   });
 
-  testWidgets('admin filters and load more stay server-side and Arabic',
+  testWidgets('admin combined filters and pagination stay server-side and RTL',
       (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    const viewport = Size(646, 838);
+    await tester.binding.setSurfaceSize(viewport);
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final repository = _ScreenOrdersRepository(
       firstPage: [
@@ -306,31 +307,118 @@ void main() {
           ),
           ordersRepositoryProvider.overrideWithValue(repository),
         ],
-        child: MaterialApp.router(routerConfig: router),
+        child: MaterialApp.router(
+          routerConfig: router,
+          builder: (context, child) => Directionality(
+            textDirection: TextDirection.rtl,
+            child: child!,
+          ),
+        ),
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(ChoiceChip, 'اليوم'));
-    await tester.pumpAndSettle();
-    expect(repository.pageCalls.last.createdFrom, isNotNull);
-    expect(repository.pageCalls.last.createdUntil, isNotNull);
+    final filterPanel = find.byKey(const ValueKey('admin-orders-filter-panel'));
+    expect(filterPanel, findsOneWidget);
+    expect(
+      Directionality.of(tester.element(filterPanel)),
+      TextDirection.rtl,
+    );
+    _expectWithinViewport(tester, filterPanel, viewport);
 
-    await tester.tap(find.widgetWithText(ChoiceChip, 'مؤكد'));
+    final todayFilter = find.byKey(const ValueKey('admin-orders-date-today'));
+    expect(todayFilter, findsOneWidget);
+    await tester.tap(todayFilter);
     await tester.pumpAndSettle();
-    expect(repository.pageCalls.last.status, OrderStatus.confirmed);
+    final dateCall = repository.pageCalls.last;
+    expect(dateCall.offset, 0);
+    expect(dateCall.status, isNull);
+    expect(dateCall.createdFrom, isNotNull);
+    expect(dateCall.createdUntil, isNotNull);
+
+    final statusFilter =
+        find.byKey(const ValueKey('admin-orders-status-filter'));
+    await tester.tap(statusFilter);
+    await tester.pumpAndSettle();
+    final confirmedStatus =
+        find.byKey(const ValueKey('admin-orders-status-confirmed'));
+    expect(confirmedStatus, findsOneWidget);
+    expect(
+      Directionality.of(tester.element(confirmedStatus)),
+      TextDirection.rtl,
+    );
+    await tester.tap(
+      find.descendant(
+        of: confirmedStatus,
+        matching: find.text(OrderStatus.confirmed.label),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final combinedFilterCall = repository.pageCalls.last;
+    expect(combinedFilterCall.offset, 0);
+    expect(combinedFilterCall.status, OrderStatus.confirmed);
+    expect(combinedFilterCall.createdFrom, dateCall.createdFrom);
+    expect(combinedFilterCall.createdUntil, dateCall.createdUntil);
+    expect(combinedFilterCall.snapshotAt, isNull);
 
     final loadMore = find.byKey(const ValueKey('admin-orders-load-more'));
     await tester.ensureVisible(loadMore);
     await tester.tap(loadMore);
     await tester.pumpAndSettle();
 
-    expect(find.text('طلب ADMIN-OLD'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('admin-order-summary-admin-old')),
+      findsOneWidget,
+    );
     expect(find.text('تحميل المزيد'), findsNothing);
-    expect(repository.pageCalls.last.offset, 1);
-    expect(repository.pageCalls.last.status, OrderStatus.confirmed);
-    expect(repository.pageCalls.last.snapshotAt, _ScreenOrdersRepository.time);
+    final paginationCall = repository.pageCalls.last;
+    expect(paginationCall.offset, 1);
+    expect(paginationCall.status, OrderStatus.confirmed);
+    expect(paginationCall.createdFrom, combinedFilterCall.createdFrom);
+    expect(paginationCall.createdUntil, combinedFilterCall.createdUntil);
+    expect(paginationCall.snapshotAt, _ScreenOrdersRepository.time);
+
+    final allStatuses = find.byKey(const ValueKey('admin-orders-status-all'));
+    await tester.ensureVisible(allStatuses);
+    await tester.tap(allStatuses);
+    await tester.pumpAndSettle();
+    final clearedStatusCall = repository.pageCalls.last;
+    expect(clearedStatusCall.offset, 0);
+    expect(clearedStatusCall.status, isNull);
+    expect(clearedStatusCall.createdFrom, combinedFilterCall.createdFrom);
+    expect(clearedStatusCall.createdUntil, combinedFilterCall.createdUntil);
+    expect(clearedStatusCall.snapshotAt, isNull);
+
+    final currentOrderSummary =
+        find.byKey(const ValueKey('admin-order-summary-admin-new'));
+    await tester.ensureVisible(currentOrderSummary);
+    expect(
+      Directionality.of(tester.element(currentOrderSummary)),
+      TextDirection.rtl,
+    );
+    _expectWithinViewport(tester, currentOrderSummary, viewport);
+    await tester.tap(currentOrderSummary);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('admin-order-details-admin-new')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
+}
+
+void _expectWithinViewport(
+  WidgetTester tester,
+  Finder finder,
+  Size viewport,
+) {
+  final rect = tester.getRect(finder);
+  expect(rect.width, greaterThan(0));
+  expect(rect.height, greaterThan(0));
+  expect(rect.left, greaterThanOrEqualTo(0));
+  expect(rect.top, greaterThanOrEqualTo(0));
+  expect(rect.right, lessThanOrEqualTo(viewport.width));
+  expect(rect.bottom, lessThanOrEqualTo(viewport.height));
 }
 
 class _PagedGateway implements OrdersRemoteGateway, OrdersPagedRemoteGateway {
