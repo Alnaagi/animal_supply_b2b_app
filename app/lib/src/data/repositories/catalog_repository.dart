@@ -2,7 +2,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/config/app_config.dart';
+import '../../core/concurrency/stale_write.dart';
+import '../../core/updates/update_link.dart';
 import '../local/local_cache.dart';
+import '../models/category_icon.dart';
 import '../models/product.dart';
 import '../models/product_category.dart';
 import '../remote/supabase_clients.dart';
@@ -306,6 +310,52 @@ String _validatedCategoryName(String rawName) {
   return name;
 }
 
+class CategoryIconRequiredException implements Exception {
+  const CategoryIconRequiredException();
+
+  @override
+  String toString() => 'A category icon is required.';
+}
+
+class CategoryIconInvalidException implements Exception {
+  const CategoryIconInvalidException();
+
+  @override
+  String toString() => 'Category icon URL must be a public HTTPS URL.';
+}
+
+CategoryIconSelection _resolvedCategoryIcon({
+  String? iconKey,
+  String? iconUrl,
+  required String name,
+  required bool inferIfMissing,
+}) {
+  final trimmedUrl = iconUrl?.trim() ?? '';
+  if (trimmedUrl.isNotEmpty) {
+    if (safeHttpsUpdateUri(trimmedUrl) == null) {
+      throw const CategoryIconInvalidException();
+    }
+    return CategoryIconSelection(iconUrl: trimmedUrl);
+  }
+  final trimmedKey = iconKey?.trim() ?? '';
+  if (trimmedKey.isNotEmpty) {
+    return CategoryIconSelection(iconKey: trimmedKey);
+  }
+  if (inferIfMissing) {
+    return CategoryIconSelection(iconKey: CategoryIconCatalog.inferredKey(name));
+  }
+  throw const CategoryIconRequiredException();
+}
+
+Map<String, Object?> _categoryIconWrite(CategoryIconSelection icon) {
+  return {
+    'icon_key': icon.iconKey,
+    'icon_url': icon.iconUrl,
+  };
+}
+
+const _categorySelect = 'id,name,active,archived_at,icon_key,icon_url';
+
 String _normalizedAvailability(String value) {
   return switch (value.trim().toLowerCase()) {
     'in_stock' => 'in_stock',
@@ -436,6 +486,11 @@ int _compareTrackedStock(
   return descending ? -comparison : comparison;
 }
 
+/// Active category only. `archived_by_category_id` is a second FK to categories,
+/// so an unqualified `categories(name)` embed returns PostgREST 300/PGRST201.
+const _productWithCategorySelect =
+    '*, categories!products_category_id_fkey(name)';
+
 class CatalogRepository {
   CatalogRepository({
     LocalCache? cache,
@@ -460,6 +515,9 @@ class CatalogRepository {
   final CatalogPagedRemoteGateway? _pagedRemote;
   final List<Product> _demoProducts;
   final List<ProductCategory> _demoCategories = [];
+
+  CatalogPagedRemoteGateway? get _activePagedRemote =>
+      AppConfig.isDemoMode || supabaseClient == null ? null : _pagedRemote;
 
   static const defaultPageSize = 50;
   static const offlineSnapshotLimit = 200;
@@ -596,7 +654,7 @@ class CatalogRepository {
     final safeOffset = offset < 0 ? 0 : offset;
     final safePageSize = pageSize.clamp(1, 100).toInt();
     final normalizedSort = _normalizedCatalogSort(sort);
-    final remote = _pagedRemote;
+    final remote = _activePagedRemote;
     if (remote != null) {
       try {
         final CatalogRemotePage page;
@@ -706,7 +764,7 @@ class CatalogRepository {
   Future<CatalogFilterOptions> filterOptions({
     bool includeInactive = false,
   }) async {
-    final remote = _pagedRemote;
+    final remote = _activePagedRemote;
     if (remote != null) {
       try {
         final options = await remote.filterOptions(
@@ -774,7 +832,7 @@ class CatalogRepository {
       try {
         final categoryRows = await client
             .from('categories')
-            .select('id,name,active,archived_at')
+            .select(_categorySelect)
             .order('name');
         final productRows = await client
             .from('products')
@@ -832,13 +890,24 @@ class CatalogRepository {
         .toList(growable: false);
   }
 
-  Future<ProductCategory> createCategory(String rawName) async {
+  Future<ProductCategory> createCategory(
+    String rawName, {
+    String? iconKey,
+    String? iconUrl,
+    bool inferIconIfMissing = false,
+  }) async {
     final name = _validatedCategoryName(rawName);
+    final icon = _resolvedCategoryIcon(
+      iconKey: iconKey,
+      iconUrl: iconUrl,
+      name: name,
+      inferIfMissing: inferIconIfMissing,
+    );
     final client = supabaseClient;
     if (client != null) {
       final existing = await client
           .from('categories')
-          .select('id,name,active,archived_at')
+          .select(_categorySelect)
           .ilike('name', name)
           .limit(1)
           .maybeSingle();
@@ -847,12 +916,24 @@ class CatalogRepository {
         if (category.isArchived) {
           throw CategoryArchivedException(category.name);
         }
-        if (!category.active) {
+        if (!category.active || !category.hasIcon) {
           final updated = await client
               .from('categories')
-              .update({'active': true})
+              .update({
+                'active': true,
+                ..._categoryIconWrite(icon),
+              })
               .eq('id', category.id)
-              .select('id,name,active,archived_at')
+              .select(_categorySelect)
+              .single();
+          return ProductCategory.fromSupabase(updated);
+        }
+        if (icon.hasIcon) {
+          final updated = await client
+              .from('categories')
+              .update(_categoryIconWrite(icon))
+              .eq('id', category.id)
+              .select(_categorySelect)
               .single();
           return ProductCategory.fromSupabase(updated);
         }
@@ -860,8 +941,12 @@ class CatalogRepository {
       }
       final inserted = await client
           .from('categories')
-          .insert({'name': name, 'active': true})
-          .select('id,name,active,archived_at')
+          .insert({
+            'name': name,
+            'active': true,
+            ..._categoryIconWrite(icon),
+          })
+          .select(_categorySelect)
           .single();
       return ProductCategory.fromSupabase(inserted);
     }
@@ -871,21 +956,109 @@ class CatalogRepository {
       if (category.isArchived) {
         throw CategoryArchivedException(category.name);
       }
-      if (!category.active) {
-        final index =
-            _demoCategories.indexWhere((item) => item.id == category.id);
-        _demoCategories[index] = category.copyWith(active: true);
-        return _demoCategories[index];
-      }
-      return category;
+      final index =
+          _demoCategories.indexWhere((item) => item.id == category.id);
+      _demoCategories[index] = category.copyWith(
+        active: true,
+        iconKey: icon.iconKey,
+        iconUrl: icon.iconUrl,
+        clearIconKey: icon.iconKey == null,
+        clearIconUrl: icon.iconUrl == null,
+      );
+      return _demoCategories[index];
     }
     final created = ProductCategory(
       id: 'local-category-${const Uuid().v4()}',
       name: name,
+      iconKey: icon.iconKey,
+      iconUrl: icon.iconUrl,
     );
     _demoCategories.add(created);
     _sortDemoCategories();
     return created;
+  }
+
+  Future<ProductCategory> updateCategory(
+    String id, {
+    String? name,
+    String? iconKey,
+    String? iconUrl,
+    DateTime? expectedUpdatedAt,
+  }) async {
+    final client = supabaseClient;
+    if (client != null) {
+      final existing = await client
+          .from('categories')
+          .select(_categorySelect)
+          .eq('id', id)
+          .maybeSingle();
+      if (existing == null) {
+        throw StateError('Category not found.');
+      }
+      final current = ProductCategory.fromSupabase(existing);
+      throwIfStaleWrite(
+        current: current.updatedAt,
+        expected: expectedUpdatedAt,
+      );
+      if (current.isArchived) {
+        throw CategoryArchivedException(current.name);
+      }
+      final resolvedName =
+          name == null ? current.name : _validatedCategoryName(name);
+      final iconProvided = iconKey != null || iconUrl != null;
+      final icon = _resolvedCategoryIcon(
+        iconKey: iconProvided ? iconKey : current.iconKey,
+        iconUrl: iconProvided ? iconUrl : current.iconUrl,
+        name: resolvedName,
+        inferIfMissing: false,
+      );
+      try {
+        final updated = await client
+            .from('categories')
+            .update({
+              'name': resolvedName,
+              ..._categoryIconWrite(icon),
+            })
+            .eq('id', id)
+            .select(_categorySelect)
+            .single();
+        return ProductCategory.fromSupabase(updated);
+      } catch (error) {
+        rethrowIfStaleWrite(error);
+        rethrow;
+      }
+    }
+    final index = _demoCategories.indexWhere((category) => category.id == id);
+    if (index == -1) {
+      throw StateError('Category not found.');
+    }
+    final current = _demoCategories[index];
+    throwIfStaleWrite(
+      current: current.updatedAt,
+      expected: expectedUpdatedAt,
+    );
+    if (current.isArchived) {
+      throw CategoryArchivedException(current.name);
+    }
+    final resolvedName =
+        name == null ? current.name : _validatedCategoryName(name);
+    final iconProvided = iconKey != null || iconUrl != null;
+    final icon = _resolvedCategoryIcon(
+      iconKey: iconProvided ? iconKey : current.iconKey,
+      iconUrl: iconProvided ? iconUrl : current.iconUrl,
+      name: resolvedName,
+      inferIfMissing: false,
+    );
+    _demoCategories[index] = current.copyWith(
+      name: resolvedName,
+      iconKey: icon.iconKey,
+      iconUrl: icon.iconUrl,
+      clearIconKey: icon.iconKey == null,
+      clearIconUrl: icon.iconUrl == null,
+      updatedAt: DateTime.now(),
+    );
+    _sortDemoCategories();
+    return _demoCategories[index];
   }
 
   Future<void> archiveCategory(String id) async {
@@ -965,7 +1138,7 @@ class CatalogRepository {
       try {
         final rows = await client
             .from('products')
-            .select('*, categories(name)')
+            .select(_productWithCategorySelect)
             .not('archived_at', 'is', null)
             .order('archived_at', ascending: false)
             .order('id', ascending: false);
@@ -1114,29 +1287,53 @@ class CatalogRepository {
   Future<Product> saveProduct(Product product) async {
     final client = supabaseClient;
     if (client != null) {
-      final categoryId = await _categoryIdFor(product.category);
-      final map = product.toSupabaseMap(categoryUuid: categoryId);
-      final saved =
-          product.id.startsWith('demo-') || product.id.startsWith('local-')
-              ? await client
-                  .from('products')
-                  .insert(map)
-                  .select('*, categories(name)')
-                  .single()
-              : await client
-                  .from('products')
-                  .update(map)
-                  .eq('id', product.id)
-                  .select('*, categories(name)')
-                  .single();
-      return Product.fromSupabase(saved);
+      try {
+        final categoryId = await _categoryIdFor(product.category);
+        final map = product.toSupabaseMap(categoryUuid: categoryId);
+        final saved =
+            product.id.startsWith('demo-') || product.id.startsWith('local-')
+                ? await client
+                    .from('products')
+                    .insert(map)
+                    .select(_productWithCategorySelect)
+                    .single()
+                : await () async {
+                    final existing = await client
+                        .from('products')
+                        .select('updated_at')
+                        .eq('id', product.id)
+                        .maybeSingle();
+                    if (existing == null) {
+                      throw const StaleWriteException();
+                    }
+                    throwIfStaleWrite(
+                      current: DateTime.tryParse(
+                        existing['updated_at']?.toString() ?? '',
+                      ),
+                      expected: product.updatedAt,
+                    );
+                    return client
+                        .from('products')
+                        .update(map)
+                        .eq('id', product.id)
+                        .select(_productWithCategorySelect)
+                        .single();
+                  }();
+        return Product.fromSupabase(saved);
+      } catch (error) {
+        rethrowIfStaleWrite(error);
+        rethrow;
+      }
     }
     var categoryIndex = _demoCategories.indexWhere(
       (category) =>
           category.name.toLowerCase() == product.category.toLowerCase(),
     );
     if (categoryIndex == -1) {
-      final created = await createCategory(product.category);
+      final created = await createCategory(
+        product.category,
+        inferIconIfMissing: true,
+      );
       categoryIndex =
           _demoCategories.indexWhere((category) => category.id == created.id);
     }
@@ -1153,7 +1350,12 @@ class CatalogRepository {
     if (index == -1) {
       _demoProducts.insert(0, normalizedProduct);
     } else {
-      _demoProducts[index] = normalizedProduct;
+      throwIfStaleWrite(
+        current: _demoProducts[index].updatedAt,
+        expected: normalizedProduct.updatedAt,
+      );
+      _demoProducts[index] =
+          normalizedProduct.copyWith(updatedAt: DateTime.now());
     }
     _refreshDemoCategoryCounts();
     await _saveDemoSnapshot();
@@ -1370,6 +1572,7 @@ class CatalogRepository {
           archivedProductCount: entry.value
               .where((product) => product.archivedByCategoryId == entry.key)
               .length,
+          iconKey: CategoryIconCatalog.inferredKey(entry.value.first.category),
         ),
     ]..sort((first, second) => first.name.compareTo(second.name));
     return categories
@@ -1431,7 +1634,7 @@ class CatalogRepository {
   }
 
   String? get _cacheOwnerProfileId =>
-      _pagedRemote?.ownerProfileId ?? supabaseClient?.auth.currentUser?.id;
+      _activePagedRemote?.ownerProfileId ?? supabaseClient?.auth.currentUser?.id;
 
   Future<String?> _categoryIdFor(String categoryName) async {
     final client = supabaseClient;
@@ -1439,7 +1642,7 @@ class CatalogRepository {
     final normalizedName = _validatedCategoryName(categoryName);
     final existing = await client
         .from('categories')
-        .select('id,name,active,archived_at')
+        .select(_categorySelect)
         .ilike('name', normalizedName)
         .limit(1)
         .maybeSingle();
@@ -1455,9 +1658,14 @@ class CatalogRepository {
       }
       return category.id;
     }
+    final inferred = CategoryIconCatalog.inferredKey(normalizedName);
     final inserted = await client
         .from('categories')
-        .insert({'name': normalizedName, 'active': true})
+        .insert({
+          'name': normalizedName,
+          'active': true,
+          'icon_key': inferred,
+        })
         .select('id')
         .single();
     return inserted['id'].toString();

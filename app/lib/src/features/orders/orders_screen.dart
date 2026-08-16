@@ -5,8 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/refresh/screen_reload.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/empty_state.dart';
+import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../core/widgets/status_chip.dart';
 import '../../data/models/order.dart';
 import '../../data/repositories/catalog_repository.dart';
@@ -50,6 +53,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    listenForScreenReload(ref, _refresh);
     final user = ref.watch(authControllerProvider).user;
     final highlightedOrderId = widget.highlightedOrderId;
     if (user == null) {
@@ -78,10 +82,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final localSnapshot = queuedOrders.asData?.value;
 
     if (remoteLoading && localSnapshot == null && !queuedOrders.hasError) {
-      return const Center(child: CircularProgressIndicator());
+      return const ShopLoading.page();
     }
 
-    return RefreshIndicator(
+    return ShopRefreshIndicator(
       onRefresh: _refresh,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -158,10 +162,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   key: const ValueKey('customer-orders-load-more'),
                   onPressed: loadingMore ? null : _loadMore,
                   icon: loadingMore
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                      ? const ShopLoading.compact()
                       : const Icon(Icons.expand_more),
                   label: Text(
                     loadingMore
@@ -337,6 +338,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       );
       return;
     }
+    requestScreenReload(ref);
     context.go('/cart');
   }
 
@@ -384,6 +386,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           SnackBar(content: Text('${parts.join('، ')}.')),
         );
       }
+      requestScreenReload(ref);
       context.go('/cart');
     } catch (_) {
       if (!mounted) return;
@@ -575,10 +578,7 @@ class _RemoteOrdersLoadingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Card(
       child: ListTile(
-        leading: SizedBox.square(
-          dimension: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
+        leading: ShopLoading.compact(size: 20),
         title: Text('جارٍ تحميل الطلبات المعتمدة...'),
       ),
     );

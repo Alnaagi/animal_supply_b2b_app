@@ -1,5 +1,6 @@
 import 'package:animal_supply_b2b/src/data/repositories/notifications_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
   group('notification campaign audience contract', () {
@@ -43,12 +44,31 @@ void main() {
       );
     });
 
-    test('rejects an empty selected audience before sending', () {
+    test('maps a missing campaign function to Arabic copy', () {
+      const error = FunctionException(
+        status: 404,
+        details: {
+          'code': 'NOT_FOUND',
+          'message': 'Requested function was not found',
+        },
+      );
       expect(
-        () => NotificationsRepository.campaignAudiencePayload(
-          audienceType: 'selected_profiles',
-        ),
-        throwsArgumentError,
+        NotificationsRepository.campaignFailureMessageAr(error),
+        contains('غير منشورة'),
+      );
+    });
+
+    test('maps a disallowed origin to Arabic copy', () {
+      const error = FunctionException(
+        status: 403,
+        details: {
+          'ok': false,
+          'error': {'code': 'ORIGIN_NOT_ALLOWED', 'message': 'blocked'},
+        },
+      );
+      expect(
+        NotificationsRepository.campaignFailureMessageAr(error),
+        contains('هذا الموقع'),
       );
     });
   });
@@ -140,5 +160,27 @@ void main() {
     expect(notifications.first.orderId, 'demo-order-42');
     expect(notifications.first.body, contains('قيد التجهيز'));
     expect(notifications.first.isRead, isFalse);
+  });
+
+  test('inbox RPC payloads accept a bare array or a wrapped data list', () {
+    expect(
+      NotificationsRepository.parseInboxRpcPayload([
+        {'id': 'n1', 'title': 'طلب جديد'},
+      ]),
+      [
+        {'id': 'n1', 'title': 'طلب جديد'},
+      ],
+    );
+    expect(
+      NotificationsRepository.parseInboxRpcPayload({
+        'data': [
+          {'id': 'n2', 'title': 'عرض'},
+        ],
+      }),
+      [
+        {'id': 'n2', 'title': 'عرض'},
+      ],
+    );
+    expect(NotificationsRepository.parseInboxRpcPayload('oops'), isNull);
   });
 }

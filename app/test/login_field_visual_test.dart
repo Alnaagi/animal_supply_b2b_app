@@ -50,13 +50,21 @@ void main() {
     expect(focusedBorder.borderSide.width, 2);
     expect(errorBorder.borderSide.color, AppTheme.red);
 
-    final inviteField = tester.widget<TextField>(
-      find.byKey(const Key('login-invite-field')),
+    final usernameField = tester.widget<TextField>(
+      find.byKey(const Key('login-username-field')),
     );
-    expect(inviteField.decoration?.labelText, 'رمز الدعوة');
     expect(
-      inviteField.decoration?.helperText,
-      contains('لأول دخول أو إعادة التعيين فقط'),
+      usernameField.decoration?.labelText,
+      'اسم المستخدم أو رقم الهاتف',
+    );
+    expect(usernameField.decoration?.helperText, isNull);
+    expect(find.textContaining('واتساب'), findsNothing);
+    expect(find.byKey(const Key('login-invite-field')), findsNothing);
+    expect(find.text('رمز الدعوة'), findsNothing);
+    expect(find.text('اسم المستخدم أو البريد'), findsNothing);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('login-username-field'))).dy,
+      lessThan(tester.getTopLeft(find.byKey(const Key('login-password-field'))).dy),
     );
     expect(
       Directionality.of(

@@ -8,6 +8,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  group('SupabaseOrdersRemoteGateway order embed', () {
+    test('pins products to the active category FK, not archive FK', () {
+      expect(
+        SupabaseOrdersRemoteGateway.orderSelect,
+        contains('categories!products_category_id_fkey'),
+      );
+      expect(
+        SupabaseOrdersRemoteGateway.orderSelect,
+        isNot(contains('products(*, categories(name))')),
+      );
+    });
+  });
+
   group('SupabaseOrdersRemoteGateway transition boundary', () {
     test('uses the trusted transition function and preserves its response',
         () async {
@@ -297,6 +310,33 @@ void main() {
       expect(order.status, OrderStatus.confirmed);
     });
 
+    test('sends expected_updated_at with a staff status change', () async {
+      final gateway = _FakeGateway(
+        transitionResponses: [
+          OrdersFunctionResponse(
+            status: 200,
+            data: {
+              'ok': true,
+              'order': _remoteOrder(status: 'confirmed'),
+            },
+          ),
+        ],
+      );
+      final repository = OrdersRepository(remote: gateway, demoSeed: const []);
+      final expected = DateTime.utc(2026, 8, 16, 9, 15);
+
+      await repository.transitionOrderStatus(
+        'order-1',
+        OrderStatus.confirmed,
+        expectedUpdatedAt: expected,
+      );
+
+      expect(
+        gateway.transitionBodies.single['expected_updated_at'],
+        expected.toIso8601String(),
+      );
+    });
+
     test('rejects a response that does not include an authoritative order',
         () async {
       final gateway = _FakeGateway(
@@ -416,6 +456,12 @@ class _FakeGateway implements OrdersRemoteGateway {
     transitionBodies.add(body);
     return transitionResponses[_transitionIndex++];
   }
+
+  @override
+  Future<OrdersFunctionResponse> updateOrderPricing(
+      Map<String, dynamic> body) {
+    throw UnimplementedError();
+  }
 }
 
 class _TransportFailureGateway implements OrdersRemoteGateway {
@@ -437,6 +483,13 @@ class _TransportFailureGateway implements OrdersRemoteGateway {
 
   @override
   Future<OrdersFunctionResponse> transitionOrderStatus(
+    Map<String, dynamic> body,
+  ) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<OrdersFunctionResponse> updateOrderPricing(
     Map<String, dynamic> body,
   ) {
     throw UnimplementedError();

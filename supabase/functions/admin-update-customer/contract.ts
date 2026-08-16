@@ -1,6 +1,7 @@
 import {
   HttpError,
   optionalStringField,
+  optionalTimestamptzField,
   stringField,
   uuidField,
 } from "../_shared/http.ts";
@@ -21,6 +22,7 @@ const allowedFields = new Set([
   "credit_limit",
   "outstanding_balance",
   "phone_is_whatsapp",
+  "expected_updated_at",
 ]);
 
 const requiredFields = [
@@ -50,6 +52,7 @@ export interface CustomerUpdateInput {
   creditLimit: number;
   outstandingBalance: number;
   phoneIsWhatsapp: boolean;
+  expectedUpdatedAt: string | null;
 }
 
 export function parseCustomerUpdateBody(
@@ -125,6 +128,7 @@ export function parseCustomerUpdateBody(
     creditLimit: accountAmountField(body, "credit_limit"),
     outstandingBalance: accountAmountField(body, "outstanding_balance"),
     phoneIsWhatsapp: optionalBooleanField(body, "phone_is_whatsapp", true),
+    expectedUpdatedAt: optionalTimestamptzField(body, "expected_updated_at"),
   };
 }
 

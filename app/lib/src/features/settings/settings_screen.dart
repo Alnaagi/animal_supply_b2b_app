@@ -1,14 +1,21 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/concurrency/stale_write.dart';
+import '../../core/config/app_config.dart';
+import '../../core/config/shop_branding.dart';
+import '../../core/config/shop_branding_cache.dart';
+import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/notifications/push_permission_card.dart';
 import '../../core/updates/update_link.dart';
-import '../../core/utils/formatters.dart';
-import '../../core/widgets/responsive_field_group.dart';
+import '../../core/widgets/shop_brand_logo.dart';
+import '../../core/widgets/shop_loading.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
+import '../../data/repositories/product_images_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
 import 'admin_data_mode_card.dart';
 
@@ -21,22 +28,50 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   int refreshKey = 0;
-  String versionPlatform = 'android';
+  late Future<AppSettingsData> _settingsFuture;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _settingsFuture = ref.read(adminRepositoryProvider).settings();
+  }
+
+  Future<void> _reloadSettings() async {
+    final next = ref.read(adminRepositoryProvider).settings();
+    setState(() {
+      refreshKey++;
+      _settingsFuture = next;
+    });
+    try {
+      await next;
+    } catch (_) {
+      // FutureBuilder shows the load error.
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    listenForScreenReload(ref, _reloadSettings);
     return AdminShell(
       title: 'الإعدادات والتحديثات',
+      actions: [
+        IconButton(
+          tooltip: 'تحديث الإعدادات',
+          icon: const Icon(Icons.refresh),
+          onPressed: _reloadSettings,
+        ),
+      ],
       child: FutureBuilder<AppSettingsData>(
         key: ValueKey(refreshKey),
-        future: ref.read(adminRepositoryProvider).settings(),
+        future: _settingsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const ShopLoading.page();
           }
           if (snapshot.hasError) {
             return _SettingsLoadError(
-              onRetry: () => setState(() => refreshKey++),
+              onRetry: _reloadSettings,
             );
           }
           final settings = snapshot.data ?? const AppSettingsData();
@@ -52,29 +87,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         const Text('إعدادات المتجر',
                             style: TextStyle(
                                 fontWeight: FontWeight.w900, fontSize: 20)),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            ShopBrandLogo(
+                              key: const Key('store-settings-logo-preview'),
+                              logoUrl: settings.shopLogoUrl,
+                              size: 64,
+                              backgroundColor: const Color(0xffe3f3eb),
+                              fallbackIconColor: AppTheme.green,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                settings.shopName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 18,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 10),
                         _SettingRow(
                             label: 'اسم المتجر', value: settings.shopName),
                         _SettingRow(
+                            label: 'شعار المتجر',
+                            value: settings.shopLogoUrl.trim().isEmpty
+                                ? 'الشعار الافتراضي'
+                                : 'مرفوع'),
+                        _SettingRow(
                             label: 'واتساب الدعم',
                             value: settings.supportWhatsapp),
-                        _SettingRow(
-                            label: 'صفحة التنزيل والانضمام',
-                            value: settings.downloadLink),
-                        _SettingRow(
-                            label: 'رابط APK المباشر', value: settings.apkLink),
-                        _SettingRow(
-                            label: 'سياسة التوصيل',
-                            value: settings.deliveryPolicy),
-                        _SettingRow(
-                            label: 'الحد الأدنى للطلب',
-                            value: lyd(settings.minimumOrderAmount)),
-                        _SettingRow(
-                            label: 'رسوم التوصيل',
-                            value: lyd(settings.deliveryFee)),
-                        _SettingRow(
-                            label: 'رسوم المناولة',
-                            value: lyd(settings.handlingFee)),
                         _SettingRow(label: 'العملة', value: settings.currency),
                         _SettingRow(
                             label: 'وضع الصيانة',
@@ -89,12 +134,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               const SizedBox(height: 14),
               AdminDataModeCard(
-                onLocalDataReset: () => setState(() => refreshKey++),
+                onLocalDataReset: () {
+                  unawaited(_reloadSettings());
+                },
               ),
-              const SizedBox(height: 14),
-              const PushPermissionCard(),
-              const SizedBox(height: 14),
-              _buildVersionSection(settings),
             ],
           );
         },
@@ -102,156 +145,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildVersionSection(AppSettingsData settings) {
-    final isAndroid = versionPlatform == 'android';
-    final fallbackLink = isAndroid ? settings.apkLink : settings.downloadLink;
-    final platformLabel = isAndroid ? 'Android' : 'iOS';
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(Icons.system_update_alt, color: AppTheme.green),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'إدارة إصدارات التطبيق',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 20,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                  value: 'android',
-                  label: Text('Android'),
-                  icon: Icon(Icons.android),
-                ),
-                ButtonSegment(
-                  value: 'ios',
-                  label: Text('iOS'),
-                  icon: Icon(Icons.phone_iphone),
-                ),
-              ],
-              selected: {versionPlatform},
-              onSelectionChanged: (selection) {
-                setState(() => versionPlatform = selection.single);
-              },
-            ),
-            const SizedBox(height: 14),
-            FutureBuilder<AppVersionInfo>(
-              key: ValueKey('$refreshKey-$versionPlatform'),
-              future: ref
-                  .read(adminRepositoryProvider)
-                  .latestVersion(platform: versionPlatform),
-              builder: (context, versionSnapshot) {
-                if (versionSnapshot.connectionState ==
-                    ConnectionState.waiting) {
-                  return const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Center(child: CircularProgressIndicator()),
-                  );
-                }
-                if (versionSnapshot.hasError) {
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.cloud_off_outlined),
-                    title: Text('تعذر تحميل إصدار $platformLabel'),
-                    subtitle: const Text('تحقق من الاتصال ثم أعد المحاولة.'),
-                    trailing: IconButton(
-                      onPressed: () => setState(() => refreshKey++),
-                      tooltip: 'إعادة المحاولة',
-                      icon: const Icon(Icons.refresh),
-                    ),
-                  );
-                }
-                final version = versionSnapshot.data ??
-                    AppVersionInfo(
-                      platform: versionPlatform,
-                      apkUrl: fallbackLink,
-                    );
-                final versionUri = safeHttpsUpdateUri(version.apkUrl);
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'آخر إصدار $platformLabel: '
-                      '${version.versionName} (${version.versionCode})',
-                    ),
-                    Text(
-                      'نوع التحديث: '
-                      '${version.required ? 'إجباري' : 'اختياري'}',
-                    ),
-                    Text(
-                      version.releaseNotes.isEmpty
-                          ? 'لا توجد ملاحظات إصدار.'
-                          : version.releaseNotes,
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        FilledButton.icon(
-                          onPressed: versionUri == null
-                              ? null
-                              : () => launchUrl(
-                                    versionUri,
-                                    mode: LaunchMode.externalApplication,
-                                  ),
-                          icon: const Icon(Icons.open_in_new),
-                          label: Text(
-                            isAndroid ? 'فتح رابط APK' : 'فتح رابط توزيع iOS',
-                          ),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: () => _publishVersion(version),
-                          icon: const Icon(Icons.publish_outlined),
-                          label: Text('نشر إصدار $platformLabel'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      isAndroid
-                          ? 'Android: يحمّل المستخدم ملف APK ويؤكد التثبيت؛ '
-                              'لا يمكن التحديث الصامت من خارج Google Play.'
-                          : 'iOS: استخدم TestFlight أو App Store أو توزيعاً '
-                              'مؤسسياً/Ad Hoc صالحاً. رابط IPA عادي على Google '
-                              'Drive لا يثبت على أجهزة العملاء العامة.',
-                      style: const TextStyle(color: Colors.grey),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _editSettings(AppSettingsData settings) async {
+    if (_saving) return;
     final shop = TextEditingController(text: settings.shopName);
     final whats = TextEditingController(text: settings.supportWhatsapp);
-    final download = TextEditingController(text: settings.downloadLink);
-    final apk = TextEditingController(text: settings.apkLink);
-    final delivery = TextEditingController(text: settings.deliveryPolicy);
-    final minimum = TextEditingController(
-        text: settings.minimumOrderAmount.toStringAsFixed(2));
-    final deliveryFee =
-        TextEditingController(text: settings.deliveryFee.toStringAsFixed(2));
-    final handlingFee =
-        TextEditingController(text: settings.handlingFee.toStringAsFixed(2));
     var maintenance = settings.maintenanceMode;
+    var logoUrl = settings.shopLogoUrl;
+    var uploadingLogo = false;
+    Uint8List? logoPreviewBytes;
+    String? logoError;
     String? validationMessage;
     final saved = await showDialog<AppSettingsData>(
       context: context,
@@ -265,50 +167,130 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 TextField(
                     controller: shop,
                     decoration: const InputDecoration(labelText: 'اسم المتجر')),
+                const SizedBox(height: 14),
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: ShopBrandLogo(
+                    key: const Key('store-settings-logo-edit-preview'),
+                    logoUrl: logoUrl,
+                    logoBytes: logoPreviewBytes,
+                    size: 72,
+                    backgroundColor: const Color(0xffe3f3eb),
+                    fallbackIconColor: AppTheme.green,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        key: const Key('store-settings-logo-upload'),
+                        onPressed: uploadingLogo ||
+                                !ref
+                                    .read(productImagesRepositoryProvider)
+                                    .canUpload
+                            ? null
+                            : () async {
+                                setDialogState(() {
+                                  uploadingLogo = true;
+                                  logoError = null;
+                                });
+                                try {
+                                  final images = ref
+                                      .read(productImagesRepositoryProvider);
+                                  final picked = await images.pick();
+                                  if (picked == null) {
+                                    setDialogState(() => uploadingLogo = false);
+                                    return;
+                                  }
+                                  setDialogState(
+                                    () => logoPreviewBytes = picked.bytes,
+                                  );
+                                  final result = await images.uploadPicked(
+                                    picked,
+                                    folder: ProductImagesRepository.logosFolder,
+                                  );
+                                  setDialogState(() {
+                                    logoUrl = result.publicUrl;
+                                    uploadingLogo = false;
+                                  });
+                                } on ProductImageUploadException catch (error) {
+                                  setDialogState(() {
+                                    uploadingLogo = false;
+                                    logoError = error.message;
+                                  });
+                                } catch (error) {
+                                  setDialogState(() {
+                                    uploadingLogo = false;
+                                    logoError = mapProductImageUploadError(
+                                      error,
+                                      folder:
+                                          ProductImagesRepository.logosFolder,
+                                    ).message;
+                                  });
+                                }
+                              },
+                        icon: uploadingLogo
+                            ? const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.upload_file_outlined),
+                        label: Text(
+                          uploadingLogo ? 'جارٍ الرفع...' : 'رفع شعار المتجر',
+                        ),
+                      ),
+                      if (logoUrl.trim().isNotEmpty)
+                        TextButton(
+                          onPressed: uploadingLogo
+                              ? null
+                              : () => setDialogState(() {
+                                    logoUrl = '';
+                                    logoPreviewBytes = null;
+                                    logoError = null;
+                                  }),
+                          child: const Text('إزالة الشعار'),
+                        ),
+                    ],
+                  ),
+                ),
+                if (AppConfig.isDemoMode ||
+                    !ref.read(productImagesRepositoryProvider).canUpload) ...[
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      AppConfig.isDemoMode
+                          ? 'رفع الشعار غير متاح في الوضع التجريبي. يُحفظ اسم المتجر محلياً لهذه الجلسة.'
+                          : 'رفع الشعار يحتاج ربط Supabase وتسجيل دخول إداري.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                ],
+                if (logoError != null) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      logoError!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 TextField(
                     controller: whats,
                     decoration:
                         const InputDecoration(labelText: 'واتساب الدعم')),
                 const SizedBox(height: 10),
-                TextField(
-                    controller: download,
-                    decoration: const InputDecoration(
-                      labelText: 'صفحة التنزيل والانضمام',
-                      helperText:
-                          'رابط HTTPS ثابت يُرسل في دعوات العملاء ويعرض خيارات المنصات.',
-                    )),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: apk,
-                    decoration: const InputDecoration(
-                      labelText: 'رابط APK المباشر',
-                      helperText: 'رابط ملف Android الموقع للإصدار الحالي فقط.',
-                    )),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: delivery,
-                    maxLines: 3,
-                    decoration:
-                        const InputDecoration(labelText: 'سياسة التوصيل')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: minimum,
-                    keyboardType: TextInputType.number,
-                    decoration:
-                        const InputDecoration(labelText: 'الحد الأدنى للطلب')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: deliveryFee,
-                    keyboardType: TextInputType.number,
-                    decoration:
-                        const InputDecoration(labelText: 'رسوم التوصيل')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: handlingFee,
-                    keyboardType: TextInputType.number,
-                    decoration:
-                        const InputDecoration(labelText: 'رسوم المناولة')),
                 SwitchListTile(
                     value: maintenance,
                     onChanged: (value) =>
@@ -336,52 +318,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 child: const Text('إلغاء')),
             FilledButton(
               onPressed: () {
-                final parsedMinimum = double.tryParse(minimum.text.trim());
-                final parsedDeliveryFee =
-                    double.tryParse(deliveryFee.text.trim());
-                final parsedHandlingFee =
-                    double.tryParse(handlingFee.text.trim());
-                final values = [
-                  parsedMinimum,
-                  parsedDeliveryFee,
-                  parsedHandlingFee,
-                ];
                 final rawWhatsapp = whats.text.trim();
-                final rawDownload = download.text.trim();
-                final rawApk = apk.text.trim();
-                final validMoney = values.every(
-                  (value) => value != null && value.isFinite && value >= 0,
-                );
                 final validWhatsapp =
                     rawWhatsapp.isEmpty || _isValidWhatsapp(rawWhatsapp);
-                final validDownload = rawDownload.isEmpty ||
-                    safeHttpsUpdateUri(rawDownload) != null;
-                final validApk =
-                    rawApk.isEmpty || safeHttpsUpdateUri(rawApk) != null;
+                final rawLogo = logoUrl.trim();
+                final validLogo = rawLogo.isEmpty ||
+                    safeHttpsUpdateUri(rawLogo) != null;
                 if (shop.text.trim().isEmpty ||
-                    !validMoney ||
                     !validWhatsapp ||
-                    !validDownload ||
-                    !validApk) {
+                    !validLogo) {
                   setDialogState(() {
                     validationMessage =
-                        'أدخل اسم المتجر، أرقاماً غير سالبة، ورقم واتساب صحيحاً، '
-                        'واستخدم روابط HTTPS فقط.';
+                        'أدخل اسم المتجر ورقم واتساب صحيحاً، '
+                        'واستخدم روابط HTTPS فقط للشعار.';
                   });
                   return;
                 }
                 Navigator.pop(
                   context,
-                  AppSettingsData(
+                  settings.copyWith(
                     shopName: shop.text.trim(),
+                    shopLogoUrl: rawLogo,
                     supportWhatsapp: rawWhatsapp,
-                    downloadLink: rawDownload,
-                    apkLink: rawApk,
-                    deliveryPolicy: delivery.text.trim(),
-                    minimumOrderAmount: parsedMinimum!,
-                    deliveryFee: parsedDeliveryFee!,
-                    handlingFee: parsedHandlingFee!,
-                    currency: settings.currency,
                     maintenanceMode: maintenance,
                   ),
                 );
@@ -395,220 +353,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     for (final controller in [
       shop,
       whats,
-      download,
-      apk,
-      delivery,
-      minimum,
-      deliveryFee,
-      handlingFee,
     ]) {
       controller.dispose();
     }
     if (saved == null) return;
+    setState(() => _saving = true);
     try {
       await ref.read(adminRepositoryProvider).saveSettings(saved);
+      ShopBrandingCache.rememberSaved(ShopBranding.fromSettings(saved));
       ref.invalidate(appSettingsProvider);
-      if (mounted) setState(() => refreshKey++);
-    } catch (_) {
+      if (mounted) {
+        await reloadAfterMutation(this, _reloadSettings);
+      }
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تعذر حفظ الإعدادات. تحقق من الاتصال وحاول مجدداً.'),
-        ),
-      );
-    }
-  }
-
-  Future<void> _publishVersion(AppVersionInfo current) async {
-    final platform = current.platform;
-    var requiredUpdate = current.required;
-    final versionName = TextEditingController(text: current.versionName);
-    final versionCode =
-        TextEditingController(text: current.versionCode.toString());
-    final minimumCode =
-        TextEditingController(text: current.minimumSupportedCode.toString());
-    final downloadUrl = TextEditingController(text: current.apkUrl);
-    final sha256 = TextEditingController(text: current.sha256);
-    final fileSize =
-        TextEditingController(text: current.fileSizeBytes?.toString() ?? '');
-    final notes = TextEditingController(text: current.releaseNotes);
-    String? validationMessage;
-
-    final saved = await showDialog<AppVersionInfo>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('نشر إصدار تطبيق'),
-          content: SizedBox(
-            width: 620,
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  InputDecorator(
-                    decoration: const InputDecoration(labelText: 'المنصة'),
-                    child: Text(
-                      platform == 'android' ? 'Android' : 'iOS',
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  ResponsiveFieldGroup(
-                    columns: 3,
-                    children: [
-                      TextField(
-                        controller: versionName,
-                        decoration:
-                            const InputDecoration(labelText: 'اسم الإصدار'),
-                      ),
-                      TextField(
-                        controller: versionCode,
-                        keyboardType: TextInputType.number,
-                        decoration:
-                            const InputDecoration(labelText: 'رقم البناء'),
-                      ),
-                      TextField(
-                        controller: minimumCode,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'أقل بناء مدعوم',
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: downloadUrl,
-                    keyboardType: TextInputType.url,
-                    decoration: InputDecoration(
-                      labelText: platform == 'android'
-                          ? 'رابط APK المباشر'
-                          : 'رابط TestFlight أو App Store',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: sha256,
-                    decoration: InputDecoration(
-                      labelText: platform == 'android'
-                          ? 'SHA-256 لملف APK (إجباري)'
-                          : 'SHA-256 اختياري',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: fileSize,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: platform == 'android'
-                          ? 'حجم ملف APK بالبايت (إجباري)'
-                          : 'حجم الملف بالبايت اختياري',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: notes,
-                    minLines: 3,
-                    maxLines: 6,
-                    decoration:
-                        const InputDecoration(labelText: 'ملاحظات الإصدار'),
-                  ),
-                  SwitchListTile(
-                    value: requiredUpdate,
-                    onChanged: (value) =>
-                        setDialogState(() => requiredUpdate = value),
-                    title: const Text('تحديث إجباري'),
-                  ),
-                  if (validationMessage != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      validationMessage!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+        SnackBar(
+          content: Text(
+            mutationFailureMessageAr(
+              error,
+              fallback: 'تعذر حفظ الإعدادات. تحقق من الاتصال وحاول مجدداً.',
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final parsedCode = int.tryParse(versionCode.text);
-                final parsedMinimum = int.tryParse(minimumCode.text);
-                final parsedFileSize = fileSize.text.trim().isEmpty
-                    ? null
-                    : int.tryParse(fileSize.text.trim());
-                final cleanHash = sha256.text.trim().toLowerCase();
-                final parsedDownload =
-                    safeHttpsUpdateUri(downloadUrl.text.trim());
-                final candidate = AppVersionInfo(
-                  platform: platform,
-                  versionName: versionName.text.trim(),
-                  versionCode: parsedCode ?? 0,
-                  minimumSupportedCode: parsedMinimum ?? 0,
-                  apkUrl: parsedDownload?.toString() ?? '',
-                  required: requiredUpdate,
-                  releaseNotes: notes.text.trim(),
-                  sha256: cleanHash,
-                  fileSizeBytes: parsedFileSize,
-                );
-                try {
-                  AdminRepository.validateVersionForPublication(candidate);
-                } on FormatException {
-                  setDialogState(() {
-                    validationMessage = platform == 'android'
-                        ? 'راجع الإصدار والأرقام ورابط HTTPS، وأدخل بصمة '
-                            'SHA-256 وحجم ملف APK الصحيحين.'
-                        : 'راجع الإصدار والأرقام ورابط HTTPS والبيانات '
-                            'الاختيارية.';
-                  });
-                  return;
-                }
-                Navigator.pop(context, candidate);
-              },
-              child: const Text('نشر'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    for (final controller in [
-      versionName,
-      versionCode,
-      minimumCode,
-      downloadUrl,
-      sha256,
-      fileSize,
-      notes,
-    ]) {
-      controller.dispose();
-    }
-    if (saved == null) return;
-    try {
-      await ref.read(adminRepositoryProvider).publishVersion(saved);
-      if (!mounted) return;
-      setState(() {
-        versionPlatform = saved.platform;
-        refreshKey++;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم نشر بيانات الإصدار.')),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text('تعذر نشر بيانات الإصدار. تحقق من الاتصال وحاول مجدداً.'),
         ),
       );
+      if (error is StaleWriteException) {
+        await _reloadSettings();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 

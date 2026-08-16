@@ -124,7 +124,10 @@ void main() {
       expect(order.contactPerson, 'سالم وقت الطلب');
       expect(order.contactPhone, '0921111111');
       expect(order.customerProfileId, 'profile-2');
-      expect(order.deliveryAddress, 'طرابلس - السراج - الطريق الرئيسي');
+      expect(order.deliveryAddress, '');
+      expect(order.customerDefaultAddress, 'طرابلس - السراج - الطريق الرئيسي');
+      expect(order.effectiveDeliveryAddress, 'طرابلس - السراج - الطريق الرئيسي');
+      expect(order.usesCustomDeliveryAddress, isFalse);
       expect(order.items.single.productName, 'منتج تاريخي');
       expect(order.items.single.productSku, 'OLD-1');
       expect(order.items.single.canReorder, isFalse);

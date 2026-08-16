@@ -546,6 +546,13 @@ class _PagedGateway implements OrdersRemoteGateway, OrdersPagedRemoteGateway {
   ) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<OrdersFunctionResponse> updateOrderPricing(
+    Map<String, dynamic> body,
+  ) {
+    throw UnimplementedError();
+  }
 }
 
 class _ScreenOrdersRepository extends OrdersRepository {

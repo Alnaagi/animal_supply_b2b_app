@@ -3,6 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/config/app_config.dart';
+import '../../core/config/app_config_validation.dart';
+import '../../core/refresh/screen_reload.dart';
+import '../../core/widgets/shop_loading.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/notification_campaign_summary.dart';
 import '../../data/models/product.dart';
@@ -44,6 +48,24 @@ class _AdminNotificationsScreenState
     ]);
   }
 
+  Future<void> _reloadScreen() async {
+    final history =
+        ref.read(notificationsRepositoryProvider).listCampaignSummaries();
+    final formData = Future.wait<Object>([
+      ref.read(adminRepositoryProvider).listCustomers(status: 'active'),
+      ref.read(catalogRepositoryProvider).products(),
+    ]);
+    setState(() {
+      _campaignHistory = history;
+      _formData = formData;
+    });
+    try {
+      await Future.wait<Object>([history, formData]);
+    } catch (_) {
+      // FutureBuilders surface the error.
+    }
+  }
+
   @override
   void dispose() {
     title.dispose();
@@ -54,13 +76,23 @@ class _AdminNotificationsScreenState
 
   @override
   Widget build(BuildContext context) {
+    listenForScreenReload(ref, _reloadScreen);
     return AdminShell(
       title: 'إرسال الإشعارات',
+      actions: [
+        IconButton(
+          onPressed: sending ? null : () {
+            _reloadScreen();
+          },
+          icon: const Icon(Icons.refresh),
+          tooltip: 'تحديث الحملات والعملاء',
+        ),
+      ],
       child: FutureBuilder<List<Object>>(
         future: _formData,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const ShopLoading.page();
           }
           if (snapshot.hasError) {
             return Center(
@@ -108,9 +140,13 @@ class _AdminNotificationsScreenState
                               ?.copyWith(fontWeight: FontWeight.w900),
                         ),
                         const SizedBox(height: 8),
-                        const Text(
-                          'سيتم حفظ الإشعار داخل التطبيق وإرساله للأجهزة '
-                          'المسجلة عند تفعيل Firebase.',
+                        Text(
+                          'يُحفظ الإشعار داخل التطبيق للمستلمين فوراً. '
+                          'جهاز العميل يظهر التنبيه في شريط النظام عبر المتصفح إذا كان التطبيق أو التبويب يعمل بعد السماح بالإذن. '
+                          '${firebaseClosedAppRequirementAr(
+                            configured: AppConfig
+                                .hasFirebaseConfigurationForCurrentPlatform,
+                          )}',
                         ),
                         const SizedBox(height: 16),
                         DropdownButtonFormField<String>(
@@ -144,7 +180,7 @@ class _AdminNotificationsScreenState
                             enabled: !sending,
                             decoration: const InputDecoration(
                               prefixIcon: Icon(Icons.search),
-                              labelText: 'بحث باسم النشاط أو المدينة أو الهاتف',
+                              labelText: 'بحث باسم المتجر أو المدينة أو الهاتف',
                             ),
                             onChanged: (_) => setState(() {}),
                           ),
@@ -312,6 +348,7 @@ class _AdminNotificationsScreenState
   }
 
   Future<void> _confirmAndSend() async {
+    if (sending) return;
     final cleanTitle = title.text.trim();
     final cleanBody = body.text.trim();
     if (cleanTitle.isEmpty ||
@@ -377,16 +414,20 @@ class _AdminNotificationsScreenState
       selectedProfiles.clear();
       _pendingCampaignId = null;
       _pendingCampaignFingerprint = null;
-      _campaignHistory =
-          ref.read(notificationsRepositoryProvider).listCampaignSummaries();
+      await reloadAfterMutation(this, _reloadScreen);
+      if (!mounted) return;
+      ref.invalidate(unreadNotificationsCountProvider);
+      ref.read(notificationInboxEpochProvider.notifier).state++;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('تم إنشاء الإشعار لـ $count مستلم.')),
       );
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تعذر إرسال الإشعار. تحقق من الاتصال والصلاحيات.'),
+        SnackBar(
+          content: Text(
+            NotificationsRepository.campaignFailureMessageAr(error),
+          ),
         ),
       );
     } finally {
@@ -453,18 +494,16 @@ class _CampaignHistoryCard extends StatelessWidget {
               ],
             ),
             const Text(
-              'يعرض حالة صف الإرسال وعدد الرسائل التي قبلها مزود الإشعارات للأجهزة.',
+              'يعرض حالة صف الإرسال داخل التطبيق. تنبيه شريط النظام يعتمد على جهاز المستلم وهو يعمل، وليس على Firebase.',
             ),
             const SizedBox(height: 12),
             FutureBuilder<List<NotificationCampaignSummary>>(
               future: history,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(20),
-                      child: CircularProgressIndicator(),
-                    ),
+                  return const ShopLoading.section(
+                    message: 'جارٍ تحميل سجل الحملات...',
+                    height: 88,
                   );
                 }
                 if (snapshot.hasError) {

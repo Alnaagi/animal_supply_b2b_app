@@ -3,6 +3,7 @@
 
   if (!global || global.animalSupplyPwaInstall) return;
 
+  const SHOP_NAME_KEY = 'shop_branding.v1.name';
   const DISMISS_UNTIL_KEY = 'animal-supply-pwa-install-dismiss-until';
   const DISMISS_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
   const DISPLAY_MODE_QUERY = '(display-mode: standalone)';
@@ -58,6 +59,18 @@
       isIosSafari: isIos && isSafari,
       isMacSafari: !isIos && /Macintosh|Mac OS X/i.test(userAgent) && isSafari,
     };
+  }
+
+  function shopDisplayName() {
+    try {
+      const stored = String(global.localStorage?.getItem(SHOP_NAME_KEY) ?? '').trim();
+      if (stored) return stored;
+    } catch (_) {
+      // Storage can be disabled in private or restricted browser contexts.
+    }
+    const title = String(global.document?.title ?? '').trim();
+    if (title) return title;
+    return 'المتجر';
   }
 
   function storedDismissalActive() {
@@ -335,10 +348,11 @@
     icon.src = 'icons/Icon-192.png';
     icon.alt = '';
     icon.setAttribute('aria-hidden', 'true');
+    const shopName = shopDisplayName();
     const title = createElement(
       'h2',
       'animal-supply-pwa-install-title',
-      'ثبّت تطبيق متجر الأعلاف',
+      `ثبّت تطبيق ${shopName}`,
     );
     title.id = 'pwa-install-title';
     heading.append(icon, title);
@@ -348,7 +362,7 @@
       'animal-supply-pwa-install-copy',
       state.canPrompt
         ? 'أضف المتجر إلى جهازك لفتحه بسرعة من الشاشة الرئيسية واستخدامه كتطبيق ويب مستقل.'
-        : 'يمكنك تثبيت متجر الأعلاف وفتحه من جهازك كتطبيق ويب مستقل.',
+        : `يمكنك تثبيت ${shopName} وفتحه من جهازك كتطبيق ويب مستقل.`,
     );
     description.id = 'pwa-install-description';
 

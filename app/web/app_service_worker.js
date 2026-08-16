@@ -18,6 +18,10 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SHOW_OS_NOTIFICATION') {
+    event.waitUntil(showOsTrayNotification(event.data));
+    return;
+  }
   if (event.data?.type !== 'CACHE_APP_SHELL') return;
 
   event.waitUntil(
@@ -284,6 +288,10 @@ function assertRequiredResources(resources) {
 }
 
 self.addEventListener('push', (event) => {
+  // When Firebase Messaging is initialized in this worker, it owns background
+  // display. Skip the generic handler so closed-app alerts are not duplicated.
+  if (self.__ANIMAL_SUPPLY_FCM_READY) return;
+
   let message = {};
   try {
     message = event.data ? event.data.json() : {};
@@ -298,16 +306,50 @@ self.addEventListener('push', (event) => {
   const target = pushNotificationTarget(data);
 
   event.waitUntil(
-    self.registration.showNotification(title, {
+    showOsTrayNotification({
+      title,
       body,
-      icon: 'icons/Icon-192.png',
-      badge: 'icons/Icon-192.png',
-      data: { target },
-      dir: 'rtl',
-      lang: 'ar',
+      target,
     }),
   );
 });
+
+async function showOsTrayNotification(payload) {
+  const title =
+    typeof payload?.title === 'string' && payload.title.trim().length > 0
+      ? payload.title.trim()
+      : 'إشعار جديد';
+  const body = typeof payload?.body === 'string' ? payload.body : '';
+  const tag = typeof payload?.tag === 'string' ? payload.tag.trim() : '';
+  const target = safeNotificationTarget(payload?.target);
+
+  await self.registration.showNotification(title, {
+    body,
+    tag,
+    renotify: tag.length > 0,
+    icon: 'icons/Icon-192.png',
+    badge: 'icons/Icon-192.png',
+    data: { target },
+    dir: 'rtl',
+    lang: 'ar',
+  });
+}
+
+function safeNotificationTarget(value) {
+  if (typeof value !== 'string') return '/';
+  const trimmed = value.trim();
+  if (
+    trimmed.length === 0 ||
+    trimmed.length > 500 ||
+    !trimmed.startsWith('/') ||
+    trimmed.startsWith('//') ||
+    trimmed.includes('\\') ||
+    /[\u0000-\u001f\u007f]/.test(trimmed)
+  ) {
+    return '/';
+  }
+  return trimmed;
+}
 
 function pushNotificationTarget(rawData) {
   if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)) {

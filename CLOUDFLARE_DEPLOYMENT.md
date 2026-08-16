@@ -5,35 +5,38 @@ behind the route-aware Worker in `cloudflare/worker.mjs`. The Worker name is
 `animal-supply-b2b`. Direct Flutter routes such as `/invite?token=...` receive
 the app shell, while missing static files return `404` instead of HTML.
 
-## Current client-review deployment
+## Current web deployment
 
 - URL: `https://animal-supply-b2b.alnaagi-ai.workers.dev`
-- Cloudflare version: `770b7a01-6575-49e9-8ca7-b77f393c8f5b`
+- Cloudflare version: `2fbc1bf4-68d2-4460-9179-49f4615ab856`
 - Flutter version: `1.0.4+5`
 - Offline shell version:
-  `2a1f208c897592533cfeb8affdf5ed6ff72bcdb211181feaad6fd8066b91089a`
-- Runtime mode: `APP_ENV=demo`
+  `web_shell_manifest.2d99c7aa89ce4b49.json`
+- Runtime mode: `APP_ENV=production` against the linked Supabase project
+- Firebase/web push: not configured (OS tray uses Service Worker `showNotification` while the tab/PWA can run; no Firebase keys were added)
 - Search indexing: blocked intentionally with
   `X-Robots-Tag: noindex, nofollow, noarchive`
 - Edge controls: HTTP-to-HTTPS redirect, HSTS, CSP, frame denial, MIME
   protection, permissions policy, and fresh-cache rules for the app shell
 
-This URL is a review build. It has no production Supabase or Firebase
-connection, uses labelled demo data, and must not be represented as the
-client's live ordering system. A later deployment can replace this Worker
-version; record the new version ID in the handoff after every release.
+This hostname now uses compile-time production mode and the public Supabase
+URL/anon key. Staging demo logins (`admin`/`admin` overlay) are disabled.
+Firebase public keys remain empty, so push delivery stays labelled
+“not configured.” Keep `*.workers.dev` `noindex` until a custom domain and
+client-approved catalog are accepted. Record the new version ID after every
+release.
 
-The August 13, 2026 deployment was verified against the exact local
-`main.dart.js` and `flutter_bootstrap.js`, and the release contains a
-76-resource content-hashed offline shell. Eligible Chromium browsers receive
-an Arabic prompt connected to the native PWA install confirmation, while
-iPhone/iPad Safari receives Add to Home Screen instructions. The prompt stays
-hidden in an installed standalone window and remembers a dismissal for seven
-days. The final deployment passed
-direct-route fallback, static-file `404` behavior, security/no-cache headers,
-Arabic RTL rendering, customer demo login, and the customer home/catalog
-screen. The full Flutter and release-guard suites cover the remaining customer
-and admin workflows.
+The August 16, 2026 Worker version `2fbc1bf4-68d2-4460-9179-49f4615ab856`
+ships browser/OS tray alerts via `registration.showNotification` (no Firebase
+keys), admin settings without the browser-alerts and app-version cards, and
+smoother pull-to-refresh. The hashed offline shell is
+`web_shell_manifest.2d99c7aa89ce4b49.json`.
+
+The earlier August 16, 2026 deployment was verified against the exact local
+`main.dart.js`, contains a 76-resource content-hashed offline shell, and
+loads a no-op `firebase_bootstrap.js`. Login uses real Supabase Auth.
+Web product, banner, and logo uploads read file bytes in memory instead of
+fetching a revoked `blob:` URL.
 
 ## Client-review demo
 

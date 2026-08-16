@@ -3,7 +3,10 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/concurrency/stale_write.dart';
 import '../../core/constants/order_status.dart';
+import '../../core/localization/arabic_copy.dart';
+import '../models/admin_order_pricing.dart';
 import '../models/order.dart';
 import '../models/product.dart';
 import '../remote/supabase_clients.dart';
@@ -56,6 +59,9 @@ abstract interface class OrdersRemoteGateway {
 
   Future<OrdersFunctionResponse> transitionOrderStatus(
       Map<String, dynamic> body);
+
+  Future<OrdersFunctionResponse> updateOrderPricing(
+      Map<String, dynamic> body);
 }
 
 /// Optional bounded read capability for remote order gateways.
@@ -104,9 +110,11 @@ class SupabaseOrdersRemoteGateway
   final OrdersFunctionInvoker _functionInvoker;
   final Duration _requestTimeout;
 
-  static const _orderSelect = '''
+  /// Disambiguates `products.category_id` from `archived_by_category_id`.
+  /// An unqualified `categories(name)` embed returns PostgREST 300/PGRST201.
+  static const orderSelect = '''
     *,
-    order_items(*, products(*, categories(name))),
+    order_items(*, products(*, categories!products_category_id_fkey(name))),
     status_history:order_status_history(*),
     business_customers(
       id,
@@ -125,7 +133,7 @@ class SupabaseOrdersRemoteGateway
       String customerId) async {
     final rows = await client
         .from('orders')
-        .select(_orderSelect)
+        .select(orderSelect)
         .eq('customer_id', customerId)
         .order('created_at', ascending: false);
     return _asRows(rows);
@@ -135,7 +143,7 @@ class SupabaseOrdersRemoteGateway
   Future<List<Map<String, dynamic>>> allOrders() async {
     final rows = await client
         .from('orders')
-        .select(_orderSelect)
+        .select(orderSelect)
         .order('created_at', ascending: false);
     return _asRows(rows);
   }
@@ -151,7 +159,7 @@ class SupabaseOrdersRemoteGateway
     required int offset,
     required int limit,
   }) async {
-    dynamic query = client.from('orders').select(_orderSelect);
+    dynamic query = client.from('orders').select(orderSelect);
     if (customerId != null && customerId.isNotEmpty) {
       query = query.eq('customer_id', customerId);
     }
@@ -192,7 +200,7 @@ class SupabaseOrdersRemoteGateway
     String? customerId,
   }) async {
     dynamic query =
-        client.from('orders').select(_orderSelect).eq('id', orderId);
+        client.from('orders').select(orderSelect).eq('id', orderId);
     if (customerId != null && customerId.isNotEmpty) {
       query = query.eq('customer_id', customerId);
     }
@@ -209,6 +217,12 @@ class SupabaseOrdersRemoteGateway
   Future<OrdersFunctionResponse> transitionOrderStatus(
       Map<String, dynamic> body) async {
     return _invokeFunction('transition-order-status', body);
+  }
+
+  @override
+  Future<OrdersFunctionResponse> updateOrderPricing(
+      Map<String, dynamic> body) async {
+    return _invokeFunction('admin-update-order-pricing', body);
   }
 
   Future<OrdersFunctionResponse> _invokeFunction(
@@ -251,6 +265,21 @@ class OrdersRepositoryException implements Exception {
   final int? status;
   final Object? details;
   final bool isRetryable;
+
+  static void requireFresh({
+    required DateTime? current,
+    required DateTime? expected,
+  }) {
+    try {
+      throwIfStaleWrite(current: current, expected: expected);
+    } on StaleWriteException catch (error) {
+      throw OrdersRepositoryException(
+        code: StaleWriteException.code,
+        message: error.message,
+        status: 409,
+      );
+    }
+  }
 
   @override
   String toString() => message;
@@ -478,6 +507,11 @@ class OrdersRepository {
       createdAt: now,
       updatedAt: now,
       deliveryAddress: deliveryAddress.trim(),
+      customerDefaultAddress: Order.composeCustomerAddress(
+        city: demoCustomer.city,
+        area: demoCustomer.area,
+        address: demoCustomer.address,
+      ),
       deliveryNote: deliveryNote.trim(),
       customerNote: customerNote.trim(),
       subtotal: pricing.subtotal,
@@ -579,9 +613,11 @@ class OrdersRepository {
     String orderId,
     OrderStatus status, {
     String adminNote = '',
+    DateTime? expectedUpdatedAt,
   }) async {
     final remote = _remote;
     if (remote != null) {
+      final expected = utcIsoOrNull(expectedUpdatedAt);
       final response = await remote.transitionOrderStatus({
         'order_id': orderId,
         'status': status.value,
@@ -589,6 +625,7 @@ class OrdersRepository {
           'note': adminNote.trim(),
           'admin_note': adminNote.trim(),
         },
+        if (expected != null) 'expected_updated_at': expected,
       });
       return _orderFromFunction(response);
     }
@@ -602,6 +639,10 @@ class OrdersRepository {
       );
     }
     final current = _orders[index];
+    OrdersRepositoryException.requireFresh(
+      current: current.updatedAt,
+      expected: expectedUpdatedAt,
+    );
     if (current.status == status) return current;
     if (!current.allowedNextStatuses.contains(status)) {
       throw const OrdersRepositoryException(
@@ -630,6 +671,98 @@ class OrdersRepository {
     return updated;
   }
 
+  Future<Order> updateOrderPricing({
+    required String orderId,
+    required List<double> unitPrices,
+    required double deliveryFee,
+    required double discountAmount,
+    DateTime? expectedUpdatedAt,
+  }) async {
+    final remote = _remote;
+    if (remote != null) {
+      final current = await orderById(orderId);
+      if (current == null) {
+        throw const OrdersRepositoryException(
+          code: 'ORDER_NOT_FOUND',
+          message: 'تعذر العثور على الطلب.',
+          status: 404,
+        );
+      }
+      OrdersRepositoryException.requireFresh(
+        current: current.updatedAt,
+        expected: expectedUpdatedAt,
+      );
+      final priced = AdminOrderPricing.apply(
+        order: current,
+        unitPrices: unitPrices,
+        deliveryFee: deliveryFee,
+        discountAmount: discountAmount,
+      );
+      final items = <Map<String, dynamic>>[
+        for (final item in priced.items)
+          if (item is OrderItem && (item.id ?? '').isNotEmpty)
+            {
+              'id': item.id,
+              'unit_price': item.unitPrice,
+            },
+      ];
+      if (items.length != current.items.length) {
+        throw const OrdersRepositoryException(
+          code: 'ORDER_ITEM_MISMATCH',
+          message: 'بنود الفاتورة غير مكتملة للتحديث.',
+          status: 422,
+        );
+      }
+      final expected = utcIsoOrNull(expectedUpdatedAt);
+      final response = await remote.updateOrderPricing({
+        'order_id': orderId,
+        'delivery_fee': priced.deliveryFee,
+        'discount_amount': priced.discountAmount,
+        'items': items,
+        if (expected != null) 'expected_updated_at': expected,
+      });
+      final saved = _orderFromFunction(response);
+      return saved.copyWith(
+        customerDefaultAddress: current.customerDefaultAddress,
+        contactPhone: saved.contactPhone.trim().isNotEmpty
+            ? saved.contactPhone
+            : current.contactPhone,
+        businessName: saved.businessName.trim().isNotEmpty
+            ? saved.businessName
+            : current.businessName,
+      );
+    }
+
+    final index = _orders.indexWhere((order) => order.id == orderId);
+    if (index == -1) {
+      throw const OrdersRepositoryException(
+        code: 'ORDER_NOT_FOUND',
+        message: 'تعذر العثور على الطلب.',
+        status: 404,
+      );
+    }
+    try {
+      OrdersRepositoryException.requireFresh(
+        current: _orders[index].updatedAt,
+        expected: expectedUpdatedAt,
+      );
+      final updated = AdminOrderPricing.apply(
+        order: _orders[index],
+        unitPrices: unitPrices,
+        deliveryFee: deliveryFee,
+        discountAmount: discountAmount,
+      );
+      _orders[index] = updated;
+      return updated;
+    } on AdminOrderPricingException catch (error) {
+      throw OrdersRepositoryException(
+        code: error.code,
+        message: error.message,
+        status: error.code == 'ORDER_PRICING_LOCKED' ? 409 : 422,
+      );
+    }
+  }
+
   String whatsappSummary(Order order, String fallbackBusinessName) {
     final businessName = order.businessName.trim().isNotEmpty
         ? order.businessName.trim()
@@ -644,13 +777,15 @@ class OrdersRepository {
         '${i + 1}. ${order.items[i].productName} × ${order.items[i].quantity} — ${order.items[i].lineTotal.toStringAsFixed(2)} د.ل',
       '',
       'الإجمالي الفرعي: ${order.subtotal.toStringAsFixed(2)} د.ل',
+      if (order.discountAmount > 0)
+        'الخصم: ${order.discountAmount.toStringAsFixed(2)} د.ل',
       if (order.deliveryFee > 0)
         'التوصيل: ${order.deliveryFee.toStringAsFixed(2)} د.ل',
       if (order.handlingFee > 0)
         'المناولة: ${order.handlingFee.toStringAsFixed(2)} د.ل',
-      'الإجمالي: ${order.total.toStringAsFixed(2)} د.ل',
-      if (order.deliveryAddress.isNotEmpty)
-        'عنوان التسليم: ${order.deliveryAddress}',
+      'الإجمالي المعتمد: ${order.total.toStringAsFixed(2)} د.ل',
+      if (order.effectiveDeliveryAddress.isNotEmpty)
+        'عنوان التسليم: ${order.effectiveDeliveryAddress}',
       'ملاحظة العميل: ${order.customerNote.isEmpty ? 'لا توجد' : order.customerNote}',
     ];
     return lines.join('\n');
@@ -898,6 +1033,17 @@ class OrdersRepository {
         return 'تعذر العثور على الطلب.';
       case 'INVALID_STATUS_TRANSITION':
         return 'لا يمكن نقل الطلب مباشرةً إلى هذه الحالة.';
+      case 'ORDER_PRICING_LOCKED':
+        return 'لا يمكن تعديل تسعير طلب مسلّم أو ملغى.';
+      case 'ORDER_DISCOUNT_INVALID':
+        return 'الخصم لا يمكن أن يتجاوز الإجمالي الفرعي.';
+      case 'ORDER_PRICING_INVALID':
+        return 'قيمة التسعير غير صالحة.';
+      case 'ORDER_ITEM_MISMATCH':
+        return 'بنود الفاتورة غير مكتملة للتحديث.';
+      case 'STALE_WRITE':
+      case 'CUSTOMER_UPDATE_CONFLICT':
+        return ArabicCopy.staleWrite;
       case 'DUPLICATE_REQUEST':
       case 'IDEMPOTENCY_CONFLICT':
         return 'تم إرسال هذا الطلب سابقاً أو تغيرت بياناته. حدّث الطلبات أولاً.';

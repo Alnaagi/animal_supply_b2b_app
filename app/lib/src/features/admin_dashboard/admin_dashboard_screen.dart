@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/connectivity/connectivity_provider.dart';
+import '../../core/refresh/screen_reload.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/shop_loading.dart';
 import '../../data/local/local_cache.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/order.dart';
@@ -15,6 +20,7 @@ import '../auth/auth_controller.dart';
 import 'admin_shell.dart';
 import 'dashboard_fullness.dart';
 import 'dashboard_widget_visibility.dart';
+import 'pending_orders_kpi_alert.dart';
 
 class AdminDashboardScreen extends ConsumerStatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -26,6 +32,43 @@ class AdminDashboardScreen extends ConsumerStatefulWidget {
 
 class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   int refreshKey = 0;
+  late Future<_LoadedDashboard> _dashboardFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _dashboardFuture = _loadDashboard();
+    unawaited(_observePending(_dashboardFuture));
+  }
+
+  Future<void> _observePending(Future<_LoadedDashboard> future) async {
+    try {
+      final loaded = await future;
+      if (!mounted) return;
+      await ref
+          .read(pendingOrdersKpiAlertProvider.notifier)
+          .observe(loaded.data.stats.pendingOrders);
+    } catch (_) {
+      // FutureBuilder shows the load error.
+    }
+  }
+
+  Future<void> _openAdminOrders({String location = '/admin/orders'}) {
+    return openAdminOrders(
+      ref,
+      (next) => context.go(next),
+      location: location,
+    );
+  }
+
+  Future<void> _reloadDashboard() async {
+    final next = _loadDashboard();
+    setState(() {
+      refreshKey++;
+      _dashboardFuture = next;
+    });
+    await _observePending(next);
+  }
 
   Future<_LoadedDashboard> _loadDashboard() async {
     final repository = ref.read(adminRepositoryProvider);
@@ -35,12 +78,17 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
         ref.read(localCacheProvider).cachedProducts(),
       ]);
       final cached = results[1] as List<Product>;
+      DashboardFullnessEstimate fullness;
+      try {
+        fullness = operationalDatabaseFullness(
+          await repository.remoteDatabaseUsage(),
+        );
+      } catch (_) {
+        fullness = localCacheFallbackFullness(productCount: cached.length);
+      }
       return _LoadedDashboard(
         data: results[0] as AdminDashboardData,
-        fullness: estimateDashboardFullness(
-          demoOrOffline: false,
-          productCount: cached.length,
-        ),
+        fullness: fullness,
       );
     }
     final results = await Future.wait<Object>([
@@ -71,6 +119,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
         return const _DashboardLayoutSheet();
       },
     );
+    if (mounted) await reloadAfterMutation(this, _reloadDashboard);
   }
 
   @override
@@ -79,9 +128,20 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
       authControllerProvider.select((state) => state.user?.isAdmin == true),
     );
     final visibility = ref.watch(dashboardWidgetVisibilityProvider);
+    final pendingAlert = ref.watch(pendingOrdersKpiAlertProvider);
+    listenForScreenReload(ref, _reloadDashboard);
+    ref.listen<int>(networkRetryTickProvider, (previous, next) {
+      if (previous != next) unawaited(_reloadDashboard());
+    });
     return AdminShell(
       title: 'لوحة الإدارة',
       actions: [
+        IconButton(
+          key: const Key('admin-dashboard-refresh'),
+          tooltip: 'تحديث اللوحة',
+          icon: const Icon(Icons.refresh),
+          onPressed: () => unawaited(_reloadDashboard()),
+        ),
         IconButton(
           key: const Key('admin-dashboard-layout-settings'),
           tooltip: 'تخصيص عناصر اللوحة',
@@ -91,14 +151,14 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
       ],
       child: FutureBuilder<_LoadedDashboard>(
         key: ValueKey(refreshKey),
-        future: _loadDashboard(),
+        future: _dashboardFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const ShopLoading.page();
           }
           if (snapshot.hasError) {
             return _AdminDashboardLoadError(
-              onRetry: () => setState(() => refreshKey++),
+              onRetry: () => unawaited(_reloadDashboard()),
             );
           }
           final loaded = snapshot.data ??
@@ -118,7 +178,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                 fullness: DashboardFullnessEstimate(
                   percent: 0,
                   kind: DashboardFullnessKind.demoCatalog,
-                  titleAr: 'امتلاء البيانات',
+                  titleAr: databaseFullnessTitleAr,
                   captionAr:
                       'تقدير تجريبي من الكتالوج والطلبات المحلية — غير تشغيلي',
                 ),
@@ -159,12 +219,16 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                     if (visibility
                         .isVisible(DashboardWidgetId.pendingOrdersStat))
                       _StatCard(
+                          key: const Key('admin-dashboard-pending-orders-card'),
                           width: cardWidth,
                           label: 'طلبات معلقة',
                           value: '${stats.pendingOrders}',
                           icon: Icons.pending_actions,
                           color: AppTheme.orange,
-                          onTap: () => context.go('/admin/orders')),
+                          highlight: pendingAlert.shouldHighlight,
+                          highlightToken:
+                              '${stats.pendingOrders}:${pendingAlert.acknowledgedCount}',
+                          onTap: () => unawaited(_openAdminOrders())),
                     if (visibility.isVisible(DashboardWidgetId.todayOrders))
                       _StatCard(
                           width: cardWidth,
@@ -172,8 +236,9 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           value: '${stats.todayOrders}',
                           icon: Icons.today_outlined,
                           color: AppTheme.brown,
-                          onTap: () =>
-                              context.go('/admin/orders?period=today')),
+                          onTap: () => unawaited(
+                              _openAdminOrders(
+                                  location: '/admin/orders?period=today'))),
                     if (visibility.isVisible(DashboardWidgetId.lowStockStat))
                       _StatCard(
                           width: cardWidth,
@@ -221,7 +286,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                       icon: const Icon(Icons.add_box),
                       label: const Text('إضافة منتج')),
                   OutlinedButton.icon(
-                      onPressed: () => context.go('/admin/orders'),
+                      onPressed: () => unawaited(_openAdminOrders()),
                       icon: const Icon(Icons.receipt_long),
                       label: const Text('متابعة الطلبات')),
                   if (isAdmin)
@@ -240,7 +305,14 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                     _Panel(
                         title: 'طلبات تحتاج مراجعة',
                         icon: Icons.receipt_long,
-                        child: _PendingOrders(orders: data.pendingOrders)),
+                        child: _PendingOrders(
+                          orders: data.pendingOrders,
+                          onOpenOrder: (orderId) => unawaited(
+                            _openAdminOrders(
+                              location: '/admin/orders?order=$orderId',
+                            ),
+                          ),
+                        )),
                   if (visibility.isVisible(DashboardWidgetId.lowStockPanel))
                     _Panel(
                         title: 'مخزون منخفض',
@@ -261,31 +333,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           ])
                     : Column(children: children);
               }),
-              if (isAdmin &&
-                  visibility.isVisible(DashboardWidgetId.appUpdates)) ...[
-                const SizedBox(height: 18),
-                FutureBuilder<AppVersionInfo>(
-                  future: ref.read(adminRepositoryProvider).latestVersion(),
-                  builder: (context, versionSnapshot) {
-                    final version = versionSnapshot.data;
-                    return Card(
-                      child: ListTile(
-                        leading: const Icon(Icons.system_update_alt,
-                            color: AppTheme.green),
-                        title: const Text('تحديثات التطبيق'),
-                        subtitle: Text(version == null
-                            ? 'جاهز لربط إصدار Android وإصدار iOS.'
-                            : 'آخر إصدار Android: ${version.versionName} '
-                                '(${version.versionCode})\n'
-                                '${version.releaseNotes}'),
-                        trailing: FilledButton(
-                            onPressed: () => context.go('/admin/settings'),
-                            child: const Text('الإعدادات')),
-                      ),
-                    );
-                  },
-                ),
-              ],
             ],
           );
         },
@@ -307,9 +354,6 @@ class _DashboardLayoutSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final visibility = ref.watch(dashboardWidgetVisibilityProvider);
-    final isAdmin = ref.watch(
-      authControllerProvider.select((state) => state.user?.isAdmin == true),
-    );
     final statIds = [
       DashboardWidgetId.customers,
       DashboardWidgetId.activeCustomers,
@@ -322,7 +366,6 @@ class _DashboardLayoutSheet extends ConsumerWidget {
     final panelIds = [
       DashboardWidgetId.pendingOrdersPanel,
       DashboardWidgetId.lowStockPanel,
-      if (isAdmin) DashboardWidgetId.appUpdates,
     ];
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -425,42 +468,162 @@ class _StatCard extends StatelessWidget {
       required this.icon,
       required this.color,
       required this.width,
-      this.onTap});
+      this.highlight = false,
+      this.highlightToken,
+      this.onTap,
+      super.key});
   final String label;
   final String value;
   final IconData icon;
   final Color color;
   final double width;
+  final bool highlight;
+  final String? highlightToken;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final card = Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          CircleAvatar(
+              backgroundColor: color.withValues(alpha: .12),
+              child: Icon(icon, color: color)),
+          const SizedBox(height: 14),
+          Text(value,
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w900)),
+          Text(label,
+              style: const TextStyle(
+                  color: Colors.grey, fontWeight: FontWeight.w700)),
+        ]),
+      ),
+    );
     return SizedBox(
       width: width,
       child: InkWell(
         borderRadius: BorderRadius.circular(22),
         onTap: onTap,
-        child: Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              CircleAvatar(
-                  backgroundColor: color.withValues(alpha: .12),
-                  child: Icon(icon, color: color)),
-              const SizedBox(height: 14),
-              Text(value,
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w900)),
-              Text(label,
-                  style: const TextStyle(
-                      color: Colors.grey, fontWeight: FontWeight.w700)),
-            ]),
-          ),
-        ),
+        child: highlight
+            ? _PendingKpiOutline(
+                key: ValueKey(highlightToken ?? label),
+                active: true,
+                child: card,
+              )
+            : card,
       ),
+    );
+  }
+}
+
+class _PendingKpiOutline extends StatefulWidget {
+  const _PendingKpiOutline({
+    required this.active,
+    required this.child,
+    super.key,
+  });
+
+  final bool active;
+  final Widget child;
+
+  @override
+  State<_PendingKpiOutline> createState() => _PendingKpiOutlineState();
+}
+
+class _PendingKpiOutlineState extends State<_PendingKpiOutline>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+  late final Animation<double> _strength;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    );
+    _strength = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 0.28, end: 1), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: 1, end: 0.32), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: 0.32, end: 1), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: 1, end: 0.36), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: 0.36, end: 1), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: 1, end: 0.82), weight: 1),
+    ]).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncMotion();
+  }
+
+  @override
+  void didUpdateWidget(covariant _PendingKpiOutline oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active != oldWidget.active) {
+      _syncMotion();
+    }
+  }
+
+  void _syncMotion() {
+    if (!widget.active) {
+      _pulse.stop();
+      _pulse.reset();
+      return;
+    }
+    final reduceMotion = MediaQuery.disableAnimationsOf(context) ||
+        MediaQuery.accessibleNavigationOf(context);
+    if (reduceMotion) {
+      _pulse.stop();
+      _pulse.value = 0.7;
+      return;
+    }
+    if (!_pulse.isAnimating && _pulse.status != AnimationStatus.completed) {
+      _pulse.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.active) return widget.child;
+    return AnimatedBuilder(
+      animation: _strength,
+      builder: (context, child) {
+        final t = _strength.value;
+        final color = Color.lerp(AppTheme.green, AppTheme.orange, t)!;
+        return Semantics(
+          container: true,
+          liveRegion: true,
+          label: 'طلبات معلقة جديدة تحتاج مراجعة',
+          child: AnimatedContainer(
+            key: const Key('admin-dashboard-pending-orders-alert'),
+            duration: const Duration(milliseconds: 280),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: color, width: 2.4 + (t * 0.8)),
+              boxShadow: [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.18 + (t * 0.16)),
+                  blurRadius: 8 + (t * 6),
+                  spreadRadius: 0.4,
+                ),
+              ],
+            ),
+            child: child,
+          ),
+        );
+      },
+      child: widget.child,
     );
   }
 }
@@ -514,7 +677,7 @@ class _FullnessCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 10),
-              if (estimate.isDemoEstimate)
+              if (estimate.isDemoEstimate || estimate.isFallbackEstimate)
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -522,9 +685,9 @@ class _FullnessCard extends StatelessWidget {
                     color: AppTheme.green.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Text(
-                    'تجريبي',
-                    style: TextStyle(
+                  child: Text(
+                    estimate.isDemoEstimate ? 'تجريبي' : 'تقدير محلي',
+                    style: const TextStyle(
                       color: AppTheme.darkGreen,
                       fontWeight: FontWeight.w800,
                       fontSize: 12,
@@ -575,8 +738,9 @@ class _Panel extends StatelessWidget {
 }
 
 class _PendingOrders extends StatelessWidget {
-  const _PendingOrders({required this.orders});
+  const _PendingOrders({required this.orders, required this.onOpenOrder});
   final List<AdminDashboardOrderRow> orders;
+  final ValueChanged<String> onOpenOrder;
   @override
   Widget build(BuildContext context) {
     if (orders.isEmpty) {
@@ -591,7 +755,7 @@ class _PendingOrders extends StatelessWidget {
             '${lyd(order.total)}',
           ),
           trailing: const Icon(Icons.chevron_left),
-          onTap: () => context.go('/admin/orders?order=${order.id}'),
+          onTap: () => onOpenOrder(order.id),
         ),
     ]);
   }

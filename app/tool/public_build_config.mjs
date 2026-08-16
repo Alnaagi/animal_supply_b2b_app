@@ -9,23 +9,26 @@ const productionCommonRequired = [
   'SUPABASE_ANON_KEY',
   'CUSTOMER_LOGIN_DOMAIN',
   'APP_PUBLIC_ORIGIN',
-  'FIREBASE_API_KEY',
-  'FIREBASE_PROJECT_ID',
-  'FIREBASE_MESSAGING_SENDER_ID',
 ];
 
-const productionPlatformRequired = {
+const productionFirebaseRequired = {
   web: [
-    ...productionCommonRequired,
+    'FIREBASE_API_KEY',
+    'FIREBASE_PROJECT_ID',
+    'FIREBASE_MESSAGING_SENDER_ID',
     'FIREBASE_WEB_APP_ID',
     'FIREBASE_WEB_VAPID_KEY',
   ],
   android: [
-    ...productionCommonRequired,
+    'FIREBASE_API_KEY',
+    'FIREBASE_PROJECT_ID',
+    'FIREBASE_MESSAGING_SENDER_ID',
     'FIREBASE_ANDROID_APP_ID',
   ],
   ios: [
-    ...productionCommonRequired,
+    'FIREBASE_API_KEY',
+    'FIREBASE_PROJECT_ID',
+    'FIREBASE_MESSAGING_SENDER_ID',
     'FIREBASE_IOS_APP_ID',
     'FIREBASE_IOS_BUNDLE_ID',
   ],
@@ -36,12 +39,6 @@ const supportedPublicBuildPlatforms = new Set([
   'android',
   'ios',
 ]);
-
-const productionWebRequired = [
-  ...productionCommonRequired,
-  'FIREBASE_WEB_APP_ID',
-  'FIREBASE_WEB_VAPID_KEY',
-];
 
 export async function readDartDefines(argumentsList, cwd) {
   const values = new Map();
@@ -130,11 +127,7 @@ export function assertPublicBuildConfiguration(
   }
   if (environment !== 'production' && environment !== 'prod') return;
 
-  const requiredValues =
-    platform === 'web'
-      ? productionWebRequired
-      : productionPlatformRequired[platform];
-  for (const key of requiredValues) {
+  for (const key of productionCommonRequired) {
     const value = (defines.get(key) ?? '').trim();
     if (!value || looksLikePlaceholder(value)) {
       throw new Error(
@@ -147,6 +140,36 @@ export function assertPublicBuildConfiguration(
   assertSupabasePublicKey(defines.get('SUPABASE_ANON_KEY'));
   assertCustomerLoginDomain(defines.get('CUSTOMER_LOGIN_DOMAIN'));
   assertPublicAppOrigin(defines.get('APP_PUBLIC_ORIGIN'));
+  assertOptionalProductionFirebase(defines, platform, expectedIosBundleId);
+}
+
+function hasConfiguredPublicValue(defines, key) {
+  const value = (defines.get(key) ?? '').trim();
+  return Boolean(value) && !looksLikePlaceholder(value);
+}
+
+function assertOptionalProductionFirebase(
+  defines,
+  platform,
+  expectedIosBundleId,
+) {
+  const requiredFirebase = productionFirebaseRequired[platform];
+  const configuredFirebase = requiredFirebase.filter((key) =>
+    hasConfiguredPublicValue(defines, key),
+  );
+  if (configuredFirebase.length === 0) {
+    return;
+  }
+
+  for (const key of requiredFirebase) {
+    if (!hasConfiguredPublicValue(defines, key)) {
+      throw new Error(
+        `Production ${platform} Firebase public config is incomplete. ` +
+          `Either omit Firebase keys (push not configured) or supply a real ${key}.`,
+      );
+    }
+  }
+
   if (platform === 'ios') {
     assertIosBundleId(
       defines.get('FIREBASE_IOS_BUNDLE_ID'),

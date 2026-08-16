@@ -3,6 +3,7 @@ import 'package:animal_supply_b2b/src/data/models/admin_models.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
 import 'package:animal_supply_b2b/src/data/models/order.dart';
 import 'package:animal_supply_b2b/src/data/models/product.dart';
+import 'package:animal_supply_b2b/src/data/models/product_category.dart';
 import 'package:animal_supply_b2b/src/data/repositories/admin_repository.dart';
 import 'package:animal_supply_b2b/src/data/repositories/catalog_repository.dart';
 import 'package:animal_supply_b2b/src/data/repositories/orders_repository.dart';
@@ -202,6 +203,15 @@ class _CachedCatalogRepository extends CatalogRepository {
       ),
     ];
   }
+
+  @override
+  Future<List<ProductCategory>> productCategories({
+    bool includeArchived = false,
+  }) async {
+    return const [
+      ProductCategory(id: 'cat-1', name: 'قطط', iconKey: 'cat'),
+    ];
+  }
 }
 
 class _FailingOrdersRepository extends OrdersRepository {
@@ -244,6 +254,12 @@ class _ReorderCatalogRepository extends CatalogRepository {
         availableQuantity: 4,
         minOrderQty: 3,
       );
+
+  @override
+  Future<List<ProductCategory>> productCategories({
+    bool includeArchived = false,
+  }) async =>
+      const [];
 }
 
 class _FailingLookupCatalogRepository extends _ReorderCatalogRepository {

@@ -529,6 +529,12 @@ class _RetryGateway implements OrdersRemoteGateway {
       Map<String, dynamic> body) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<OrdersFunctionResponse> updateOrderPricing(
+      Map<String, dynamic> body) {
+    throw UnimplementedError();
+  }
 }
 
 class _RecordingGateway implements OrdersRemoteGateway {
@@ -553,6 +559,13 @@ class _RecordingGateway implements OrdersRemoteGateway {
 
   @override
   Future<OrdersFunctionResponse> transitionOrderStatus(
+    Map<String, dynamic> body,
+  ) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<OrdersFunctionResponse> updateOrderPricing(
     Map<String, dynamic> body,
   ) {
     throw UnimplementedError();

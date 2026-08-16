@@ -15,11 +15,13 @@ additional_redirect_urls = [
 ]
 enable_signup = false
 enable_anonymous_sign_ins = false
-minimum_password_length = 10
-password_requirements = "lower_upper_letters_digits_symbols"
+minimum_password_length = 6
+password_requirements = ""
 
 [auth.email]
-enable_signup = false
+# Email identities stay enabled so admin-created users can sign in.
+# Public self-registration remains off via [auth] enable_signup = false.
+enable_signup = true
 enable_confirmations = false
 secure_password_change = true
 
@@ -33,3 +35,20 @@ enable_confirmations = false
 # dispatch secret without exposing privileged database credentials.
 [functions.dispatch-notification-outbox]
 verify_jwt = false
+
+[functions.send-notification-campaign]
+verify_jwt = true
+
+[functions.register-device-token]
+verify_jwt = true
+
+[functions.unregister-device-token]
+verify_jwt = true
+
+# Application-data wipe is admin-only. Gateway JWT stays on; the function also
+# checks the caller profile role and requires confirm_phrase=RESET.
+[functions.admin-reset-application-data]
+verify_jwt = true
+
+[functions.admin-update-order-pricing]
+verify_jwt = true

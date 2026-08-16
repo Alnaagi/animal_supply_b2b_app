@@ -7,6 +7,7 @@ import {
   handlePreflight,
   HttpError,
   optionalStringField,
+  optionalTimestamptzField,
   readJsonObject,
   requirePost,
   stringField,
@@ -59,6 +60,10 @@ serve(async (req) => {
     }
     const note = optionalStringField(body, "note", 1000) ??
       optionalStringField(body, "admin_note", 1000);
+    const expectedUpdatedAt = optionalTimestamptzField(
+      body,
+      "expected_updated_at",
+    );
 
     const { data, error } = await adminClient.rpc(
       "transition_order_status_transaction",
@@ -67,6 +72,7 @@ serve(async (req) => {
         p_order_id: orderId,
         p_status: status,
         p_note: note,
+        p_expected_updated_at: expectedUpdatedAt,
       },
     );
     if (error) {

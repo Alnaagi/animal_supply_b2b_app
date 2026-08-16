@@ -28,7 +28,7 @@ class AppConfig {
   );
   static const shopName = String.fromEnvironment(
     'SHOP_NAME',
-    defaultValue: 'متجر أعلاف ومستلزمات الحيوانات',
+    defaultValue: 'المتجر',
   );
   static const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
   static const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
@@ -156,7 +156,11 @@ class AppConfig {
       environment == AppEnvironment.demo ||
       (environment == AppEnvironment.staging && !_supabaseInitialized);
 
-  static bool get allowsDemoCredentials => isDemoMode;
+  /// Staging review builds may still use labelled local demo logins
+  /// (`admin` / `admin`) even when public Supabase is initialized.
+  /// Production never accepts those pairs unless the labelled overlay is on.
+  static bool get allowsDemoCredentials =>
+      isDemoMode || environment == AppEnvironment.staging;
   static bool get remoteBackendEnabled =>
       hasInitializedRemoteBackend && !AppRuntimeMode.preferLocalDemo;
   static bool get hasValidCustomerLoginDomain =>
@@ -171,8 +175,7 @@ class AppConfig {
           !AppRuntimeMode.preferLocalDemo &&
           (!hasInitializedRemoteBackend ||
               !hasValidCustomerLoginDomain ||
-              publicAppOriginIssueAr != null ||
-              !hasFirebaseConfigurationForCurrentPlatform));
+              publicAppOriginIssueAr != null));
 
   static String? get configurationMessageAr {
     if (environment == AppEnvironment.invalid) {
@@ -190,9 +193,6 @@ class AppConfig {
     }
     if (isProduction && publicAppOriginIssueAr != null) {
       return publicAppOriginIssueAr;
-    }
-    if (isProduction && firebaseConfigurationIssueAr != null) {
-      return firebaseConfigurationIssueAr;
     }
     if (AppRuntimeMode.preferLocalDemo) {
       return 'وضع تجريبي محلي: البيانات المعروضة تجريبية وغير تشغيلية. '

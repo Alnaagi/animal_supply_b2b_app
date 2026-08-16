@@ -5,10 +5,14 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/config/app_runtime_mode.dart';
-import '../../core/connectivity/connectivity_provider.dart';
+import '../../core/config/shop_branding.dart';
+import '../../core/notifications/browser_notification_permission_banner.dart';
+import '../../core/notifications/in_app_notification_poller.dart';
 import '../../core/notifications/push_notifications.dart';
 import '../../core/support/whatsapp_support.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/network_status.dart';
+import '../../core/widgets/shop_brand_logo.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../../data/sync/outbox_retry_coordinator.dart';
 import '../../data/sync/sync_outbox.dart';
@@ -25,9 +29,8 @@ class CustomerShell extends ConsumerWidget {
     ref.watch(outboxRetryCoordinatorProvider);
     final user = ref.watch(authControllerProvider).user;
     final settings = ref.watch(appSettingsProvider).asData?.value;
-    final shopName = settings?.shopName.trim().isNotEmpty == true
-        ? settings!.shopName.trim()
-        : AppConfig.shopName;
+    final branding = ref.watch(shopBrandingProvider);
+    final shopName = branding.shopName;
     final supportPhone = settings?.supportWhatsapp.trim().isNotEmpty == true
         ? settings!.supportWhatsapp
         : AppConfig.supportWhatsapp;
@@ -45,9 +48,6 @@ class CustomerShell extends ConsumerWidget {
         ),
       );
     });
-    final online = ref.watch(
-      connectivityProvider.select((async) => async.value ?? true),
-    );
     final cartCount = ref.watch(
       cartControllerProvider.select(
         (items) => items.fold<int>(0, (sum, item) => sum + item.quantity),
@@ -86,7 +86,22 @@ class CustomerShell extends ConsumerWidget {
                 },
               )
             : null,
-        title: Text(shopName),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ShopBrandLogo(
+              logoUrl: branding.logoUrl,
+              size: 32,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                shopName,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
               onPressed: () => ref
@@ -102,14 +117,9 @@ class CustomerShell extends ConsumerWidget {
               ref.watch(appRuntimeModeProvider) ||
               user?.isDemo == true)
             const DemoModeNotice(),
-          if (!online)
-            Container(
-              width: double.infinity,
-              color: Colors.amber.shade200,
-              padding: const EdgeInsets.all(8),
-              child: const Text('لا يوجد اتصال — سيتم حفظ التغييرات مؤقتاً',
-                  textAlign: TextAlign.center),
-            ),
+          const NetworkStatusHeader(),
+          const BrowserNotificationPermissionBanner(),
+          const InAppNotificationPoller(),
           Expanded(child: shell),
         ],
       ),

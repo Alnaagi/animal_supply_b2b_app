@@ -412,7 +412,10 @@ with violations as (
     values
       ('banner images admin insert', 'INSERT', false, true),
       ('banner images admin update', 'UPDATE', true, true),
-      ('banner images admin delete', 'DELETE', true, false)
+      ('banner images admin delete', 'DELETE', true, false),
+      ('logo images admin insert', 'INSERT', false, true),
+      ('logo images admin update', 'UPDATE', true, true),
+      ('logo images admin delete', 'DELETE', true, false)
   ) as expected(
     policy_name,
     command,
@@ -439,7 +442,10 @@ with violations as (
         or expressions.using_expression not like '%product-images%'
         or expressions.using_expression not like '%foldername(name)%'
         or expressions.using_expression not like '%cardinality%'
-        or expressions.using_expression not like '%banners%'
+        or (
+          expressions.using_expression not like '%banners%'
+          and expressions.using_expression not like '%logos%'
+        )
         or expressions.using_expression not like '%auth.uid()%'
         or expressions.using_expression not like '%owner_id%'
         or expressions.using_expression like '%staff%'
@@ -452,7 +458,10 @@ with violations as (
         or expressions.check_expression not like '%product-images%'
         or expressions.check_expression not like '%foldername(name)%'
         or expressions.check_expression not like '%cardinality%'
-        or expressions.check_expression not like '%banners%'
+        or (
+          expressions.check_expression not like '%banners%'
+          and expressions.check_expression not like '%logos%'
+        )
         or expressions.check_expression not like '%auth.uid()%'
         or expressions.check_expression not like '%owner_id%'
         or expressions.check_expression like '%staff%'
@@ -488,7 +497,10 @@ with violations as (
     and policy.policyname not in (
       'banner images admin insert',
       'banner images admin update',
-      'banner images admin delete'
+      'banner images admin delete',
+      'logo images admin insert',
+      'logo images admin update',
+      'logo images admin delete'
     )
     and (
       expressions.expression like '%banners%'
@@ -581,6 +593,26 @@ with expected_security_functions(
     ),
     (
       'public.transition_order_status_transaction(uuid,uuid,text,text)',
+      false,
+      true
+    ),
+    (
+      'public.list_my_notifications(integer)',
+      true,
+      true
+    ),
+    (
+      'public.unread_notification_count()',
+      true,
+      true
+    ),
+    (
+      'public.mark_all_my_notifications_read()',
+      true,
+      true
+    ),
+    (
+      'public.admin_update_order_pricing_transaction(uuid,uuid,jsonb,numeric,numeric)',
       false,
       true
     )

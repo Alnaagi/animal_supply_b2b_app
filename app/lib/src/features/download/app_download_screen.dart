@@ -8,9 +8,12 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/config/shop_branding.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/updates/download_page_links.dart';
 import '../../core/updates/update_link.dart';
+import '../../core/widgets/shop_brand_logo.dart';
+import '../../core/widgets/shop_loading.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
 
@@ -110,6 +113,7 @@ class AppDownloadScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final data = ref.watch(downloadPageDataProvider);
+    final branding = ref.watch(shopBrandingProvider);
     return Scaffold(
       appBar: AppBar(
         title: const Text('تحميل التطبيق'),
@@ -123,11 +127,14 @@ class AppDownloadScreen extends ConsumerWidget {
       ),
       body: SafeArea(
         child: data.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
+          loading: () => const ShopLoading.page(),
           error: (_, __) => _DownloadLoadError(
             onRetry: () => ref.invalidate(downloadPageDataProvider),
           ),
-          data: (value) => _DownloadPageContent(data: value),
+          data: (value) => _DownloadPageContent(
+            data: value,
+            branding: branding,
+          ),
         ),
       ),
     );
@@ -135,9 +142,13 @@ class AppDownloadScreen extends ConsumerWidget {
 }
 
 class _DownloadPageContent extends StatelessWidget {
-  const _DownloadPageContent({required this.data});
+  const _DownloadPageContent({
+    required this.data,
+    required this.branding,
+  });
 
   final DownloadPageData data;
+  final ShopBranding branding;
 
   @override
   Widget build(BuildContext context) {
@@ -167,10 +178,17 @@ class _DownloadPageContent extends StatelessWidget {
                     ),
                   ),
                 const SizedBox(height: 18),
-                const Icon(Icons.pets, size: 72, color: AppTheme.green),
+                Center(
+                  child: ShopBrandLogo(
+                    logoUrl: branding.logoUrl,
+                    size: 72,
+                    backgroundColor: const Color(0xffe3f3eb),
+                    fallbackIconColor: AppTheme.green,
+                  ),
+                ),
                 const SizedBox(height: 10),
                 Text(
-                  AppConfig.shopName,
+                  branding.shopName,
                   textAlign: TextAlign.center,
                   style: Theme.of(context)
                       .textTheme
@@ -232,7 +250,10 @@ class _DownloadPageContent extends StatelessWidget {
                 const SizedBox(height: 16),
                 _WebAppCard(webAppUri: data.webAppUri),
                 const SizedBox(height: 24),
-                _ShareCard(downloadPageUri: data.downloadPageUri),
+                _ShareCard(
+                  downloadPageUri: data.downloadPageUri,
+                  shopName: branding.shopName,
+                ),
                 const SizedBox(height: 20),
                 const Card(
                   child: Padding(
@@ -414,9 +435,13 @@ class _WebAppCard extends StatelessWidget {
 }
 
 class _ShareCard extends StatelessWidget {
-  const _ShareCard({required this.downloadPageUri});
+  const _ShareCard({
+    required this.downloadPageUri,
+    required this.shopName,
+  });
 
   final Uri? downloadPageUri;
+  final String shopName;
 
   @override
   Widget build(BuildContext context) {
@@ -479,7 +504,7 @@ class _ShareCard extends StatelessWidget {
                     onPressed: () => launchUrl(
                       whatsappDownloadShareUri(
                         downloadPage: uri,
-                        shopName: AppConfig.shopName,
+                        shopName: shopName,
                       ),
                       mode: LaunchMode.externalApplication,
                     ),

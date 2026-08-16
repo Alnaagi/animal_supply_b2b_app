@@ -17,7 +17,7 @@ void main() {
     final first = AuthController(sessionStore: store);
     await first.restoreSession();
 
-    await first.login('admin', 'Admin123!');
+    await first.login('admin', 'admin');
     expect(first.state.user?.id, demoAdmin.id);
     expect(first.state.user?.isDemo, isTrue);
     expect(await store.readDemoUser(), isNotNull);
@@ -29,6 +29,30 @@ void main() {
     expect(restored.state.user?.id, demoAdmin.id);
     expect(restored.state.user?.role, 'admin');
     expect(restored.state.user?.isDemo, isTrue);
+  });
+
+  test('demo admin rejects the former email password', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final controller = AuthController(
+      sessionStore: LocalAuthSessionStore(prefs: prefs),
+    );
+    await controller.restoreSession();
+
+    await controller.login('admin', 'Admin123!');
+    expect(controller.state.user, isNull);
+    expect(controller.state.error, isNotNull);
+  });
+
+  test('demo customer can sign in with a WhatsApp phone number', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final controller = AuthController(
+      sessionStore: LocalAuthSessionStore(prefs: prefs),
+    );
+    await controller.restoreSession();
+
+    await controller.login('0910000001', 'Customer123!');
+    expect(controller.state.user?.id, demoCustomer.id);
+    expect(controller.state.user?.role, 'customer');
   });
 
   test('demo logout clears the persisted identity', () async {

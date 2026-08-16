@@ -275,6 +275,17 @@ class _FakePushNotificationsService extends PushNotificationsService {
   }
 
   @override
+  Future<bool> requestOsNotificationPermission() async => false;
+
+  @override
+  Future<bool> showInboxNotification({
+    required String id,
+    required String title,
+    required String body,
+  }) async =>
+      false;
+
+  @override
   Future<void> deleteToken() async {
     deleteCalls++;
     token = null;

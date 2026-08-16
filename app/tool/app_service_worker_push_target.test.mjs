@@ -22,12 +22,14 @@ const sandbox = {
   },
 };
 vm.runInNewContext(
-  `${source}
-globalThis.__pushNotificationTarget = pushNotificationTarget;`,
+  source +
+    '\nglobalThis.__pushNotificationTarget = pushNotificationTarget;' +
+    '\nglobalThis.__safeNotificationTarget = safeNotificationTarget;',
   sandbox,
   { filename: serviceWorkerUrl.pathname },
 );
 const pushNotificationTarget = sandbox.__pushNotificationTarget;
+const safeNotificationTarget = sandbox.__safeNotificationTarget;
 
 test('routes admin and staff order pushes to the admin order screen', () => {
   for (const role of ['admin', 'staff']) {
@@ -111,4 +113,15 @@ test('falls back to the app root for missing or unsafe target data', () => {
   ]) {
     assert.equal(pushNotificationTarget(payload), '/');
   }
+});
+
+test('shows OS tray notifications from page messages without Firebase', () => {
+  assert.match(source, /SHOW_OS_NOTIFICATION/);
+  assert.match(source, /showOsTrayNotification/);
+  assert.equal(
+    safeNotificationTarget('/orders?order=1&from_push=1'),
+    '/orders?order=1&from_push=1',
+  );
+  assert.equal(safeNotificationTarget('https://evil.example/x'), '/');
+  assert.equal(safeNotificationTarget('//evil.example'), '/');
 });

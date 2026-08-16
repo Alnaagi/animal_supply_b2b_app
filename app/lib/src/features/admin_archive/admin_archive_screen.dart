@@ -3,7 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/category_icon_view.dart';
+import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/product.dart';
 import '../../data/models/product_category.dart';
@@ -82,6 +86,7 @@ class _AdminArchiveScreenState extends ConsumerState<AdminArchiveScreen> {
 
   @override
   Widget build(BuildContext context) {
+    listenForScreenReload(ref, _reload);
     final data = _data;
     final products = data?.matchingProducts(_query) ?? const <Product>[];
     final categories =
@@ -196,7 +201,7 @@ class _AdminArchiveScreenState extends ConsumerState<AdminArchiveScreen> {
     required List<BusinessCustomer> customers,
   }) {
     if (_loading && _data == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const ShopLoading.page();
     }
     if (_loadError != null && _data == null) {
       return _ArchiveLoadError(onRetry: _reload);
@@ -248,6 +253,7 @@ class _AdminArchiveScreenState extends ConsumerState<AdminArchiveScreen> {
                   _ArchiveItemCard(
                     key: ValueKey('archived-category-${category.id}'),
                     icon: Icons.category_outlined,
+                    leading: CategoryIconView.fromCategory(category, size: 22),
                     title: category.name,
                     details: [
                       category.archivedProductCount == 0
@@ -408,7 +414,7 @@ class _AdminArchiveScreenState extends ConsumerState<AdminArchiveScreen> {
         return;
       }
       if (!mounted) return;
-      await _reload();
+      await reloadAfterMutation(this, _reload);
       if (!mounted) return;
       final refreshNotice = _loadError == null
           ? ''
@@ -501,7 +507,7 @@ class _ArchiveList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
+    return ShopRefreshIndicator(
       onRefresh: onRefresh,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -549,10 +555,12 @@ class _ArchiveItemCard extends StatelessWidget {
     required this.actionLabel,
     required this.busy,
     required this.onRestore,
+    this.leading,
     super.key,
   });
 
   final IconData icon;
+  final Widget? leading;
   final String title;
   final List<String> details;
   final Key actionKey;
@@ -577,7 +585,7 @@ class _ArchiveItemCard extends StatelessWidget {
                   backgroundColor:
                       Theme.of(context).colorScheme.surfaceContainerHighest,
                   foregroundColor: Colors.blueGrey.shade700,
-                  child: Icon(icon),
+                  child: leading ?? Icon(icon),
                 ),
                 const SizedBox(width: 10),
                 Expanded(

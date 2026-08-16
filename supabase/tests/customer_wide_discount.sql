@@ -256,8 +256,8 @@ begin
   )
   returning id into v_ignored_price_group_id;
 
-  insert into public.categories (name, active)
-  values ('اختبار خصم العميل ' || v_suffix, true)
+  insert into public.categories (name, active, icon_key)
+  values ('اختبار خصم العميل ' || v_suffix, true, 'category')
   returning id into v_category_id;
 
   insert into public.products (
@@ -741,6 +741,95 @@ begin
   then
     raise exception
       'Nullable v2 discount did not preserve the locked customer value';
+  end if;
+
+  response := public.admin_update_business_customer_v2(
+    test.admin_profile_id,
+    customer.id,
+    customer.business_name,
+    customer.contact_person,
+    customer.phone,
+    customer.city,
+    customer.area,
+    customer.address,
+    customer.discount_percent,
+    'suspended',
+    customer.credit_limit,
+    customer.outstanding_balance,
+    false
+  );
+
+  select * into customer
+  from public.business_customers
+  where id = test.customer_id;
+
+  if customer.account_status <> 'suspended'
+    or customer.archived_at is not null
+    or customer.phone_is_whatsapp is not false
+    or response->>'account_status' <> 'suspended'
+    or (response->>'phone_is_whatsapp')::boolean is not false
+  then
+    raise exception
+      'Customer update v2 did not suspend the account: %',
+      row_to_json(customer);
+  end if;
+
+  response := public.admin_update_business_customer_v2(
+    test.admin_profile_id,
+    customer.id,
+    customer.business_name,
+    customer.contact_person,
+    customer.phone,
+    customer.city,
+    customer.area,
+    customer.address,
+    customer.discount_percent,
+    'archived',
+    customer.credit_limit,
+    customer.outstanding_balance
+  );
+
+  select * into customer
+  from public.business_customers
+  where id = test.customer_id;
+
+  if customer.account_status <> 'archived'
+    or customer.archived_at is null
+    or customer.phone_is_whatsapp is not false
+    or response->>'account_status' <> 'archived'
+  then
+    raise exception
+      'Customer update v2 did not archive the account: %',
+      row_to_json(customer);
+  end if;
+
+  response := public.admin_update_business_customer_v2(
+    test.admin_profile_id,
+    customer.id,
+    customer.business_name,
+    customer.contact_person,
+    customer.phone,
+    customer.city,
+    customer.area,
+    customer.address,
+    customer.discount_percent,
+    'active',
+    customer.credit_limit,
+    customer.outstanding_balance,
+    true
+  );
+
+  select * into customer
+  from public.business_customers
+  where id = test.customer_id;
+
+  if customer.account_status <> 'active'
+    or customer.archived_at is not null
+    or customer.phone_is_whatsapp is not true
+  then
+    raise exception
+      'Customer update v2 did not restore the account: %',
+      row_to_json(customer);
   end if;
 
   begin

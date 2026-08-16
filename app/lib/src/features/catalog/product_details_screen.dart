@@ -4,16 +4,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/config/shop_branding.dart';
 import '../../core/support/whatsapp_support.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/price_text.dart';
 import '../../core/widgets/product_image_placeholder.dart';
+import '../../core/widgets/product_info_chip.dart';
 import '../../core/widgets/quantity_selector.dart';
+import '../../core/widgets/shop_loading.dart';
 import '../../data/models/product.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
-import '../cart/cart_controller.dart';
+import '../cart/added_to_cart_prompt.dart';
 
 class ProductDetailsScreen extends ConsumerStatefulWidget {
   const ProductDetailsScreen({required this.productId, super.key});
@@ -110,9 +113,7 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(appSettingsProvider).asData?.value;
-    final shopName = settings?.shopName.trim().isNotEmpty == true
-        ? settings!.shopName.trim()
-        : AppConfig.shopName;
+    final shopName = ref.watch(shopBrandingProvider).shopName;
     final supportPhone = settings?.supportWhatsapp.trim().isNotEmpty == true
         ? settings!.supportWhatsapp
         : AppConfig.supportWhatsapp;
@@ -122,7 +123,7 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Scaffold(
             appBar: _appBar(),
-            body: const Center(child: CircularProgressIndicator()),
+            body: const ShopLoading.page(),
           );
         }
         if (snapshot.hasError) {
@@ -172,14 +173,12 @@ class _ProductDetailsScreenState extends ConsumerState<ProductDetailsScreen> {
                 quantity: quantity!,
                 onQuantityChanged: (value) => setState(() => quantity = value),
                 onAddToCart: product.isOrderable
-                    ? () {
-                        ref
-                            .read(cartControllerProvider.notifier)
-                            .addQuantity(product, quantity!);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text('تمت إضافة المنتج للسلة')));
-                      }
+                    ? () => addProductToCartThenPrompt(
+                          context: context,
+                          ref: ref,
+                          product: product,
+                          quantity: quantity,
+                        )
                     : null,
                 onSupport: WhatsAppSupport.isConfiguredFor(supportPhone)
                     ? () => _openProductSupport(
@@ -292,17 +291,16 @@ class _ProductInfo extends StatelessWidget {
         ),
       ],
       const SizedBox(height: 12),
-      Wrap(spacing: 8, runSpacing: 8, children: [
-        Chip(
-          label: Text(product.customerAvailabilityLabel),
+      ProductChipWrap(spacing: 8, runSpacing: 8, children: [
+        ProductInfoChip(
+          product.customerAvailabilityLabel,
+          color: product.isOrderable ? AppTheme.green : AppTheme.red,
         ),
-        Chip(
-          label: Text(
-            'الحد الأدنى للجملة: ${product.minOrderQuantity}',
-          ),
+        ProductInfoChip(
+          'الحد الأدنى للجملة: ${product.minOrderQuantity}',
         ),
         if (product.unitsPerBoxLabel != null)
-          Chip(label: Text(product.unitsPerBoxLabel!)),
+          ProductInfoChip(product.unitsPerBoxLabel!),
       ]),
       if (product.lowStock) ...[
         const SizedBox(height: 10),

@@ -50,6 +50,12 @@ The migration chain:
     writes admin-only, requires exact
     `product-images/banners/{auth.uid()}/{file}` ownership, and removes the
     legacy staff-write policies.
+12. Migration `202608160042_shop_logo_storage.sql` stores the shop logo in
+    `product-images/logos/{auth.uid()}/{file}`, keeps writes admin-only, and
+    lets `anon` read `shop_name` and `shop_logo_url` for login/download chrome.
+13. Migration `202608160046_category_icons.sql` stores a preset `icon_key`
+    and/or public `icon_url` on `categories`, requires one of them, and allows
+    staff/admin uploads under `product-images/category-icons/{auth.uid()}/{file}`.
 
 On July 23, 2026, the complete 18-migration chain through
 `202607220031_simplified_product_controls.sql` and `seed.sql` was applied in an
@@ -212,7 +218,8 @@ web assets, APK/IPA files, client logs, QR codes, or committed configuration.
 
 - `ALLOWED_ORIGINS`: comma-separated exact production web origins. Local web
   origins must also be listed explicitly during development; wildcard origins
-  are not accepted.
+  are not accepted. `APP_PUBLIC_ORIGIN` is also accepted so the live shop host
+  can call campaign and device-token functions.
 - `INVITE_BASE_URL`: the HTTPS universal/app-link invite URL.
 - `CUSTOMER_LOGIN_DOMAIN`: a real client-controlled DNS domain used to map
   customer usernames to internal Auth email identifiers. It must exactly match
@@ -226,6 +233,20 @@ web assets, APK/IPA files, client logs, QR codes, or committed configuration.
   scheduled outbox dispatcher.
 - `APP_DOWNLOAD_LINK`: optional server-side fallback download page.
 
+- `DATABASE_DISK_QUOTA_BYTES`: optional Postgres disk quota in bytes used by
+  `admin-database-usage`. When unset, the function uses 500 MiB (the documented
+  Free-plan database quota).
+
+`admin-reset-application-data` is an admin-only Edge Function. It requires a
+user JWT, an active `profiles.role = admin` row, rate limiting, and the exact
+body phrase `RESET`. It truncates application tables (catalog, orders,
+customers, banners, inventory, invites, notifications, device tokens, price
+groups) via `admin_reset_application_data`, deletes customer Auth users, and
+empties the `product-images` bucket. It does not delete the calling admin Auth
+user, other admin/staff profiles, `app_settings`, `app_versions`, `audit_logs`,
+or `edge_rate_limits`. There is no public or anonymous wipe. Flutter never
+receives the service role.
+
 Privileged database credentials must remain in the managed Edge runtime only.
 
 Deploy the functions:
@@ -234,6 +255,9 @@ Deploy the functions:
 supabase functions deploy admin-create-customer
 supabase functions deploy admin-update-customer
 supabase functions deploy admin-reset-customer-password
+supabase functions deploy admin-database-usage
+supabase functions deploy admin-reset-application-data
+supabase functions deploy admin-update-order-pricing
 supabase functions deploy generate-invite-token
 supabase functions deploy redeem-invite
 supabase functions deploy complete-password-change

@@ -1,18 +1,29 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/concurrency/stale_write.dart';
+import '../../core/config/app_config.dart';
+import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/updates/update_link.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/category_icon_view.dart';
 import '../../core/widgets/product_image_placeholder.dart';
+import '../../core/widgets/product_info_chip.dart';
 import '../../core/widgets/responsive_field_group.dart';
+import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/product.dart';
 import '../../data/models/product_category.dart';
 import '../../data/repositories/catalog_repository.dart';
+import '../../data/repositories/product_images_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
+import 'category_editor_dialog.dart';
 
 class AdminProductsScreen extends ConsumerStatefulWidget {
   const AdminProductsScreen({
@@ -40,6 +51,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
   String availability = 'all';
   List<Product> products = const [];
   List<String> categories = const [];
+  List<ProductCategory> categoryModels = const [];
   List<String> brands = const [];
   List<String> animalTypes = const [];
   List<String> unitSizes = const [];
@@ -56,6 +68,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
   DateTime? snapshotAt;
   CatalogPageSource pageSource = CatalogPageSource.demo;
   bool _openedCreateForm = false;
+  bool _savingProduct = false;
 
   @override
   void initState() {
@@ -93,6 +106,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    listenForScreenReload(
+      ref,
+      () => _reloadProducts(refreshMetadata: true),
+    );
     return AdminShell(
       title: 'إدارة المنتجات',
       actions: [
@@ -104,10 +121,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                     _reloadProducts(refreshMetadata: true),
                   ),
           icon: initialLoading
-              ? const SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const ShopLoading.compact()
               : const Icon(Icons.refresh),
           tooltip: 'تحديث المنتجات والتصنيفات',
         ),
@@ -116,7 +130,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
             icon: const Icon(Icons.add_box),
             tooltip: 'منتج جديد')
       ],
-      child: RefreshIndicator(
+      child: ShopRefreshIndicator(
         onRefresh: () => _reloadProducts(refreshMetadata: true),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -147,6 +161,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                     const SizedBox(width: 8),
                     ChoiceChip(
                       key: ValueKey('admin-products-category-$value'),
+                      avatar: CategoryIconView.fromCategory(
+                        _categoryModelByName(value),
+                        size: 18,
+                      ),
                       label: Text(value),
                       selected: category == value,
                       onSelected: (_) => _selectCategory(value),
@@ -221,7 +239,9 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
             ],
             const SizedBox(height: 14),
             if (initialLoading)
-              const Center(child: CircularProgressIndicator())
+              const ShopLoading.section(
+                message: 'جارٍ تحميل المنتجات...',
+              )
             else if (loadError != null)
               _ProductLoadError(
                 onRetry: () =>
@@ -256,10 +276,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                   key: const ValueKey('admin-products-load-more'),
                   onPressed: loadingMore ? null : _loadMoreProducts,
                   icon: loadingMore
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                      ? const ShopLoading.compact()
                       : const Icon(Icons.expand_more),
                   label: Text(
                     loadingMore
@@ -393,8 +410,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
             for (final product in products)
               Card(
                 key: ValueKey('admin-product-card-${product.id}'),
+                clipBehavior: Clip.antiAlias,
                 child: _AdminProductCard(
                   product: product,
+                  onTap: () => _showProductForm(product),
                   onSelected: (value) => onSelected(product, value),
                 ),
               ),
@@ -424,7 +443,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                 : width >= 850
                     ? 3
                     : 2;
-            final childAspectRatio = width < 520 ? .82 : 1.32;
+            final childAspectRatio = width < 520 ? .62 : .72;
             return GridView.builder(
               padding: EdgeInsets.zero,
               shrinkWrap: true,
@@ -534,8 +553,13 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     }
     final shouldLoadMetadata = refreshMetadata || !metadataLoaded;
     try {
-      final options =
-          shouldLoadMetadata ? await _loadAdminFilterOptionsSafely() : null;
+      final optionsFuture =
+          shouldLoadMetadata ? _loadAdminFilterOptionsSafely() : null;
+      final categoryModelsFuture =
+          shouldLoadMetadata ? _loadProductCategoriesSafely() : null;
+      final options = optionsFuture == null ? null : await optionsFuture;
+      final loadedCategoryModels =
+          categoryModelsFuture == null ? null : await categoryModelsFuture;
       if (!mounted || revision != loadRevision) return;
       var resolvedCategory = category;
       var resolvedBrand = brand;
@@ -595,6 +619,9 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
           unitSizes = options.unitSizes;
           metadataLoaded = true;
         }
+        if (loadedCategoryModels != null) {
+          categoryModels = loadedCategoryModels;
+        }
         initialLoading = false;
       });
     } catch (error) {
@@ -606,6 +633,14 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     }
   }
 
+  Future<List<ProductCategory>?> _loadProductCategoriesSafely() async {
+    try {
+      return await ref.read(catalogRepositoryProvider).productCategories();
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<CatalogFilterOptions?> _loadAdminFilterOptionsSafely() async {
     try {
       return await ref
@@ -614,6 +649,13 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     } catch (_) {
       return null;
     }
+  }
+
+  ProductCategory _categoryModelByName(String name) {
+    for (final item in categoryModels) {
+      if (item.name == name) return item;
+    }
+    return ProductCategory(id: name, name: name);
   }
 
   Future<void> _loadMoreProducts() async {
@@ -664,7 +706,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
   Future<void> _createCategory() async {
     final created = await _promptAndCreateCategory();
     if (created == null || !mounted) return;
-    await _reloadProducts(refreshMetadata: true);
+    await reloadAfterMutation(
+      this,
+      () => _reloadProducts(refreshMetadata: true),
+    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('تم إنشاء تصنيف «${created.name}».')),
@@ -672,75 +717,14 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
   }
 
   Future<ProductCategory?> _promptAndCreateCategory() async {
-    final controller = TextEditingController();
-    String? validationMessage;
-    final navigator = Navigator.of(context, rootNavigator: true);
-    final capturedThemes = InheritedTheme.capture(
-      from: context,
-      to: navigator.context,
-    );
-    final dialogRoute = DialogRoute<String>(
-      context: context,
-      themes: capturedThemes,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('إنشاء تصنيف جديد'),
-          content: SizedBox(
-            width: 420,
-            child: TextField(
-              key: const ValueKey('new-category-name-field'),
-              controller: controller,
-              autofocus: true,
-              maxLength: 120,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) {
-                final value = controller.text.trim();
-                if (value.isEmpty) {
-                  setDialogState(
-                    () => validationMessage = 'أدخل اسم التصنيف.',
-                  );
-                  return;
-                }
-                Navigator.pop(context, value);
-              },
-              decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.category_outlined),
-                labelText: 'اسم التصنيف',
-                helperText: 'سيظهر في اختيار التصنيف عند إضافة المنتجات.',
-                errorText: validationMessage,
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton.icon(
-              key: const ValueKey('save-category-button'),
-              onPressed: () {
-                final value = controller.text.trim();
-                if (value.isEmpty) {
-                  setDialogState(
-                    () => validationMessage = 'أدخل اسم التصنيف.',
-                  );
-                  return;
-                }
-                Navigator.pop(context, value);
-              },
-              icon: const Icon(Icons.add),
-              label: const Text('إنشاء التصنيف'),
-            ),
-          ],
-        ),
-      ),
-    );
-    final name = await navigator.push(dialogRoute);
-    await dialogRoute.completed;
-    controller.dispose();
-    if (name == null || !mounted) return null;
+    final result = await showCategoryEditorDialog(context: context);
+    if (result == null || !mounted) return null;
     try {
-      return await ref.read(catalogRepositoryProvider).createCategory(name);
+      return await ref.read(catalogRepositoryProvider).createCategory(
+            result.name,
+            iconKey: result.iconKey,
+            iconUrl: result.iconUrl,
+          );
     } on CategoryArchivedException {
       if (!mounted) return null;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -751,12 +735,93 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
         ),
       );
       return null;
+    } on CategoryIconRequiredException {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('اختر أيقونة جاهزة أو ارفع أيقونة للتصنيف.'),
+        ),
+      );
+      return null;
+    } on CategoryIconInvalidException {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'استخدم رابط https صالحاً للأيقونة، أو اختر أيقونة جاهزة.',
+          ),
+        ),
+      );
+      return null;
     } catch (_) {
       if (!mounted) return null;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
             'تعذر إنشاء التصنيف. تحقق من الاسم والاتصال وحاول مجدداً.',
+          ),
+        ),
+      );
+      return null;
+    }
+  }
+
+  Future<ProductCategory?> _promptAndUpdateCategory(
+    ProductCategory existing,
+  ) async {
+    final result = await showCategoryEditorDialog(
+      context: context,
+      existing: existing,
+    );
+    if (result == null || !mounted) return null;
+    try {
+      return await ref.read(catalogRepositoryProvider).updateCategory(
+            existing.id,
+            name: result.name,
+            iconKey: result.iconKey,
+            iconUrl: result.iconUrl,
+            expectedUpdatedAt: existing.updatedAt,
+          );
+    } on CategoryArchivedException {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'هذا التصنيف مؤرشف. استعده من قسم «الأرشيف» قبل التعديل.',
+          ),
+        ),
+      );
+      return null;
+    } on CategoryIconRequiredException {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('اختر أيقونة جاهزة أو ارفع أيقونة للتصنيف.'),
+        ),
+      );
+      return null;
+    } on CategoryIconInvalidException {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'استخدم رابط https صالحاً للأيقونة، أو اختر أيقونة جاهزة.',
+          ),
+        ),
+      );
+      return null;
+    } on StaleWriteException catch (error) {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+      return null;
+    } catch (_) {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'تعذر حفظ التصنيف. تحقق من الاسم والأيقونة والاتصال وحاول مجدداً.',
           ),
         ),
       );
@@ -828,8 +893,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                         leading: CircleAvatar(
                           backgroundColor:
                               AppTheme.green.withValues(alpha: .12),
-                          foregroundColor: AppTheme.green,
-                          child: const Icon(Icons.category_outlined),
+                          child: CategoryIconView.fromCategory(
+                            item,
+                            size: 22,
+                          ),
                         ),
                         title: Text(
                           item.name,
@@ -847,7 +914,56 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                                   strokeWidth: 2,
                                 ),
                               )
-                            : IconButton(
+                            : Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    key: ValueKey(
+                                      'edit-category-${item.id}',
+                                    ),
+                                    tooltip: 'تعديل التصنيف وأيقونته',
+                                    onPressed: () async {
+                                      final updated =
+                                          await _promptAndUpdateCategory(item);
+                                      if (updated == null ||
+                                          !mounted ||
+                                          !dialogContext.mounted) {
+                                        return;
+                                      }
+                                      try {
+                                        managedCategories =
+                                            await repository.productCategories();
+                                      } catch (_) {
+                                        managedCategories = [
+                                          for (final category
+                                              in managedCategories)
+                                            if (category.id == updated.id)
+                                              updated
+                                            else
+                                              category,
+                                        ];
+                                      }
+                                      if (!dialogContext.mounted) return;
+                                      setDialogState(() {});
+                                      await reloadAfterMutation(
+                                        this,
+                                        () => _reloadProducts(
+                                          refreshMetadata: true,
+                                        ),
+                                      );
+                                      if (!mounted) return;
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'تم حفظ تصنيف «${updated.name}».',
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    icon: const Icon(Icons.edit_outlined),
+                                  ),
+                                  IconButton(
                                 key: ValueKey(
                                   'archive-category-${item.id}',
                                 ),
@@ -904,8 +1020,11 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                                   setDialogState(
                                     () => busyCategoryId = null,
                                   );
-                                  await _reloadProducts(
-                                    refreshMetadata: true,
+                                  await reloadAfterMutation(
+                                    this,
+                                    () => _reloadProducts(
+                                      refreshMetadata: true,
+                                    ),
                                   );
                                   if (!mounted) return;
                                   final refreshNotice = categoryRefreshFailed
@@ -927,6 +1046,8 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                                   Icons.archive_outlined,
                                   color: Theme.of(context).colorScheme.error,
                                 ),
+                              ),
+                                ],
                               ),
                       );
                     },
@@ -963,7 +1084,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                       }
                       if (!dialogContext.mounted) return;
                       setDialogState(() {});
-                      await _reloadProducts(refreshMetadata: true);
+                      await reloadAfterMutation(
+                        this,
+                        () => _reloadProducts(refreshMetadata: true),
+                      );
                       if (!mounted) return;
                       final refreshNotice = categoryRefreshFailed
                           ? ' تم الإنشاء، لكن تعذر تحديث قائمة التصنيفات '
@@ -1039,8 +1163,13 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     );
     final unitsPerBox =
         TextEditingController(text: product?.unitsPerBox?.toString() ?? '');
+    final imageUrl = TextEditingController(text: product?.imageUrl ?? '');
     final scrollController = ScrollController();
-    var stockTrackingEnabled = product?.stockTrackingEnabled ?? true;
+    var uploadingImage = false;
+    double? imageUploadProgress;
+    String? imageUploadError;
+    Uint8List? imagePreviewBytes;
+    var stockTrackingEnabled = product?.stockTrackingEnabled ?? false;
     var showStockQuantityToCustomers =
         product?.showStockQuantityToCustomers ?? false;
     var active =
@@ -1055,7 +1184,9 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     final bulkMinimumFocus = FocusNode();
     final unitsPerBoxFocus = FocusNode();
     final stockFocus = FocusNode();
+    final imageUrlFocus = FocusNode();
     FocusNode? categoryFocus;
+    final imageKey = GlobalKey();
     final nameKey = GlobalKey();
     final categoryKey = GlobalKey();
     final companyKey = GlobalKey();
@@ -1069,6 +1200,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     void revealFirstInvalidField(Map<_ProductFormField, String> errors) {
       final first = _ProductFormField.values.firstWhere(errors.containsKey);
       final anchors = <_ProductFormField, GlobalKey>{
+        _ProductFormField.image: imageKey,
         _ProductFormField.name: nameKey,
         _ProductFormField.category: categoryKey,
         _ProductFormField.company: companyKey,
@@ -1080,6 +1212,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
         _ProductFormField.tracking: trackingKey,
       };
       final focuses = <_ProductFormField, FocusNode?>{
+        _ProductFormField.image: imageUrlFocus,
         _ProductFormField.name: nameFocus,
         _ProductFormField.category: categoryFocus,
         _ProductFormField.company: companyFocus,
@@ -1108,494 +1241,584 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
           Colors.black54,
       traversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(editing ? 'تعديل المنتج' : 'منتج جديد'),
-              const SizedBox(height: 6),
-              const Row(
-                key: ValueKey('product-form-scroll-hint'),
-                children: [
-                  Icon(
-                    Icons.keyboard_arrow_down,
-                    size: 18,
-                    color: AppTheme.green,
+        builder: (context, setDialogState) {
+          final images = ref.read(productImagesRepositoryProvider);
+          Future<void> uploadProductImage() async {
+            setDialogState(() {
+              imageUploadError = null;
+              fieldErrors.remove(_ProductFormField.image);
+            });
+            try {
+              final picked = await images.pick();
+              if (!context.mounted) return;
+              if (picked == null) return;
+              setDialogState(() {
+                imagePreviewBytes = picked.bytes;
+                uploadingImage = true;
+                imageUploadProgress = 0;
+              });
+              final result = await images.uploadPicked(
+                picked,
+                onProgress: (fraction) {
+                  if (!context.mounted) return;
+                  setDialogState(() => imageUploadProgress = fraction);
+                },
+              );
+              if (!context.mounted) return;
+              imageUrl.text = result.publicUrl;
+              setDialogState(() {
+                uploadingImage = false;
+                imageUploadProgress = 1;
+              });
+            } on ProductImageUploadException catch (error) {
+              if (!context.mounted) return;
+              setDialogState(() {
+                uploadingImage = false;
+                imageUploadProgress = null;
+                imageUploadError = error.message;
+              });
+            } catch (error) {
+              if (!context.mounted) return;
+              setDialogState(() {
+                uploadingImage = false;
+                imageUploadProgress = null;
+                imageUploadError = mapProductImageUploadError(
+                  error,
+                  folder: ProductImagesRepository.productsFolder,
+                ).message;
+              });
+            }
+          }
+
+          return AlertDialog(
+            title: Text(editing ? 'تعديل المنتج' : 'منتج جديد'),
+            content: SizedBox(
+              width: 620,
+              child: ScrollbarTheme(
+                data: ScrollbarThemeData(
+                  thumbColor: WidgetStateProperty.all(AppTheme.green),
+                  trackColor: WidgetStateProperty.all(
+                    AppTheme.green.withValues(alpha: 0.10),
                   ),
-                  SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      'مرّر لأسفل لعرض بقية الحقول والخيارات',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey,
-                      ),
+                  trackBorderColor: WidgetStateProperty.all(
+                    AppTheme.green.withValues(alpha: 0.18),
+                  ),
+                  radius: const Radius.circular(999),
+                  thickness: WidgetStateProperty.all(8),
+                ),
+                child: Scrollbar(
+                  key: const ValueKey('product-form-scrollbar'),
+                  controller: scrollController,
+                  thumbVisibility: true,
+                  trackVisibility: true,
+                  interactive: true,
+                  child: ScrollConfiguration(
+                    behavior: ScrollConfiguration.of(context).copyWith(
+                      scrollbars: false,
                     ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          content: SizedBox(
-            width: 620,
-            child: ScrollbarTheme(
-              data: ScrollbarThemeData(
-                thumbColor: WidgetStateProperty.all(AppTheme.green),
-                trackColor: WidgetStateProperty.all(
-                  AppTheme.green.withValues(alpha: 0.10),
-                ),
-                trackBorderColor: WidgetStateProperty.all(
-                  AppTheme.green.withValues(alpha: 0.18),
-                ),
-                radius: const Radius.circular(999),
-                thickness: WidgetStateProperty.all(8),
-              ),
-              child: Scrollbar(
-                key: const ValueKey('product-form-scrollbar'),
-                controller: scrollController,
-                thumbVisibility: true,
-                trackVisibility: true,
-                interactive: true,
-                child: ScrollConfiguration(
-                  behavior: ScrollConfiguration.of(context).copyWith(
-                    scrollbars: false,
-                  ),
-                  child: SingleChildScrollView(
-                    key: const ValueKey('product-form-scroll-view'),
-                    controller: scrollController,
-                    padding: const EdgeInsetsDirectional.only(end: 14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        KeyedSubtree(
-                          key: nameKey,
-                          child: TextField(
-                            key: const ValueKey('product-name-field'),
-                            controller: name,
-                            focusNode: nameFocus,
-                            textInputAction: TextInputAction.next,
-                            onChanged: (_) => setDialogState(() {
-                              fieldErrors.remove(_ProductFormField.name);
-                            }),
-                            decoration: InputDecoration(
-                              labelText: 'اسم المنتج',
-                              errorText: fieldErrors[_ProductFormField.name],
+                    child: SingleChildScrollView(
+                      key: const ValueKey('product-form-scroll-view'),
+                      controller: scrollController,
+                      padding: const EdgeInsetsDirectional.only(end: 14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          KeyedSubtree(
+                            key: imageKey,
+                            child: _ProductImageEditor(
+                              category: selectedCategory,
+                              productId: product?.id,
+                              imageUrl: imageUrl.text,
+                              imageBytes: imagePreviewBytes,
+                              urlController: imageUrl,
+                              urlFocus: imageUrlFocus,
+                              uploading: uploadingImage,
+                              uploadProgress: imageUploadProgress,
+                              canUpload: images.canUpload,
+                              demoMode: AppConfig.isDemoMode,
+                              errorText: fieldErrors[_ProductFormField.image] ??
+                                  imageUploadError,
+                              onUpload: uploadProductImage,
+                              onUrlChanged: () => setDialogState(() {
+                                imagePreviewBytes = null;
+                                fieldErrors.remove(_ProductFormField.image);
+                                imageUploadError = null;
+                              }),
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        Autocomplete<String>(
-                          initialValue:
-                              TextEditingValue(text: selectedCategory),
-                          optionsMaxHeight: 220,
-                          optionsBuilder: (value) {
-                            final query = value.text.trim().toLowerCase();
-                            if (query.isEmpty) return categoryOptions;
-                            return categoryOptions.where(
-                              (option) => option.toLowerCase().contains(query),
-                            );
-                          },
-                          onSelected: (value) {
-                            selectedCategory = value;
-                            setDialogState(() {
-                              fieldErrors.remove(_ProductFormField.category);
-                            });
-                          },
-                          fieldViewBuilder: (
-                            context,
-                            controller,
-                            focusNode,
-                            onFieldSubmitted,
-                          ) {
-                            categoryFocus = focusNode;
-                            return KeyedSubtree(
-                              key: categoryKey,
-                              child: TextField(
-                                key: const ValueKey('product-category-field'),
-                                controller: controller,
-                                focusNode: focusNode,
-                                textInputAction: TextInputAction.next,
-                                onChanged: (value) {
-                                  selectedCategory = value;
-                                  setDialogState(() {
-                                    fieldErrors
-                                        .remove(_ProductFormField.category);
-                                  });
-                                },
-                                onSubmitted: (_) => onFieldSubmitted(),
-                                decoration: InputDecoration(
-                                  prefixIcon:
-                                      const Icon(Icons.category_outlined),
-                                  labelText: 'التصنيف',
-                                  helperText:
-                                      'اختر تصنيفاً موجوداً أو اكتب اسماً جديداً؛ '
-                                      'سيُنشأ عند الحفظ.',
-                                  helperMaxLines: 2,
-                                  errorText:
-                                      fieldErrors[_ProductFormField.category],
+                          const SizedBox(height: 10),
+                          const Row(
+                            key: ValueKey('product-form-scroll-hint'),
+                            children: [
+                              Icon(
+                                Icons.keyboard_arrow_down,
+                                size: 18,
+                                color: AppTheme.green,
+                              ),
+                              SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  'مرّر لأسفل لعرض بقية الحقول والخيارات',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey,
+                                  ),
                                 ),
                               ),
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 12),
-                        KeyedSubtree(
-                          key: companyKey,
-                          child: TextField(
-                            key: const ValueKey('product-company-field'),
-                            controller: company,
-                            focusNode: companyFocus,
-                            textInputAction: TextInputAction.next,
-                            onChanged: (_) => setDialogState(() {
-                              fieldErrors.remove(_ProductFormField.company);
-                            }),
-                            decoration: InputDecoration(
-                              labelText: 'اسم الشركة',
-                              errorText: fieldErrors[_ProductFormField.company],
-                            ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        ResponsiveFieldGroup(
-                          children: [
-                            KeyedSubtree(
-                              key: priceKey,
-                              child: TextField(
-                                key: const ValueKey('product-price-field'),
-                                controller: price,
-                                focusNode: priceFocus,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                  decimal: true,
-                                ),
-                                onChanged: (_) => setDialogState(() {
-                                  fieldErrors.remove(_ProductFormField.price);
-                                }),
-                                decoration: InputDecoration(
-                                  labelText: 'سعر الجملة (د.ل)',
-                                  helperText:
-                                      'هذا هو السعر المستخدم في الطلب.',
-                                  errorText:
-                                      fieldErrors[_ProductFormField.price],
-                                ),
+                          const SizedBox(height: 10),
+                          KeyedSubtree(
+                            key: nameKey,
+                            child: TextField(
+                              key: const ValueKey('product-name-field'),
+                              controller: name,
+                              focusNode: nameFocus,
+                              textInputAction: TextInputAction.next,
+                              onChanged: (_) => setDialogState(() {
+                                fieldErrors.remove(_ProductFormField.name);
+                              }),
+                              decoration: InputDecoration(
+                                labelText: 'اسم المنتج',
+                                errorText: fieldErrors[_ProductFormField.name],
                               ),
                             ),
-                            KeyedSubtree(
-                              key: retailPriceKey,
-                              child: TextField(
-                                key: const ValueKey(
-                                  'product-retail-price-field',
+                          ),
+                          const SizedBox(height: 12),
+                          Autocomplete<String>(
+                            initialValue:
+                                TextEditingValue(text: selectedCategory),
+                            optionsMaxHeight: 220,
+                            optionsBuilder: (value) {
+                              final query = value.text.trim().toLowerCase();
+                              if (query.isEmpty) return categoryOptions;
+                              return categoryOptions.where(
+                                (option) =>
+                                    option.toLowerCase().contains(query),
+                              );
+                            },
+                            onSelected: (value) {
+                              selectedCategory = value;
+                              setDialogState(() {
+                                fieldErrors.remove(_ProductFormField.category);
+                              });
+                            },
+                            fieldViewBuilder: (
+                              context,
+                              controller,
+                              focusNode,
+                              onFieldSubmitted,
+                            ) {
+                              categoryFocus = focusNode;
+                              return KeyedSubtree(
+                                key: categoryKey,
+                                child: TextField(
+                                  key: const ValueKey('product-category-field'),
+                                  controller: controller,
+                                  focusNode: focusNode,
+                                  textInputAction: TextInputAction.next,
+                                  onChanged: (value) {
+                                    selectedCategory = value;
+                                    setDialogState(() {
+                                      fieldErrors
+                                          .remove(_ProductFormField.category);
+                                    });
+                                  },
+                                  onSubmitted: (_) => onFieldSubmitted(),
+                                  decoration: InputDecoration(
+                                    prefixIcon:
+                                        const Icon(Icons.category_outlined),
+                                    labelText: 'التصنيف',
+                                    helperText:
+                                        'اختر تصنيفاً موجوداً أو اكتب اسماً جديداً؛ '
+                                        'سيُنشأ عند الحفظ.',
+                                    helperMaxLines: 2,
+                                    errorText:
+                                        fieldErrors[_ProductFormField.category],
+                                  ),
                                 ),
-                                controller: retailPrice,
-                                focusNode: retailPriceFocus,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                  decimal: true,
-                                ),
-                                onChanged: (_) => setDialogState(() {
-                                  fieldErrors
-                                      .remove(_ProductFormField.retailPrice);
-                                }),
-                                decoration: InputDecoration(
-                                  labelText: 'سعر بيع الوحدة المقترح (د.ل)',
-                                  helperText:
-                                      'مرجع للتاجر فقط ولا يدخل في الإجمالي.',
-                                  errorText: fieldErrors[
-                                      _ProductFormField.retailPrice],
-                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          KeyedSubtree(
+                            key: companyKey,
+                            child: TextField(
+                              key: const ValueKey('product-company-field'),
+                              controller: company,
+                              focusNode: companyFocus,
+                              textInputAction: TextInputAction.next,
+                              onChanged: (_) => setDialogState(() {
+                                fieldErrors.remove(_ProductFormField.company);
+                              }),
+                              decoration: InputDecoration(
+                                labelText: 'اسم الشركة',
+                                errorText:
+                                    fieldErrors[_ProductFormField.company],
                               ),
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        ResponsiveFieldGroup(
-                          children: [
-                            KeyedSubtree(
-                              key: bulkMinimumKey,
-                              child: TextField(
-                                key: const ValueKey(
-                                  'product-bulk-minimum-field',
-                                ),
-                                controller: bulkMinimum,
-                                focusNode: bulkMinimumFocus,
-                                keyboardType: TextInputType.number,
-                                onChanged: (_) => setDialogState(() {
-                                  fieldErrors
-                                      .remove(_ProductFormField.bulkMinimum);
-                                }),
-                                decoration: InputDecoration(
-                                  labelText: 'الحد الأدنى لطلب الجملة',
-                                  helperText: 'لا يمكن للعميل طلب كمية أقل.',
-                                  errorText: fieldErrors[
-                                      _ProductFormField.bulkMinimum],
-                                ),
-                              ),
-                            ),
-                            KeyedSubtree(
-                              key: unitsPerBoxKey,
-                              child: TextField(
-                                key: const ValueKey(
-                                  'product-units-per-box-field',
-                                ),
-                                controller: unitsPerBox,
-                                focusNode: unitsPerBoxFocus,
-                                keyboardType: TextInputType.number,
-                                onChanged: (_) => setDialogState(() {
-                                  fieldErrors
-                                      .remove(_ProductFormField.unitsPerBox);
-                                }),
-                                decoration: InputDecoration(
-                                  labelText: 'الكمية في الصندوق (اختياري)',
-                                  helperText:
-                                      'مثال: 12. لن تظهر إذا تركتها فارغة.',
-                                  errorText: fieldErrors[
-                                      _ProductFormField.unitsPerBox],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        KeyedSubtree(
-                          key: trackingKey,
-                          child: SwitchListTile.adaptive(
-                            key: const ValueKey('product-track-stock-switch'),
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('تقييد الطلب حسب المخزون'),
-                            subtitle: Text(
-                              fieldErrors[_ProductFormField.tracking] ??
-                                  'عند إيقافه يبقى العدد مسجلاً داخلياً، '
-                                      'لكن يمكن الطلب دون حد مخزني.',
-                              style: fieldErrors[_ProductFormField.tracking] ==
-                                      null
-                                  ? null
-                                  : TextStyle(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .error,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                            ),
-                            value: stockTrackingEnabled,
-                            onChanged: (value) => setDialogState(() {
-                              stockTrackingEnabled = value;
-                              if (!value) {
-                                showStockQuantityToCustomers = false;
-                              }
-                              fieldErrors.remove(_ProductFormField.tracking);
-                            }),
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        KeyedSubtree(
-                          key: stockKey,
-                          child: TextField(
-                            key: const ValueKey('product-stock-field'),
-                            controller: stock,
-                            focusNode: stockFocus,
-                            keyboardType: TextInputType.number,
-                            onChanged: (_) => setDialogState(() {
-                              fieldErrors.remove(_ProductFormField.stock);
-                            }),
-                            decoration: InputDecoration(
-                              labelText: 'كمية المخزون الداخلية (مطلوبة)',
-                              helperText: reservedQuantity > 0
-                                  ? 'منها $reservedQuantity محجوزة لطلبات قائمة.'
-                                  : 'تُستخدم لإدارة المخزون حتى لو أخفيت العدد عن العملاء.',
-                              errorText: fieldErrors[_ProductFormField.stock],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        SwitchListTile.adaptive(
-                          key: const ValueKey(
-                            'product-show-stock-quantity-switch',
-                          ),
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('إظهار الكمية الدقيقة للعملاء'),
-                          subtitle: Text(
-                            !stockTrackingEnabled
-                                ? 'فعّل تقييد الطلب حسب المخزون أولاً.'
-                                : showStockQuantityToCustomers
-                                    ? 'سيظهر العدد المتاح في الكتالوج والتفاصيل.'
-                                    : 'سيظهر «متوفر للطلب» دون كشف العدد.',
-                          ),
-                          value: stockTrackingEnabled &&
-                              showStockQuantityToCustomers,
-                          onChanged: stockTrackingEnabled
-                              ? (value) => setDialogState(() {
-                                    showStockQuantityToCustomers = value;
-                                  })
-                              : null,
-                        ),
-                        const SizedBox(height: 8),
-                        SwitchListTile.adaptive(
-                          key: const ValueKey('product-visible-switch'),
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('إظهار المنتج للعملاء'),
-                          subtitle: Text(
-                            product?.isArchived == true
-                                ? 'المنتج مؤرشف. استخدم «استعادة ونشر المنتج» من القائمة أولاً.'
-                                : active
-                                    ? 'المنتج ظاهر في المتجر.'
-                                    : 'المنتج مخفي عن العملاء دون حذفه.',
-                          ),
-                          value: active,
-                          onChanged: product?.isArchived == true
-                              ? null
-                              : (value) => setDialogState(() {
-                                    active = value;
+                          const SizedBox(height: 12),
+                          ResponsiveFieldGroup(
+                            children: [
+                              KeyedSubtree(
+                                key: priceKey,
+                                child: TextField(
+                                  key: const ValueKey('product-price-field'),
+                                  controller: price,
+                                  focusNode: priceFocus,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                                  onChanged: (_) => setDialogState(() {
+                                    fieldErrors.remove(_ProductFormField.price);
                                   }),
-                        ),
-                        if (stockTrackingEnabled) ...[
+                                  decoration: InputDecoration(
+                                    labelText: 'سعر الجملة (د.ل)',
+                                    helperText:
+                                        'هذا هو السعر المستخدم في الطلب.',
+                                    errorText:
+                                        fieldErrors[_ProductFormField.price],
+                                  ),
+                                ),
+                              ),
+                              KeyedSubtree(
+                                key: retailPriceKey,
+                                child: TextField(
+                                  key: const ValueKey(
+                                    'product-retail-price-field',
+                                  ),
+                                  controller: retailPrice,
+                                  focusNode: retailPriceFocus,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                                  onChanged: (_) => setDialogState(() {
+                                    fieldErrors
+                                        .remove(_ProductFormField.retailPrice);
+                                  }),
+                                  decoration: InputDecoration(
+                                    labelText: 'سعر بيع الوحدة المقترح (د.ل)',
+                                    helperText:
+                                        'مرجع للتاجر فقط ولا يدخل في الإجمالي.',
+                                    errorText: fieldErrors[
+                                        _ProductFormField.retailPrice],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          ResponsiveFieldGroup(
+                            children: [
+                              KeyedSubtree(
+                                key: bulkMinimumKey,
+                                child: TextField(
+                                  key: const ValueKey(
+                                    'product-bulk-minimum-field',
+                                  ),
+                                  controller: bulkMinimum,
+                                  focusNode: bulkMinimumFocus,
+                                  keyboardType: TextInputType.number,
+                                  onChanged: (_) => setDialogState(() {
+                                    fieldErrors
+                                        .remove(_ProductFormField.bulkMinimum);
+                                  }),
+                                  decoration: InputDecoration(
+                                    labelText: 'الحد الأدنى لطلب الجملة',
+                                    helperText: 'لا يمكن للعميل طلب كمية أقل.',
+                                    errorText: fieldErrors[
+                                        _ProductFormField.bulkMinimum],
+                                  ),
+                                ),
+                              ),
+                              KeyedSubtree(
+                                key: unitsPerBoxKey,
+                                child: TextField(
+                                  key: const ValueKey(
+                                    'product-units-per-box-field',
+                                  ),
+                                  controller: unitsPerBox,
+                                  focusNode: unitsPerBoxFocus,
+                                  keyboardType: TextInputType.number,
+                                  onChanged: (_) => setDialogState(() {
+                                    fieldErrors
+                                        .remove(_ProductFormField.unitsPerBox);
+                                  }),
+                                  decoration: InputDecoration(
+                                    labelText: 'الكمية في الصندوق (اختياري)',
+                                    helperText:
+                                        'مثال: 12. لن تظهر إذا تركتها فارغة.',
+                                    errorText: fieldErrors[
+                                        _ProductFormField.unitsPerBox],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          KeyedSubtree(
+                            key: trackingKey,
+                            child: SwitchListTile.adaptive(
+                              key: const ValueKey('product-track-stock-switch'),
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('تقييد الطلب حسب المخزون'),
+                              subtitle: Text(
+                                fieldErrors[_ProductFormField.tracking] ??
+                                    'عند إيقافه يبقى العدد مسجلاً داخلياً، '
+                                        'لكن يمكن الطلب دون حد مخزني.',
+                                style:
+                                    fieldErrors[_ProductFormField.tracking] ==
+                                            null
+                                        ? null
+                                        : TextStyle(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .error,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                              ),
+                              value: stockTrackingEnabled,
+                              onChanged: (value) => setDialogState(() {
+                                stockTrackingEnabled = value;
+                                if (!value) {
+                                  showStockQuantityToCustomers = false;
+                                }
+                                fieldErrors.remove(_ProductFormField.tracking);
+                              }),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          KeyedSubtree(
+                            key: stockKey,
+                            child: TextField(
+                              key: const ValueKey('product-stock-field'),
+                              controller: stock,
+                              focusNode: stockFocus,
+                              keyboardType: TextInputType.number,
+                              onChanged: (_) => setDialogState(() {
+                                fieldErrors.remove(_ProductFormField.stock);
+                              }),
+                              decoration: InputDecoration(
+                                labelText: 'كمية المخزون الداخلية (مطلوبة)',
+                                helperText: reservedQuantity > 0
+                                    ? 'منها $reservedQuantity محجوزة لطلبات قائمة.'
+                                    : 'تُستخدم لإدارة المخزون حتى لو أخفيت العدد عن العملاء.',
+                                errorText: fieldErrors[_ProductFormField.stock],
+                              ),
+                            ),
+                          ),
                           const SizedBox(height: 4),
                           SwitchListTile.adaptive(
                             key: const ValueKey(
-                              'product-hide-when-out-of-stock-switch',
+                              'product-show-stock-quantity-switch',
                             ),
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('إخفاء المنتج عند نفاد المخزون'),
+                            title: const Text('إظهار الكمية الدقيقة للعملاء'),
                             subtitle: Text(
-                              hideWhenOutOfStock
-                                  ? 'سيختفي من المتجر عندما لا تكفي الكمية للطلب.'
-                                  : 'سيبقى ظاهراً مع عبارة «غير متوفر حالياً».',
+                              !stockTrackingEnabled
+                                  ? 'فعّل تقييد الطلب حسب المخزون أولاً.'
+                                  : showStockQuantityToCustomers
+                                      ? 'سيظهر العدد المتاح في الكتالوج والتفاصيل.'
+                                      : 'سيظهر «متوفر للطلب» دون كشف العدد.',
                             ),
-                            value: hideWhenOutOfStock,
-                            onChanged: (value) => setDialogState(() {
-                              hideWhenOutOfStock = value;
-                            }),
+                            value: stockTrackingEnabled &&
+                                showStockQuantityToCustomers,
+                            onChanged: stockTrackingEnabled
+                                ? (value) => setDialogState(() {
+                                      showStockQuantityToCustomers = value;
+                                    })
+                                : null,
                           ),
+                          const SizedBox(height: 8),
+                          SwitchListTile.adaptive(
+                            key: const ValueKey('product-visible-switch'),
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('إظهار المنتج للعملاء'),
+                            subtitle: Text(
+                              product?.isArchived == true
+                                  ? 'المنتج مؤرشف. استخدم «استعادة ونشر المنتج» من القائمة أولاً.'
+                                  : active
+                                      ? 'المنتج ظاهر في المتجر.'
+                                      : 'المنتج مخفي عن العملاء دون حذفه.',
+                            ),
+                            value: active,
+                            onChanged: product?.isArchived == true
+                                ? null
+                                : (value) => setDialogState(() {
+                                      active = value;
+                                    }),
+                          ),
+                          if (stockTrackingEnabled) ...[
+                            const SizedBox(height: 4),
+                            SwitchListTile.adaptive(
+                              key: const ValueKey(
+                                'product-hide-when-out-of-stock-switch',
+                              ),
+                              contentPadding: EdgeInsets.zero,
+                              title:
+                                  const Text('إخفاء المنتج عند نفاد المخزون'),
+                              subtitle: Text(
+                                hideWhenOutOfStock
+                                    ? 'سيختفي من المتجر عندما لا تكفي الكمية للطلب.'
+                                    : 'سيبقى ظاهراً مع عبارة «غير متوفر حالياً».',
+                              ),
+                              value: hideWhenOutOfStock,
+                              onChanged: (value) => setDialogState(() {
+                                hideWhenOutOfStock = value;
+                              }),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final parsedPrice = _parseLocalizedDouble(price.text);
-                final parsedRetailPrice =
-                    _parseLocalizedDouble(retailPrice.text);
-                final parsedBulkMinimum = _parseLocalizedInt(bulkMinimum.text);
-                final parsedStock = _parseLocalizedInt(stock.text);
-                final parsedUnitsPerBox = unitsPerBox.text.trim().isEmpty
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: uploadingImage
                     ? null
-                    : _parseLocalizedInt(unitsPerBox.text);
-                final errors = <_ProductFormField, String>{};
-                if (name.text.trim().isEmpty) {
-                  errors[_ProductFormField.name] = 'أدخل اسم المنتج.';
-                }
-                if (selectedCategory.trim().isEmpty) {
-                  errors[_ProductFormField.category] =
-                      'اختر تصنيفاً أو اكتب اسم تصنيف جديد.';
-                }
-                if (company.text.trim().isEmpty) {
-                  errors[_ProductFormField.company] = 'أدخل اسم الشركة.';
-                }
-                if (parsedPrice == null ||
-                    !parsedPrice.isFinite ||
-                    parsedPrice <= 0) {
-                  errors[_ProductFormField.price] =
-                      'أدخل سعر جملة صحيحاً أكبر من صفر.';
-                }
-                if (parsedRetailPrice == null ||
-                    !parsedRetailPrice.isFinite ||
-                    parsedRetailPrice <= 0) {
-                  errors[_ProductFormField.retailPrice] =
-                      'أدخل سعر بيع وحدة مقترحاً صحيحاً أكبر من صفر.';
-                }
-                if (parsedBulkMinimum == null ||
-                    parsedBulkMinimum < 1 ||
-                    parsedBulkMinimum > 1000000) {
-                  errors[_ProductFormField.bulkMinimum] =
-                      'الحد الأدنى لطلب الجملة يجب أن يكون رقماً صحيحاً موجباً.';
-                }
-                if (parsedUnitsPerBox != null &&
-                    (parsedUnitsPerBox < 1 || parsedUnitsPerBox > 1000000)) {
-                  errors[_ProductFormField.unitsPerBox] =
-                      'الكمية في الصندوق يجب أن تكون رقماً صحيحاً موجباً.';
-                }
-                if (parsedStock == null || parsedStock < 0) {
-                  errors[_ProductFormField.stock] =
-                      'أدخل كمية مخزون صحيحة لا تقل عن صفر.';
-                } else if (stockTrackingEnabled &&
-                    parsedStock < reservedQuantity) {
-                  errors[_ProductFormField.stock] =
-                      'لا يمكن خفض المخزون عن الكمية المحجوزة ($reservedQuantity).';
-                }
-                if (!stockTrackingEnabled && reservedQuantity > 0) {
-                  errors[_ProductFormField.tracking] =
-                      'لا يمكن إيقاف تتبع المخزون مع وجود $reservedQuantity قطعة محجوزة.';
-                }
-                if (errors.isNotEmpty) {
-                  setDialogState(() => fieldErrors = errors);
-                  revealFirstInvalidField(errors);
-                  return;
-                }
+                    : () {
+                        final parsedPrice = _parseLocalizedDouble(price.text);
+                        final parsedRetailPrice =
+                            _parseLocalizedDouble(retailPrice.text);
+                        final parsedBulkMinimum =
+                            _parseLocalizedInt(bulkMinimum.text);
+                        final parsedStock = _parseLocalizedInt(stock.text);
+                        final parsedUnitsPerBox =
+                            unitsPerBox.text.trim().isEmpty
+                                ? null
+                                : _parseLocalizedInt(unitsPerBox.text);
+                        final trimmedImageUrl = imageUrl.text.trim();
+                        final errors = <_ProductFormField, String>{};
+                        if (trimmedImageUrl.isNotEmpty &&
+                            safeHttpsUpdateUri(trimmedImageUrl) == null) {
+                          errors[_ProductFormField.image] =
+                              'استخدم رابط https صالحاً ومن دون بيانات دخول، أو ارفع صورة.';
+                        }
+                        if (name.text.trim().isEmpty) {
+                          errors[_ProductFormField.name] = 'أدخل اسم المنتج.';
+                        }
+                        if (selectedCategory.trim().isEmpty) {
+                          errors[_ProductFormField.category] =
+                              'اختر تصنيفاً أو اكتب اسم تصنيف جديد.';
+                        }
+                        if (company.text.trim().isEmpty) {
+                          errors[_ProductFormField.company] =
+                              'أدخل اسم الشركة.';
+                        }
+                        if (parsedPrice == null ||
+                            !parsedPrice.isFinite ||
+                            parsedPrice <= 0) {
+                          errors[_ProductFormField.price] =
+                              'أدخل سعر جملة صحيحاً أكبر من صفر.';
+                        }
+                        if (parsedRetailPrice == null ||
+                            !parsedRetailPrice.isFinite ||
+                            parsedRetailPrice <= 0) {
+                          errors[_ProductFormField.retailPrice] =
+                              'أدخل سعر بيع وحدة مقترحاً صحيحاً أكبر من صفر.';
+                        }
+                        if (parsedBulkMinimum == null ||
+                            parsedBulkMinimum < 1 ||
+                            parsedBulkMinimum > 1000000) {
+                          errors[_ProductFormField.bulkMinimum] =
+                              'الحد الأدنى لطلب الجملة يجب أن يكون رقماً صحيحاً موجباً.';
+                        }
+                        if (parsedUnitsPerBox != null &&
+                            (parsedUnitsPerBox < 1 ||
+                                parsedUnitsPerBox > 1000000)) {
+                          errors[_ProductFormField.unitsPerBox] =
+                              'الكمية في الصندوق يجب أن تكون رقماً صحيحاً موجباً.';
+                        }
+                        if (parsedStock == null || parsedStock < 0) {
+                          errors[_ProductFormField.stock] =
+                              'أدخل كمية مخزون صحيحة لا تقل عن صفر.';
+                        } else if (stockTrackingEnabled &&
+                            parsedStock < reservedQuantity) {
+                          errors[_ProductFormField.stock] =
+                              'لا يمكن خفض المخزون عن الكمية المحجوزة ($reservedQuantity).';
+                        }
+                        if (!stockTrackingEnabled && reservedQuantity > 0) {
+                          errors[_ProductFormField.tracking] =
+                              'لا يمكن إيقاف تتبع المخزون مع وجود $reservedQuantity قطعة محجوزة.';
+                        }
+                        if (errors.isNotEmpty) {
+                          setDialogState(() => fieldErrors = errors);
+                          revealFirstInvalidField(errors);
+                          return;
+                        }
 
-                final resolvedCategory = selectedCategory.trim();
-                final resolvedStock = parsedStock!;
-                final internalSku = product?.sku.trim().isNotEmpty == true
-                    ? product!.sku.trim()
-                    : 'AUTO-${draftUuid.replaceAll('-', '').substring(0, 12).toUpperCase()}';
-                Navigator.pop(
-                  context,
-                  Product(
-                    id: product?.id ?? 'local-$draftUuid',
-                    nameAr: name.text.trim(),
-                    nameEn: product?.nameEn,
-                    sku: internalSku,
-                    category: resolvedCategory,
-                    categoryId: product?.category == resolvedCategory
-                        ? product?.categoryId
-                        : null,
-                    animalType: product?.animalType ?? '',
-                    brand: company.text.trim(),
-                    unitSize: product?.unitSize ?? '',
-                    packageSize: product?.packageSize,
-                    basePrice: parsedPrice!,
-                    effectivePrice: null,
-                    retailUnitPrice: parsedRetailPrice,
-                    oldPrice: product?.oldPrice,
-                    discountPercent: product?.discountPercent,
-                    stockQuantity: resolvedStock,
-                    availableQuantity: stockTrackingEnabled && product != null
-                        ? resolvedStock - reservedQuantity
-                        : null,
-                    stockTrackingEnabled: stockTrackingEnabled,
-                    showStockQuantityToCustomers:
-                        stockTrackingEnabled && showStockQuantityToCustomers,
-                    hideWhenOutOfStock: hideWhenOutOfStock,
-                    unitsPerBox: parsedUnitsPerBox,
-                    minOrderQty: parsedBulkMinimum!,
-                    descriptionAr: product?.descriptionAr ?? '',
-                    imageUrl: product?.imageUrl,
-                    imageAttribution: product?.imageAttribution,
-                    sourceUrl: product?.sourceUrl,
-                    isActive: active,
-                    isFeatured: product?.isFeatured ?? false,
-                    isTopSelling: product?.isTopSelling ?? false,
-                    archivedAt: product?.archivedAt,
-                    createdAt: product?.createdAt,
-                    updatedAt: product?.updatedAt,
-                    packageOptions: product?.packageOptions ?? const [],
-                    tags: product?.tags ?? [company.text.trim()],
-                  ),
-                );
-              },
-              child: const Text('حفظ المنتج'),
-            ),
-          ],
-        ),
+                        final resolvedCategory = selectedCategory.trim();
+                        final resolvedStock = parsedStock!;
+                        final internalSku = product?.sku.trim().isNotEmpty ==
+                                true
+                            ? product!.sku.trim()
+                            : 'AUTO-${draftUuid.replaceAll('-', '').substring(0, 12).toUpperCase()}';
+                        Navigator.pop(
+                          context,
+                          Product(
+                            id: product?.id ?? 'local-$draftUuid',
+                            nameAr: name.text.trim(),
+                            nameEn: product?.nameEn,
+                            sku: internalSku,
+                            category: resolvedCategory,
+                            categoryId: product?.category == resolvedCategory
+                                ? product?.categoryId
+                                : null,
+                            animalType: product?.animalType ?? '',
+                            brand: company.text.trim(),
+                            unitSize: product?.unitSize ?? '',
+                            packageSize: product?.packageSize,
+                            basePrice: parsedPrice!,
+                            effectivePrice: null,
+                            retailUnitPrice: parsedRetailPrice,
+                            oldPrice: product?.oldPrice,
+                            discountPercent: product?.discountPercent,
+                            stockQuantity: resolvedStock,
+                            availableQuantity:
+                                stockTrackingEnabled && product != null
+                                    ? resolvedStock - reservedQuantity
+                                    : null,
+                            stockTrackingEnabled: stockTrackingEnabled,
+                            showStockQuantityToCustomers:
+                                stockTrackingEnabled &&
+                                    showStockQuantityToCustomers,
+                            hideWhenOutOfStock: hideWhenOutOfStock,
+                            unitsPerBox: parsedUnitsPerBox,
+                            minOrderQty: parsedBulkMinimum!,
+                            descriptionAr: product?.descriptionAr ?? '',
+                            imageUrl: trimmedImageUrl.isEmpty
+                                ? null
+                                : safeHttpsUpdateUri(trimmedImageUrl)
+                                    ?.toString(),
+                            imageAttribution: product?.imageAttribution,
+                            sourceUrl: product?.sourceUrl,
+                            isActive: active,
+                            isFeatured: product?.isFeatured ?? false,
+                            isTopSelling: product?.isTopSelling ?? false,
+                            archivedAt: product?.archivedAt,
+                            createdAt: product?.createdAt,
+                            updatedAt: product?.updatedAt,
+                            packageOptions: product?.packageOptions ?? const [],
+                            tags: product?.tags ?? [company.text.trim()],
+                          ),
+                        );
+                      },
+                child: const Text('حفظ المنتج'),
+              ),
+            ],
+          );
+        },
       ),
     );
     final saved = await navigator.push(dialogRoute);
@@ -1609,6 +1832,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
       bulkMinimum,
       stock,
       unitsPerBox,
+      imageUrl,
     ]) {
       controller.dispose();
     }
@@ -1620,24 +1844,46 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
       bulkMinimumFocus,
       unitsPerBoxFocus,
       stockFocus,
+      imageUrlFocus,
     ]) {
       focus.dispose();
     }
     scrollController.dispose();
     if (saved == null) return;
+    if (_savingProduct) return;
+    setState(() => _savingProduct = true);
     try {
       await ref.read(catalogRepositoryProvider).saveProduct(saved);
       if (mounted) {
-        await _reloadProducts(refreshMetadata: true);
+        await reloadAfterMutation(
+          this,
+          () => _reloadProducts(refreshMetadata: true),
+        );
       }
-    } catch (_) {
+    } on StaleWriteException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text('تعذر حفظ المنتج. تحقق من البيانات والاتصال وحاول مجدداً.'),
+        SnackBar(content: Text(error.message)),
+      );
+      await reloadAfterMutation(
+        this,
+        () => _reloadProducts(refreshMetadata: true),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            mutationFailureMessageAr(
+              error,
+              fallback:
+                  'تعذر حفظ المنتج. تحقق من البيانات والاتصال وحاول مجدداً.',
+            ),
+          ),
         ),
       );
+    } finally {
+      if (mounted) setState(() => _savingProduct = false);
     }
   }
 
@@ -1667,7 +1913,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     try {
       await ref.read(catalogRepositoryProvider).archiveProduct(product.id);
       if (!mounted) return;
-      await _reloadProducts(refreshMetadata: true);
+      await reloadAfterMutation(
+        this,
+        () => _reloadProducts(refreshMetadata: true),
+      );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1682,7 +1931,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     try {
       await ref.read(catalogRepositoryProvider).restoreProduct(product.id);
       if (!mounted) return;
-      await _reloadProducts(refreshMetadata: true);
+      await reloadAfterMutation(
+        this,
+        () => _reloadProducts(refreshMetadata: true),
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تمت استعادة المنتج ونشره للعملاء.')),
@@ -1750,6 +2002,7 @@ String _normalizeLocalizedNumber(String value) {
 }
 
 enum _ProductFormField {
+  image,
   name,
   category,
   company,
@@ -2435,10 +2688,12 @@ List<String> _withSelectedFilterValue(
 class _AdminProductCard extends StatelessWidget {
   const _AdminProductCard({
     required this.product,
+    required this.onTap,
     required this.onSelected,
   });
 
   final Product product;
+  final VoidCallback onTap;
   final Future<void> Function(String value) onSelected;
 
   @override
@@ -2474,186 +2729,189 @@ class _AdminProductCard extends StatelessWidget {
         product.stockTrackingEnabled && product.showStockQuantityToCustomers
             ? 'العدد للعملاء: ظاهر'
             : 'العدد للعملاء: مخفي';
-    final accentColor = product.isArchived || !product.active
-        ? Colors.blueGrey
-        : availabilityColor;
     final textTheme = Theme.of(context).textTheme;
 
-    return Padding(
-      padding: const EdgeInsets.all(10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return Semantics(
+      button: true,
+      label: 'فتح تعديل ${product.name}',
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: accentColor.withValues(alpha: .13),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.inventory_2_outlined,
-                  size: 20,
-                  color: accentColor,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      product.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w900,
-                        height: 1.25,
-                      ),
-                    ),
-                    if (product.brand.trim().isNotEmpty)
-                      Text(
-                        product.brand,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.bodySmall?.copyWith(
-                          color: Colors.grey.shade600,
-                          fontSize: 11,
-                          height: 1.2,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ProductImagePlaceholder(
+                    key: ValueKey('admin-product-image-${product.id}'),
+                    productId: product.id,
+                    category: product.category,
+                    imageUrl: product.imageUrl,
+                    semanticLabel: 'صورة ${product.name}',
+                    size: 56,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          product.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            height: 1.25,
+                          ),
                         ),
+                        if (product.brand.trim().isNotEmpty)
+                          Text(
+                            product.brand,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: textTheme.bodySmall?.copyWith(
+                              color: Colors.grey.shade600,
+                              fontSize: 11,
+                              height: 1.2,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  _AdminProductMenu(
+                    product: product,
+                    onSelected: onSelected,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              ProductChipWrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  _AdminProductInfoPill(
+                    key: ValueKey('admin-product-publish-state-${product.id}'),
+                    icon: visibilityIcon,
+                    label: visibilityLabel,
+                    color: visibilityColor,
+                  ),
+                  _AdminProductInfoPill(
+                    key: ValueKey('admin-product-availability-${product.id}'),
+                    icon: product.stockTrackingEnabled
+                        ? Icons.check_circle_outline
+                        : Icons.sync_disabled_outlined,
+                    label: availabilityLabel,
+                    color: availabilityColor,
+                  ),
+                  _AdminProductInfoPill(
+                    key: ValueKey(
+                        'admin-product-customer-quantity-${product.id}'),
+                    icon: product.stockTrackingEnabled &&
+                            product.showStockQuantityToCustomers
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                    label: quantityVisibilityLabel,
+                    color: product.stockTrackingEnabled &&
+                            product.showStockQuantityToCustomers
+                        ? AppTheme.green
+                        : Colors.blueGrey,
+                  ),
+                  if (product.stockTrackingEnabled)
+                    _AdminProductInfoPill(
+                      key: ValueKey(
+                        'admin-product-out-of-stock-behavior-${product.id}',
                       ),
+                      icon: product.hideWhenOutOfStock
+                          ? Icons.hide_source_outlined
+                          : Icons.public_outlined,
+                      label: product.hideWhenOutOfStock
+                          ? 'يختفي عند النفاد'
+                          : 'يبقى ظاهراً عند النفاد',
+                      color: Colors.blueGrey,
+                    ),
+                  if (product.unitsPerBox != null && product.unitsPerBox! > 0)
+                    _AdminProductInfoPill(
+                      key: ValueKey('admin-product-box-units-${product.id}'),
+                      icon: Icons.inventory_outlined,
+                      label: '${product.unitsPerBox} في الصندوق',
+                      color: Colors.blueGrey,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Container(
+                key: ValueKey('admin-product-stock-${product.id}'),
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .primaryContainer
+                      .withValues(alpha: .32),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: ProductChipWrap(
+                  spacing: 14,
+                  runSpacing: 3,
+                  children: [
+                    _AdminProductMetric(
+                      icon: Icons.inventory_2_outlined,
+                      label: 'المخزون',
+                      value: '${product.stockQuantity}',
+                    ),
+                    if (product.stockTrackingEnabled)
+                      _AdminProductMetric(
+                        icon: Icons.done_all,
+                        label: 'المتاح',
+                        value: '${product.orderableStockQuantity}',
+                      ),
+                    if (product.reservedQuantity > 0)
+                      _AdminProductMetric(
+                        icon: Icons.lock_clock_outlined,
+                        label: 'محجوز',
+                        value: '${product.reservedQuantity}',
+                      ),
+                    _AdminProductMetric(
+                      key: ValueKey('admin-product-moq-${product.id}'),
+                      icon: Icons.shopping_cart_checkout_outlined,
+                      label: 'أقل طلب',
+                      value: '${product.minOrderQty}',
+                    ),
                   ],
                 ),
               ),
-              _AdminProductMenu(
-                product: product,
-                onSelected: onSelected,
+              const SizedBox(height: 6),
+              ProductChipWrap(
+                key: ValueKey('admin-product-prices-${product.id}'),
+                spacing: 16,
+                runSpacing: 2,
+                children: [
+                  Text(
+                    'سعر الجملة ${lyd(product.price)}',
+                    softWrap: false,
+                    maxLines: 1,
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: AppTheme.darkGreen,
+                    ),
+                  ),
+                  if (product.retailUnitPrice != null)
+                    Text(
+                      'بيع الوحدة المقترح ${lyd(product.retailUnitPrice!)}',
+                      softWrap: false,
+                      maxLines: 1,
+                      style: textTheme.bodySmall?.copyWith(
+                        color: Colors.grey.shade600,
+                        fontSize: 11,
+                      ),
+                    ),
+                ],
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: [
-              _AdminProductInfoPill(
-                key: ValueKey('admin-product-publish-state-${product.id}'),
-                icon: visibilityIcon,
-                label: visibilityLabel,
-                color: visibilityColor,
-              ),
-              _AdminProductInfoPill(
-                key: ValueKey('admin-product-availability-${product.id}'),
-                icon: product.stockTrackingEnabled
-                    ? Icons.check_circle_outline
-                    : Icons.sync_disabled_outlined,
-                label: availabilityLabel,
-                color: availabilityColor,
-              ),
-              _AdminProductInfoPill(
-                key: ValueKey('admin-product-customer-quantity-${product.id}'),
-                icon: product.stockTrackingEnabled &&
-                        product.showStockQuantityToCustomers
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
-                label: quantityVisibilityLabel,
-                color: product.stockTrackingEnabled &&
-                        product.showStockQuantityToCustomers
-                    ? AppTheme.green
-                    : Colors.blueGrey,
-              ),
-              if (product.stockTrackingEnabled)
-                _AdminProductInfoPill(
-                  key: ValueKey(
-                    'admin-product-out-of-stock-behavior-${product.id}',
-                  ),
-                  icon: product.hideWhenOutOfStock
-                      ? Icons.hide_source_outlined
-                      : Icons.public_outlined,
-                  label: product.hideWhenOutOfStock
-                      ? 'يختفي عند النفاد'
-                      : 'يبقى ظاهراً عند النفاد',
-                  color: Colors.blueGrey,
-                ),
-              if (product.unitsPerBox != null && product.unitsPerBox! > 0)
-                _AdminProductInfoPill(
-                  key: ValueKey('admin-product-box-units-${product.id}'),
-                  icon: Icons.inventory_outlined,
-                  label: '${product.unitsPerBox} في الصندوق',
-                  color: Colors.blueGrey,
-                ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Container(
-            key: ValueKey('admin-product-stock-${product.id}'),
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: BoxDecoration(
-              color: Theme.of(context)
-                  .colorScheme
-                  .primaryContainer
-                  .withValues(alpha: .32),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Wrap(
-              spacing: 14,
-              runSpacing: 3,
-              children: [
-                _AdminProductMetric(
-                  icon: Icons.inventory_2_outlined,
-                  label: 'المخزون',
-                  value: '${product.stockQuantity}',
-                ),
-                if (product.stockTrackingEnabled)
-                  _AdminProductMetric(
-                    icon: Icons.done_all,
-                    label: 'المتاح',
-                    value: '${product.orderableStockQuantity}',
-                  ),
-                if (product.reservedQuantity > 0)
-                  _AdminProductMetric(
-                    icon: Icons.lock_clock_outlined,
-                    label: 'محجوز',
-                    value: '${product.reservedQuantity}',
-                  ),
-                _AdminProductMetric(
-                  key: ValueKey('admin-product-moq-${product.id}'),
-                  icon: Icons.shopping_cart_checkout_outlined,
-                  label: 'أقل طلب',
-                  value: '${product.minOrderQty}',
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            key: ValueKey('admin-product-prices-${product.id}'),
-            spacing: 16,
-            runSpacing: 2,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Text(
-                'سعر الجملة ${lyd(product.price)}',
-                style: textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  color: AppTheme.darkGreen,
-                ),
-              ),
-              if (product.retailUnitPrice != null)
-                Text(
-                  'بيع الوحدة المقترح ${lyd(product.retailUnitPrice!)}',
-                  style: textTheme.bodySmall?.copyWith(
-                    color: Colors.grey.shade600,
-                    fontSize: 11,
-                  ),
-                ),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -2684,18 +2942,13 @@ class _AdminProductCompactRow extends StatelessWidget {
           padding: const EdgeInsetsDirectional.fromSTEB(10, 8, 4, 8),
           child: Row(
             children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: stateColor.withValues(alpha: .12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.inventory_2_outlined,
-                  color: stateColor,
-                  size: 19,
-                ),
+              ProductImagePlaceholder(
+                key: ValueKey('admin-product-compact-image-${product.id}'),
+                productId: product.id,
+                category: product.category,
+                imageUrl: product.imageUrl,
+                semanticLabel: 'صورة ${product.name}',
+                size: 40,
               ),
               const SizedBox(width: 9),
               Expanded(
@@ -2725,12 +2978,14 @@ class _AdminProductCompactRow extends StatelessWidget {
                           ),
                     ),
                     const SizedBox(height: 4),
-                    Wrap(
+                    ProductChipWrap(
                       spacing: 10,
                       runSpacing: 2,
                       children: [
                         Text(
                           lyd(product.price),
+                          softWrap: false,
+                          maxLines: 1,
                           style: const TextStyle(
                             color: AppTheme.darkGreen,
                             fontSize: 11,
@@ -2741,10 +2996,14 @@ class _AdminProductCompactRow extends StatelessWidget {
                           product.stockTrackingEnabled
                               ? 'المتاح ${product.orderableStockQuantity}'
                               : 'المخزون غير متتبع',
+                          softWrap: false,
+                          maxLines: 1,
                           style: const TextStyle(fontSize: 11),
                         ),
                         Text(
                           _adminProductStateLabel(product),
+                          softWrap: false,
+                          maxLines: 1,
                           style: TextStyle(
                             color: stateColor,
                             fontSize: 11,
@@ -2789,92 +3048,109 @@ class _AdminProductGridTile extends StatelessWidget {
       label: 'فتح تعديل ${product.name}',
       child: InkWell(
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(9),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
                 children: [
                   ProductImagePlaceholder(
+                    key: ValueKey('admin-product-grid-image-${product.id}'),
                     productId: product.id,
                     category: product.category,
                     imageUrl: product.imageUrl,
                     semanticLabel: 'صورة ${product.name}',
-                    size: 52,
+                    expand: true,
+                    borderRadius: BorderRadius.zero,
                   ),
-                  const Spacer(),
-                  _AdminProductMenu(
-                    product: product,
-                    onSelected: onSelected,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 7),
-              Text(
-                product.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  height: 1.2,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                product.brand.trim().isEmpty
-                    ? product.category
-                    : '${product.brand} • ${product.category}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodySmall?.copyWith(
-                  color: Colors.grey.shade600,
-                  fontSize: 10.5,
-                ),
-              ),
-              const Spacer(),
-              Row(
-                children: [
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      color: stateColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 5),
-                  Expanded(
-                    child: Text(
-                      _adminProductStateLabel(product),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: stateColor,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w800,
+                  Positioned.directional(
+                    textDirection: Directionality.of(context),
+                    top: 4,
+                    end: 4,
+                    child: Material(
+                      color: Colors.white.withValues(alpha: .88),
+                      shape: const CircleBorder(),
+                      clipBehavior: Clip.antiAlias,
+                      child: _AdminProductMenu(
+                        product: product,
+                        onSelected: onSelected,
                       ),
                     ),
                   ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 7, 8, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    product.stockTrackingEnabled
-                        ? 'متاح ${product.orderableStockQuantity}'
-                        : 'غير متتبع',
-                    style: const TextStyle(fontSize: 10.5),
+                    product.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      height: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    product.brand.trim().isEmpty
+                        ? product.category
+                        : '${product.brand} • ${product.category}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodySmall?.copyWith(
+                      color: Colors.grey.shade600,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          color: stateColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          _adminProductStateLabel(product),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: stateColor,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        product.stockTrackingEnabled
+                            ? 'متاح ${product.orderableStockQuantity}'
+                            : 'غير متتبع',
+                        style: const TextStyle(fontSize: 10.5),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    lyd(product.price),
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: AppTheme.darkGreen,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 5),
-              Text(
-                lyd(product.price),
-                style: textTheme.bodyMedium?.copyWith(
-                  color: AppTheme.darkGreen,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -2956,28 +3232,10 @@ class _AdminProductInfoPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .10),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w700,
-              height: 1.2,
-            ),
-          ),
-        ],
-      ),
+    return ProductInfoChip(
+      label,
+      icon: icon,
+      color: color,
     );
   }
 }
@@ -3015,11 +3273,185 @@ class _AdminProductMetric extends StatelessWidget {
               ),
             ],
           ),
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.visible,
           style: const TextStyle(fontSize: 11, height: 1.25),
         ),
       ],
     );
   }
+}
+
+class _ProductImageEditor extends StatelessWidget {
+  const _ProductImageEditor({
+    required this.category,
+    required this.productId,
+    required this.imageUrl,
+    this.imageBytes,
+    required this.urlController,
+    required this.urlFocus,
+    required this.uploading,
+    this.uploadProgress,
+    required this.canUpload,
+    required this.demoMode,
+    required this.errorText,
+    required this.onUpload,
+    required this.onUrlChanged,
+  });
+
+  final String category;
+  final String? productId;
+  final String imageUrl;
+  final Uint8List? imageBytes;
+  final TextEditingController urlController;
+  final FocusNode urlFocus;
+  final bool uploading;
+  final double? uploadProgress;
+  final bool canUpload;
+  final bool demoMode;
+  final String? errorText;
+  final VoidCallback onUpload;
+  final VoidCallback onUrlChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final previewUrl = safeHttpsUpdateUri(imageUrl)?.toString();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'صورة المنتج',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 72,
+              height: 72,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  ProductImagePlaceholder(
+                    key: const ValueKey('product-image-preview'),
+                    category: category.trim().isEmpty ? 'عام' : category,
+                    productId: productId,
+                    imageUrl: previewUrl,
+                    imageBytes: imageBytes,
+                    semanticLabel: 'معاينة صورة المنتج',
+                    size: 72,
+                  ),
+                  if (uploading)
+                    _ProductImageUploadProgress(progress: uploadProgress),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  FilledButton.tonalIcon(
+                    key: const ValueKey('product-image-upload-button'),
+                    onPressed: uploading || !canUpload ? null : onUpload,
+                    icon: uploading
+                        ? const SizedBox.shrink()
+                        : const Icon(Icons.add_photo_alternate_outlined),
+                    label: Text(
+                      uploading
+                          ? _productImageUploadLabel(uploadProgress)
+                          : 'رفع صورة',
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    demoMode || !canUpload
+                        ? 'الرفع من الجهاز يحتاج ربط الإنتاج. يمكنك لصق رابط https الآن.'
+                        : 'JPEG أو PNG أو WebP حتى 5 ميغابايت.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey.shade700,
+                          height: 1.35,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          key: const ValueKey('product-image-url-field'),
+          controller: urlController,
+          focusNode: urlFocus,
+          enabled: !uploading,
+          keyboardType: TextInputType.url,
+          textDirection: TextDirection.ltr,
+          textAlign: TextAlign.right,
+          onChanged: (_) => onUrlChanged(),
+          decoration: InputDecoration(
+            labelText: 'أو رابط https',
+            hintText: 'https://',
+            helperText: 'اختياري. يُعرض للعملاء بعد الحفظ.',
+            errorText: errorText,
+            errorMaxLines: 4,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProductImageUploadProgress extends StatelessWidget {
+  const _ProductImageUploadProgress({required this.progress});
+
+  final double? progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final percent =
+        progress == null ? null : (progress!.clamp(0, 1) * 100).round();
+    return SizedBox(
+      key: const ValueKey('product-image-upload-progress'),
+      width: 72,
+      height: 72,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: .42),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                value: progress,
+                strokeWidth: 3,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              percent == null ? '...' : '$percent٪',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _productImageUploadLabel(double? progress) {
+  if (progress == null) return 'جارٍ الرفع...';
+  return 'جارٍ الرفع ${((progress.clamp(0, 1)) * 100).round()}٪';
 }
 
 class _ProductLoadError extends StatelessWidget {

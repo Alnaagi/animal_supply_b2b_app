@@ -92,8 +92,8 @@ begin
   limit 1;
 
   if v_category_id is null then
-    insert into public.categories (name)
-    values ('اختبار سلوك المخزون')
+    insert into public.categories (name, icon_key)
+    values ('اختبار سلوك المخزون', 'category')
     returning id into v_category_id;
   end if;
 

@@ -87,6 +87,7 @@ class FakeDocument {
     this.head = new FakeElement('head', this);
     this.body = new FakeElement('body', this);
     this.activeElement = null;
+    this.title = '';
   }
 
   createElement(tagName) {
@@ -243,6 +244,22 @@ test('shows iPhone Safari home-screen instructions without a fake install button
     document.getElementById('pwa-install-dialog').children[0].children[2]
       .textContent,
     /إضافة إلى الشاشة الرئيسية/,
+  );
+});
+
+test('install copy uses the cached shop name when available', () => {
+  const { document, storage, window } = createEnvironment();
+  storage.set('shop_branding.v1.name', 'مؤسسة النور للأعلاف');
+  window.animalSupplyPwaInstall.markAppReady();
+
+  assert.ok(document.getElementById('pwa-install-dialog'));
+  assert.match(
+    document.getElementById('pwa-install-title').textContent,
+    /ثبّت تطبيق مؤسسة النور للأعلاف/,
+  );
+  assert.match(
+    document.getElementById('pwa-install-description').textContent,
+    /يمكنك تثبيت مؤسسة النور للأعلاف/,
   );
 });
 

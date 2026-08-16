@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/config/shop_branding.dart';
 import '../../core/notifications/push_notifications.dart';
 import '../../core/notifications/push_permission_card.dart';
 import '../../core/support/whatsapp_support.dart';
-import '../../core/utils/formatters.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../auth/auth_controller.dart';
 
@@ -16,14 +16,12 @@ class ProfileScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authControllerProvider).user!;
     final settings = ref.watch(appSettingsProvider).asData?.value;
-    final shopName = settings?.shopName.trim().isNotEmpty == true
-        ? settings!.shopName.trim()
-        : AppConfig.shopName;
+    final shopName = ref.watch(shopBrandingProvider).shopName;
     final supportPhone = settings?.supportWhatsapp.trim().isNotEmpty == true
         ? settings!.supportWhatsapp
         : AppConfig.supportWhatsapp;
     final rows = {
-      'اسم النشاط': user.businessName ?? user.username,
+      'اسم المتجر': user.businessName ?? user.username,
       if (user.fullName?.trim().isNotEmpty == true)
         'الشخص المسؤول': user.fullName!,
       if (user.phone?.trim().isNotEmpty == true) 'الهاتف': user.phone!,
@@ -34,9 +32,6 @@ class ProfileScreen extends ConsumerWidget {
           if (user.area?.trim().isNotEmpty == true) user.area!,
         ].join(' - '),
       if (user.address?.trim().isNotEmpty == true) 'العنوان': user.address!,
-      'خصم جميع المنتجات': _formatDiscountPercent(user.discountPercent),
-      'حد الائتمان (مرجعي)': lyd(user.creditLimit),
-      'الرصيد المستحق (مسجل يدوياً)': lyd(user.outstandingBalance),
     };
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -106,10 +101,4 @@ class ProfileScreen extends ConsumerWidget {
       ],
     );
   }
-}
-
-String _formatDiscountPercent(double value) {
-  final fixed = value.toStringAsFixed(2);
-  final compact = fixed.replaceFirst(RegExp(r'\.?0+$'), '');
-  return '$compact%';
 }

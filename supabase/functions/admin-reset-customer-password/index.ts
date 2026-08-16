@@ -16,7 +16,7 @@ import {
   inviteUrl,
   secureToken,
   sha256Hex,
-  strongPassword,
+  adminSetPassword,
   temporaryPassword,
   validatedInviteBaseUrl,
 } from "../_shared/security.ts";
@@ -109,7 +109,7 @@ serve(async (req) => {
       providedPassword !== null &&
       String(providedPassword).trim() !== "";
     const password = setPasswordOnly
-      ? strongPassword(providedPassword)
+      ? adminSetPassword(String(providedPassword).trim())
       : temporaryPassword();
 
     if (setPasswordOnly) {
@@ -117,13 +117,13 @@ serve(async (req) => {
       const { data: passwordPolicyRow, error: mustChangeError } =
         await adminClient
           .from("profiles")
-          .update({ must_change_password: true })
+          .update({ must_change_password: false })
           .eq("id", profile.id)
           .eq("role", "customer")
           .select("id")
           .maybeSingle();
       if (mustChangeError || !passwordPolicyRow) {
-        console.error("Unable to enforce password change", mustChangeError);
+        console.error("Unable to clear password-change requirement", mustChangeError);
         throw new HttpError(
           500,
           "PASSWORD_POLICY_UPDATE_FAILED",
@@ -361,10 +361,9 @@ async function restorePasswordPolicy(
   profileId: string,
   previousMustChangePassword: boolean,
 ): Promise<void> {
-  if (previousMustChangePassword) return;
   const { error } = await adminClient
     .from("profiles")
-    .update({ must_change_password: false })
+    .update({ must_change_password: previousMustChangePassword })
     .eq("id", profileId)
     .eq("role", "customer");
   if (error) {

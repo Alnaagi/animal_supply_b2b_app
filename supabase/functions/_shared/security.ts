@@ -124,6 +124,29 @@ export function validateInviteBaseUrl(baseUrl: string | undefined): string {
   return url.toString();
 }
 
+/// Admin-chosen customer passwords have no composition rules.
+/// Empty values are handled by callers as "generate a temporary password".
+/// Invite URLs still must never include this value.
+export function adminSetPassword(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new HttpError(
+      422,
+      "PASSWORD_POLICY_FAILED",
+      "A password is required.",
+      { field: "password" },
+    );
+  }
+  if (value.length < 1 || value.length > 128) {
+    throw new HttpError(
+      422,
+      "PASSWORD_POLICY_FAILED",
+      "The password must contain 1-128 characters.",
+      { field: "password", minLength: 1, maxLength: 128 },
+    );
+  }
+  return value;
+}
+
 export function strongPassword(value: unknown): string {
   if (typeof value !== "string") {
     throw new HttpError(
@@ -168,6 +191,16 @@ function randomInt(maxExclusive: number): number {
   const buffer = new Uint32Array(1);
   do crypto.getRandomValues(buffer); while (buffer[0] >= rejectionLimit);
   return buffer[0] % maxExclusive;
+}
+
+export function publicLoginUrl(
+  validatedBaseUrl = validatedInviteBaseUrl(),
+): string {
+  const url = new URL(validatedBaseUrl);
+  url.pathname = "/login";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 export function inviteUrl(

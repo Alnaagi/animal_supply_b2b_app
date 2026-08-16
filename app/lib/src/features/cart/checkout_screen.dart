@@ -3,7 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/refresh/screen_reload.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/shop_loading.dart';
 import '../../data/models/order.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../../data/repositories/orders_repository.dart';
@@ -85,10 +87,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                     child: ListTile(
                       leading: settingsAsync.hasError
                           ? const Icon(Icons.cloud_off_outlined)
-                          : const SizedBox.square(
-                              dimension: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
+                          : const ShopLoading.compact(size: 22),
                       title: Text(
                         settingsAsync.hasError
                             ? 'تعذر تحميل إعدادات الطلب'
@@ -369,6 +368,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           ],
         ),
       );
+      requestScreenReload(ref);
       if (mounted) context.go('/orders');
     } on OrdersRepositoryException catch (exception) {
       if (mounted) {

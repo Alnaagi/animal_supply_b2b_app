@@ -1,6 +1,8 @@
 import { HttpError } from "./http.ts";
 import {
+  adminSetPassword,
   inviteUrl,
+  publicLoginUrl,
   rateLimitIdentity,
   strongPassword,
   validateCustomerLoginDomain,
@@ -9,7 +11,13 @@ import {
   validateRateLimitSalt,
 } from "./security.ts";
 
-Deno.test("strongPassword accepts the shared Flutter policy", () => {
+Deno.test("adminSetPassword accepts short chosen passwords such as test", () => {
+  if (adminSetPassword("test") !== "test") {
+    throw new Error("The admin-chosen password was not returned unchanged.");
+  }
+});
+
+Deno.test("strongPassword still rejects weak values for self-service changes", () => {
   const value = "Secure-Password-42!";
   if (strongPassword(value) !== value) {
     throw new Error("The validated password was not returned unchanged.");
@@ -40,6 +48,19 @@ Deno.test("strongPassword rejects weak or oversized values", () => {
     ) {
       throw new Error(`Expected PASSWORD_POLICY_FAILED for ${String(value)}`);
     }
+  }
+});
+
+Deno.test("publicLoginUrl is the origin login path without invite tokens", () => {
+  const link = publicLoginUrl("https://app.example.ly/invite?token=keep-out");
+  const url = new URL(link);
+  if (
+    url.protocol !== "https:" ||
+    url.pathname !== "/login" ||
+    url.searchParams.has("token") ||
+    url.searchParams.has("password")
+  ) {
+    throw new Error("The public login URL was not constructed as expected.");
   }
 });
 

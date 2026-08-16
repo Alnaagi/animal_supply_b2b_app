@@ -15,9 +15,10 @@ import {
 import {
   consumeRateLimit,
   inviteUrl,
+  publicLoginUrl,
   secureToken,
   sha256Hex,
-  strongPassword,
+  adminSetPassword,
   temporaryPassword,
   validatedCustomerLoginDomain,
   validatedInviteBaseUrl,
@@ -94,10 +95,11 @@ serve(async (req) => {
       )
       ? body.password
       : undefined;
-    const password = providedPassword !== undefined &&
-        providedPassword !== null &&
-        String(providedPassword).trim() !== ""
-      ? strongPassword(providedPassword)
+    const setPasswordOnly = providedPassword !== undefined &&
+      providedPassword !== null &&
+      String(providedPassword).trim() !== "";
+    const password = setPasswordOnly
+      ? adminSetPassword(String(providedPassword).trim())
       : temporaryPassword();
     const token = secureToken();
     const tokenHash = await sha256Hex(token);
@@ -111,8 +113,7 @@ serve(async (req) => {
       shopName: settings.shopName,
       username,
       temporaryPassword: password,
-      downloadLink: settings.downloadLink,
-      inviteLink: link,
+      loginUrl: publicLoginUrl(inviteBaseUrl),
     });
     const authEmail = `${username}@${customerLoginDomain}`;
     const authAttributes: {
@@ -135,6 +136,15 @@ serve(async (req) => {
 
     const created = await adminClient.auth.admin.createUser(authAttributes);
     if (created.error || !created.data.user) {
+      const message = created.error?.message ?? "";
+      if (/password/i.test(message) && /at least|characters|length/i.test(message)) {
+        throw new HttpError(
+          422,
+          "PASSWORD_TOO_SHORT",
+          "The password is shorter than the Auth minimum.",
+          { field: "password", minLength: 6 },
+        );
+      }
       throw new HttpError(
         400,
         "AUTH_USER_CREATE_FAILED",
@@ -151,7 +161,7 @@ serve(async (req) => {
           full_name: contactPerson,
           phone,
           role: "customer",
-          must_change_password: true,
+          must_change_password: !setPasswordOnly,
           active: true,
         },
       );
@@ -381,23 +391,18 @@ function buildInviteMessage(input: {
   shopName: string;
   username: string;
   temporaryPassword: string;
-  downloadLink: string;
-  inviteLink: string;
+  loginUrl: string;
 }): string {
+  const loginBlock = input.loginUrl
+    ? `\n\nرابط تسجيل الدخول:\n${input.loginUrl}`
+    : "";
   return `مرحباً ${input.businessName} 👋
 
-تم إنشاء حسابكم في تطبيق ${input.shopName} لطلبات الأعلاف ومستلزمات الحيوانات بالجملة.
+أهلاً بكم في ${input.shopName}. يسعدنا انضمام نشاطكم إلى متجر طلبات الجملة للأعلاف ومستلزمات الحيوانات.
 
 بيانات الدخول:
 اسم المستخدم: ${input.username}
-كلمة المرور المؤقتة: ${input.temporaryPassword}
+كلمة المرور المؤقتة: ${input.temporaryPassword}${loginBlock}
 
-${
-    input.downloadLink
-      ? `رابط تحميل التطبيق:\n${input.downloadLink}\n\n`
-      : ""
-  }رابط تفعيل الحساب:
-${input.inviteLink}
-
-ملاحظة: حفاظاً على أمان حسابكم، يرجى تغيير كلمة المرور بعد أول تسجيل دخول.`;
+يمكنكم تسجيل الدخول باستخدام اسم المستخدم وكلمة المرور الظاهرة هنا.`;
 }

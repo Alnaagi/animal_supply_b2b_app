@@ -1,6 +1,7 @@
 import 'package:animal_supply_b2b/src/data/models/admin_models.dart';
 import 'package:animal_supply_b2b/src/data/repositories/admin_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
   const customer = BusinessCustomer(
@@ -143,5 +144,44 @@ void main() {
       }),
       throwsStateError,
     );
+  });
+
+  test('customer update response surfaces a server error envelope', () {
+    expect(
+      () => AdminRepository.customerFromUpdateResponse({
+        'ok': false,
+        'error': {
+          'code': 'CUSTOMER_UPDATE_FAILED',
+          'message': 'column phone_is_whatsapp does not exist',
+        },
+      }),
+      throwsA(
+        isA<AdminRemoteException>()
+            .having((error) => error.code, 'code', 'CUSTOMER_UPDATE_FAILED')
+            .having(
+              (error) => error.message,
+              'message',
+              contains('phone_is_whatsapp'),
+            ),
+      ),
+    );
+  });
+
+  test('remote error info reads a FunctionException details map', () {
+    const error = FunctionException(
+      status: 500,
+      details: {
+        'ok': false,
+        'error': {
+          'code': 'CUSTOMER_UPDATE_FAILED',
+          'message': 'The customer WhatsApp preference could not be saved.',
+        },
+      },
+    );
+
+    final info = AdminRepository.describeRemoteError(error);
+    expect(info.code, 'CUSTOMER_UPDATE_FAILED');
+    expect(info.message, contains('WhatsApp'));
+    expect(info.status, 500);
   });
 }

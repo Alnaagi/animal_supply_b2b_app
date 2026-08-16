@@ -4,13 +4,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/connectivity/connectivity_provider.dart';
+import '../../core/widgets/category_icon_view.dart';
 import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/price_text.dart';
 import '../../core/widgets/product_image_placeholder.dart';
+import '../../core/widgets/product_info_chip.dart';
+import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/product.dart';
+import '../../data/models/product_category.dart';
 import '../../data/repositories/catalog_repository.dart';
-import '../cart/cart_controller.dart';
+import '../cart/added_to_cart_prompt.dart';
 import 'catalog_filters.dart';
 
 class CatalogScreen extends ConsumerStatefulWidget {
@@ -30,6 +37,7 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
   CatalogFilters filters = const CatalogFilters();
   List<Product> products = const [];
   List<String> categories = const [];
+  List<ProductCategory> categoryModels = const [];
   CatalogFilterOptions filterOptions = const CatalogFilterOptions();
   bool initialLoading = true;
   bool loadingMore = false;
@@ -103,6 +111,15 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
   }
 
   Future<void> _reloadCatalog({bool refreshMetadata = false}) async {
+    ref.read(remoteActivityProvider.notifier).begin();
+    try {
+      await _reloadCatalogBody(refreshMetadata: refreshMetadata);
+    } finally {
+      ref.read(remoteActivityProvider.notifier).end();
+    }
+  }
+
+  Future<void> _reloadCatalogBody({bool refreshMetadata = false}) async {
     final revision = ++loadRevision;
     if (mounted) {
       setState(() {
@@ -119,7 +136,7 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
 
     final categoriesFuture = refreshMetadata || !categoriesLoaded
         ? _loadCategoriesSafely()
-        : Future<List<String>?>.value(null);
+        : Future<List<ProductCategory>?>.value(null);
     final optionsFuture = refreshMetadata || !filterOptionsLoaded
         ? _loadFilterOptionsSafely()
         : Future<CatalogFilterOptions?>.value(null);
@@ -136,8 +153,9 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
         pageSource = page.source;
         offlineSnapshotCount = page.offlineSnapshotCount;
         if (loadedCategories != null) {
+          categoryModels = loadedCategories;
           categories = _filterValues(
-            loadedCategories,
+            loadedCategories.map((item) => item.name),
             selected: category,
           );
           categoriesLoaded = true;
@@ -159,9 +177,9 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
     }
   }
 
-  Future<List<String>?> _loadCategoriesSafely() async {
+  Future<List<ProductCategory>?> _loadCategoriesSafely() async {
     try {
-      return await ref.read(catalogRepositoryProvider).categories();
+      return await ref.read(catalogRepositoryProvider).productCategories();
     } catch (_) {
       return null;
     }
@@ -214,7 +232,16 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
+    ref.listen<int>(networkRetryTickProvider, (previous, next) {
+      if (previous != next) {
+        unawaited(_reloadCatalog(refreshMetadata: true));
+      }
+    });
+    listenForScreenReload(
+      ref,
+      () => _reloadCatalog(refreshMetadata: true),
+    );
+    return ShopRefreshIndicator(
       onRefresh: () => _reloadCatalog(refreshMetadata: true),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -275,6 +302,10 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
                   Padding(
                     padding: const EdgeInsetsDirectional.only(end: 8),
                     child: FilterChip(
+                      avatar: CategoryIconView.fromCategory(
+                        _categoryModelByName(value),
+                        size: 18,
+                      ),
                       label: Text(value),
                       selected: category == value,
                       onSelected: (_) => _selectCategory(value),
@@ -329,7 +360,9 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
           ],
           const SizedBox(height: 14),
           if (initialLoading)
-            const Center(child: CircularProgressIndicator())
+            const ShopLoading.section(
+              message: 'جارٍ تحميل المنتجات...',
+            )
           else if (loadError != null)
             EmptyState(
               key: const Key('catalog-load-error'),
@@ -359,10 +392,7 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
                   key: const ValueKey('catalog-load-more'),
                   onPressed: loadingMore ? null : _loadMore,
                   icon: loadingMore
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                      ? const ShopLoading.compact()
                       : const Icon(Icons.expand_more),
                   label: Text(
                     loadingMore
@@ -582,6 +612,13 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
     }
   }
 
+  ProductCategory _categoryModelByName(String name) {
+    for (final item in categoryModels) {
+      if (item.name == name) return item;
+    }
+    return ProductCategory(id: name, name: name);
+  }
+
   static List<String> _filterValues(
     Iterable<String> values, {
     String? selected,
@@ -663,15 +700,33 @@ class ProductListCard extends ConsumerWidget {
                       style: const TextStyle(color: Colors.grey, fontSize: 12),
                     ),
                   const SizedBox(height: 6),
-                  Wrap(spacing: 6, runSpacing: 4, children: [
-                    _MiniChip(
-                      product.customerAvailabilityLabel,
-                      color:
-                          product.isOrderable ? AppTheme.green : AppTheme.red,
+                  ProductChipWrap(children: [
+                    Tooltip(
+                      message: product.isOrderable
+                          ? AddedToCartPromptCopy.orderActionTooltip
+                          : product.customerAvailabilityLabel,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: product.isOrderable
+                            ? () => addProductToCartThenPrompt(
+                                  context: context,
+                                  ref: ref,
+                                  product: product,
+                                )
+                            : null,
+                        child: ProductInfoChip(
+                          product.customerAvailabilityLabel,
+                          color: product.isOrderable
+                              ? AppTheme.green
+                              : AppTheme.red,
+                        ),
+                      ),
                     ),
-                    _MiniChip(
+                    ProductInfoChip(
                       'أقل جملة ${product.minOrderQuantity}',
                     ),
+                    if (product.unitsPerBoxLabel != null)
+                      ProductInfoChip(product.unitsPerBoxLabel!),
                   ]),
                   const SizedBox(height: 8),
                   Row(
@@ -706,9 +761,11 @@ class ProductListCard extends ConsumerWidget {
                               ? 'إضافة ${product.name} إلى السلة'
                               : 'المنتج غير متوفر',
                           onPressed: product.isOrderable
-                              ? () => ref
-                                  .read(cartControllerProvider.notifier)
-                                  .add(product)
+                              ? () => addProductToCartThenPrompt(
+                                    context: context,
+                                    ref: ref,
+                                    product: product,
+                                  )
                               : null,
                           icon: const Icon(Icons.add)),
                     ],
@@ -719,24 +776,6 @@ class ProductListCard extends ConsumerWidget {
       ),
     );
   }
-}
-
-class _MiniChip extends StatelessWidget {
-  const _MiniChip(this.label, {this.color});
-  final String label;
-  final Color? color;
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-            color: (color ?? Colors.grey).withValues(alpha: .12),
-            borderRadius: BorderRadius.circular(999)),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 11,
-                color: color ?? Colors.grey.shade700,
-                fontWeight: FontWeight.w700)),
-      );
 }
 
 List<Product> _deduplicateProducts(Iterable<Product> source) {

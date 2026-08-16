@@ -4,14 +4,19 @@ import 'package:animal_supply_b2b/src/features/admin_customers/admin_customers_s
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   testWidgets(
     'admin edits a customer-wide discount with localized Arabic input',
     (tester) async {
-      await tester.binding.setSurfaceSize(const Size(646, 838));
+      await tester.binding.setSurfaceSize(const Size(720, 1200));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
       final repository = AdminRepository(
@@ -64,7 +69,7 @@ void main() {
       expect(fieldWidget.decoration?.suffixText, '%');
 
       await tester.enterText(discountField, '100');
-      await tester.tap(find.widgetWithText(FilledButton, 'حفظ'));
+      await tester.tap(find.byKey(const ValueKey('admin-customer-form-save')));
       await tester.pump();
 
       expect(
@@ -75,7 +80,7 @@ void main() {
       expect(find.text('تعديل عميل'), findsOneWidget);
 
       await tester.enterText(discountField, '١٢٫٥');
-      await tester.tap(find.widgetWithText(FilledButton, 'حفظ'));
+      await tester.tap(find.byKey(const ValueKey('admin-customer-form-save')));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('خصم 12.5%'), findsOneWidget);

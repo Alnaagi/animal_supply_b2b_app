@@ -8,7 +8,7 @@ const CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
-  "connect-src 'self' https: wss:",
+  "connect-src 'self' blob: https: wss:",
   "worker-src 'self' blob:",
   "child-src 'self' blob:",
   "manifest-src 'self'",

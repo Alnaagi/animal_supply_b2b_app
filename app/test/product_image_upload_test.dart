@@ -1,14 +1,18 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
 import 'package:animal_supply_b2b/src/data/repositories/catalog_repository.dart';
 import 'package:animal_supply_b2b/src/data/repositories/product_images_repository.dart';
+import 'package:animal_supply_b2b/src/features/admin_banners/admin_banners_screen.dart';
 import 'package:animal_supply_b2b/src/features/admin_products/admin_products_screen.dart';
 import 'package:animal_supply_b2b/src/features/auth/auth_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show StorageException;
 
 void main() {
   test('valid PNG uploads to a randomized owner path and returns HTTPS',
@@ -46,6 +50,24 @@ void main() {
     expect(
       storage.path,
       'banners/${storage.currentUserId}/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.png',
+    );
+    expect(result?.publicUrl, startsWith('https://storage.example/'));
+  });
+
+  test('category icon uploads use the category-icons storage folder', () async {
+    final storage = _FakeStorage();
+    final repository = ProductImagesRepository(
+      picker: _FakePicker(_png('category.png')),
+      storage: storage,
+      randomId: () => 'cccccccc-dddd-4eee-8fff-000000000000',
+    );
+
+    final result = await repository.pickAndUploadCategoryIcon();
+
+    expect(result, isNotNull);
+    expect(
+      storage.path,
+      'category-icons/${storage.currentUserId}/cccccccc-dddd-4eee-8fff-000000000000.png',
     );
     expect(result?.publicUrl, startsWith('https://storage.example/'));
   });
@@ -161,6 +183,79 @@ void main() {
     expect(storage.removed, storage.path);
   });
 
+  test('storage 403 is mapped to an Arabic permission reason', () {
+    final mapped = mapProductImageUploadError(
+      const StorageException(
+        'new row violates row-level security policy',
+        statusCode: '403',
+        error: 'Unauthorized',
+      ),
+      folder: ProductImagesRepository.productsFolder,
+    );
+    expect(mapped.code, 'UPLOAD_FORBIDDEN');
+    expect(mapped.message, contains('صلاحية رفع صور المنتجات'));
+  });
+
+  test('missing bucket 404 is mapped to an Arabic storage reason', () {
+    final mapped = mapProductImageUploadError(
+      const StorageException('Bucket not found', statusCode: '404'),
+      folder: ProductImagesRepository.productsFolder,
+    );
+    expect(mapped.code, 'BUCKET_MISSING');
+    expect(mapped.message, contains('product-images'));
+  });
+
+  test('invalid mime 400 includes the storage detail in Arabic wrapping', () {
+    final mapped = mapProductImageUploadError(
+      const StorageException(
+        'mime type image/heic is not supported',
+        statusCode: '400',
+        error: 'InvalidRequest',
+      ),
+      folder: ProductImagesRepository.productsFolder,
+    );
+    expect(mapped.code, 'UNSUPPORTED_IMAGE');
+    expect(mapped.message, contains('JPEG أو PNG أو WebP'));
+    expect(mapped.message, contains('image/heic'));
+  });
+
+  test('network failures surface an Arabic CORS/connection reason', () {
+    final mapped = mapProductImageUploadError(
+      Exception('ClientException: Failed to fetch'),
+      folder: ProductImagesRepository.productsFolder,
+    );
+    expect(mapped.code, 'UPLOAD_NETWORK');
+    expect(mapped.message, contains('CORS'));
+    expect(mapped.message, isNot(contains('Exception:')));
+  });
+
+  test('revoked browser blob URLs map to Arabic without English dump', () {
+    final mapped = mapProductImageUploadError(
+      Exception('Could not load Blob from its URL. Has it been revoked?'),
+      folder: ProductImagesRepository.productsFolder,
+    );
+    expect(mapped.code, 'UPLOAD_BROWSER_FILE');
+    expect(mapped.message, contains('تعذر قراءة ملف الصورة في المتصفح'));
+    expect(mapped.message, isNot(contains('Exception:')));
+    expect(mapped.message, isNot(contains('revoked')));
+  });
+
+  test('upload progress is indeterminate then 100 percent', () async {
+    final storage = _FakeStorage();
+    final progress = <double?>[];
+    final repository = ProductImagesRepository(
+      picker: _FakePicker(_png('photo.png')),
+      storage: storage,
+      randomId: () => '11111111-2222-4333-8444-555555555555',
+    );
+
+    await repository.pickAndUpload(onProgress: progress.add);
+
+    expect(progress.first, 0);
+    expect(progress.contains(null), isTrue);
+    expect(progress.last, 1);
+  });
+
   testWidgets(
       'admin dialog exposes the simplified Arabic product fields and '
       'separate inventory visibility controls', (tester) async {
@@ -226,6 +321,14 @@ void main() {
       find.byKey(const ValueKey('product-track-stock-switch')),
       findsOneWidget,
     );
+    expect(
+      tester
+          .widget<SwitchListTile>(
+            find.byKey(const ValueKey('product-track-stock-switch')),
+          )
+          .value,
+      isFalse,
+    );
     expect(find.byKey(const ValueKey('product-stock-field')), findsOneWidget);
     expect(
       find.byKey(
@@ -241,20 +344,48 @@ void main() {
       find.byKey(
         const ValueKey('product-hide-when-out-of-stock-switch'),
       ),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.text('سعر الجملة (د.ل)'), findsOneWidget);
     expect(find.text('سعر بيع الوحدة المقترح (د.ل)'), findsOneWidget);
     expect(find.text('الحد الأدنى لطلب الجملة'), findsOneWidget);
     expect(find.text('الكمية في الصندوق (اختياري)'), findsOneWidget);
     expect(find.text('كمية المخزون الداخلية (مطلوبة)'), findsOneWidget);
+    expect(find.text('صورة المنتج'), findsOneWidget);
+    expect(find.text('رفع صورة'), findsOneWidget);
+    expect(find.text('أو رابط https'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('product-image-upload-button')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('product-image-url-field')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('product-image-preview')),
+      findsOneWidget,
+    );
     expect(find.text('رابط صورة HTTPS'), findsNothing);
     expect(find.text('اختيار ورفع صورة'), findsNothing);
     expect(find.text('الوصف'), findsNothing);
 
-    await tester.tap(
-      find.byKey(const ValueKey('product-track-stock-switch')),
+    await tester.enterText(
+      find.byKey(const ValueKey('product-image-url-field')),
+      'http://insecure.example/image.png',
     );
+    await tester.tap(find.text('حفظ المنتج'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('استخدم رابط https صالحاً ومن دون بيانات دخول، أو ارفع صورة.'),
+      findsOneWidget,
+    );
+
+    final trackSwitch =
+        find.byKey(const ValueKey('product-track-stock-switch'));
+    await tester.ensureVisible(trackSwitch);
+    await tester.pumpAndSettle();
+    await tester.tap(trackSwitch);
     await tester.pumpAndSettle();
 
     expect(
@@ -267,17 +398,141 @@ void main() {
         const ValueKey('product-show-stock-quantity-switch'),
       ),
     );
-    expect(quantityVisibility.onChanged, isNull);
+    expect(quantityVisibility.onChanged, isNotNull);
     expect(
       find.byKey(
         const ValueKey('product-hide-when-out-of-stock-switch'),
       ),
-      findsNothing,
+      findsOneWidget,
     );
     expect(
       find.byKey(const ValueKey('product-visible-switch')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('new product upload shows a percent circle then the public URL',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final storage = _GatedStorage();
+    final repository = ProductImagesRepository(
+      picker: _FakePicker(_png('photo.png')),
+      storage: storage,
+      randomId: () => '11111111-2222-4333-8444-555555555555',
+    );
+
+    await _pumpProductForm(tester, repository: repository);
+    await tester.tap(find.byKey(const ValueKey('product-image-upload-button')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('product-image-upload-progress')),
+      findsOneWidget,
+    );
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(Image), findsWidgets);
+
+    storage.gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('product-image-upload-progress')),
+      findsNothing,
+    );
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('product-image-url-field')),
+          )
+          .controller
+          ?.text,
+      startsWith('https://storage.example/'),
+    );
+  });
+
+  testWidgets('new product upload surfaces the Arabic storage failure reason',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = ProductImagesRepository(
+      picker: _FakePicker(_png('photo.png')),
+      storage: _FakeStorage(
+        uploadError: const StorageException(
+          'new row violates row-level security policy',
+          statusCode: '403',
+        ),
+      ),
+    );
+
+    await _pumpProductForm(tester, repository: repository);
+    await tester.tap(find.byKey(const ValueKey('product-image-upload-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('صلاحية رفع صور المنتجات'), findsOneWidget);
+    expect(
+      find.textContaining('تعذر رفع الصورة. تحقق من الاتصال'),
+      findsNothing,
+    );
+    expect(find.textContaining('Exception:'), findsNothing);
+  });
+
+  testWidgets('banner upload surfaces the Arabic storage failure reason',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = ProductImagesRepository(
+      picker: _FakePicker(_png('banner.png')),
+      storage: _FakeStorage(
+        uploadError: const StorageException(
+          'new row violates row-level security policy',
+          statusCode: '403',
+        ),
+      ),
+    );
+
+    final router = GoRouter(
+      initialLocation: '/admin/banners',
+      routes: [
+        GoRoute(
+          path: '/admin/banners',
+          builder: (context, state) => const AdminBannersScreen(),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (ref) => _AdminAuthController(),
+          ),
+          productImagesRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: MaterialApp.router(
+          routerConfig: router,
+          builder: (context, child) => Directionality(
+            textDirection: TextDirection.rtl,
+            child: child!,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('بانر جديد'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('banner-image-upload-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('صلاحية رفع صور البانرات'), findsOneWidget);
+    expect(
+      find.textContaining('تعذر رفع الصورة. تحقق من الاتصال'),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('banner-image-preview')), findsOneWidget);
   });
 }
 
@@ -304,9 +559,11 @@ class _FakePicker implements ProductImagePicker {
 class _FakeStorage implements ProductImageStorageGateway {
   _FakeStorage({
     this.publicUrlValue = 'https://storage.example/product.png',
+    this.uploadError,
   });
 
   final String publicUrlValue;
+  final Object? uploadError;
   @override
   final String currentUserId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
   String? path;
@@ -327,11 +584,76 @@ class _FakeStorage implements ProductImageStorageGateway {
     required String path,
     required Uint8List bytes,
     required String contentType,
+    ProductImageUploadProgress? onProgress,
   }) async {
+    onProgress?.call(null);
+    if (uploadError != null) {
+      throw uploadError!;
+    }
     this.path = path;
     this.bytes = bytes;
     this.contentType = contentType;
+    onProgress?.call(1);
   }
+}
+
+class _GatedStorage extends _FakeStorage {
+  final gate = Completer<void>();
+
+  @override
+  Future<void> upload({
+    required String path,
+    required Uint8List bytes,
+    required String contentType,
+    ProductImageUploadProgress? onProgress,
+  }) async {
+    onProgress?.call(null);
+    await gate.future;
+    this.path = path;
+    this.bytes = bytes;
+    this.contentType = contentType;
+    onProgress?.call(1);
+  }
+}
+
+Future<void> _pumpProductForm(
+  WidgetTester tester, {
+  required ProductImagesRepository repository,
+}) async {
+  final router = GoRouter(
+    initialLocation: '/admin/products',
+    routes: [
+      GoRoute(
+        path: '/admin/products',
+        builder: (context, state) => const AdminProductsScreen(),
+      ),
+    ],
+  );
+  addTearDown(router.dispose);
+
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        authControllerProvider.overrideWith(
+          (ref) => _AdminAuthController(),
+        ),
+        catalogRepositoryProvider.overrideWithValue(
+          CatalogRepository.demo(seed: const []),
+        ),
+        productImagesRepositoryProvider.overrideWithValue(repository),
+      ],
+      child: MaterialApp.router(
+        routerConfig: router,
+        builder: (context, child) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: child!,
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(find.byTooltip('منتج جديد'));
+  await tester.pumpAndSettle();
 }
 
 class _AdminAuthController extends AuthController {

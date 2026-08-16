@@ -1,9 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/config/app_config.dart';
+import '../../core/config/app_config_validation.dart';
+import '../../core/notifications/browser_local_notifications.dart';
+import '../../core/notifications/notification_day_groups.dart';
 import '../../core/notifications/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/shop_loading.dart';
 import '../../data/models/app_notification.dart';
 import '../../data/repositories/notifications_repository.dart';
 import '../auth/auth_controller.dart';
@@ -34,11 +41,23 @@ class NotificationCenterSheet extends ConsumerStatefulWidget {
 class _NotificationCenterSheetState
     extends ConsumerState<NotificationCenterSheet> {
   late Future<List<AppNotification>> _future;
+  Timer? _pollTimer;
 
   @override
   void initState() {
     super.initState();
     _reload();
+    _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!mounted) return;
+      setState(_reload);
+      ref.invalidate(unreadNotificationsCountProvider);
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
   }
 
   void _reload() {
@@ -46,19 +65,46 @@ class _NotificationCenterSheetState
   }
 
   Future<void> _enablePushNotifications() async {
-    final enabled = await ref
+    final fcmEnabled = await ref
         .read(pushNotificationsCoordinatorProvider)
         .requestPermissionAndRegister();
+    final browser = ref.read(browserLocalNotificationsProvider);
+    var browserGranted = false;
+    if (browser.isSupported) {
+      browserGranted = await browser.requestPermission() ==
+          BrowserNotificationPermission.granted;
+    }
+    if (browserGranted) {
+      await browser.show(
+        title: 'تم تفعيل الإشعارات',
+        body: 'ستظهر التنبيهات في شريط إشعارات الجهاز.',
+        tag: 'browser-permission-granted',
+      );
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          enabled
+          fcmEnabled
               ? 'تم تفعيل الإشعارات الفورية لهذا الجهاز.'
-              : 'تعذر تفعيل الإشعارات الفورية. تحقق من إذن المتصفح أو إعدادات الإنتاج.',
+              : browserGranted
+                  ? 'تم تفعيل تنبيهات شريط النظام. ${firebaseClosedAppRequirementAr(
+                      configured:
+                          AppConfig.hasFirebaseConfigurationForCurrentPlatform,
+                    )}'
+                  : 'تعذر تفعيل الإشعارات الفورية. يمكنك السماح بتنبيه المتصفح أو فتح الإشعارات من الإعدادات.',
         ),
       ),
     );
+  }
+
+  Future<void> _markAllRead() async {
+    try {
+      await ref.read(notificationsRepositoryProvider).markAllRead();
+      ref.invalidate(unreadNotificationsCountProvider);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(_reload);
   }
 
   Future<void> _open(AppNotification notification) async {
@@ -95,6 +141,10 @@ class _NotificationCenterSheetState
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<int>(notificationInboxEpochProvider, (previous, next) {
+      if (previous == next) return;
+      setState(_reload);
+    });
     return SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -106,16 +156,23 @@ class _NotificationCenterSheetState
                 const Icon(Icons.notifications_active_outlined,
                     color: AppTheme.green),
                 const SizedBox(width: 8),
-                Text(
-                  'الإشعارات',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.w900),
+                Expanded(
+                  child: Text(
+                    'الإشعارات',
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w900),
+                  ),
                 ),
-                const Spacer(),
+                TextButton(
+                  key: const Key('mark-all-notifications-read-button'),
+                  onPressed: _markAllRead,
+                  child: const Text('قراءة الكل'),
+                ),
                 IconButton(
-                  tooltip: 'تفعيل الإشعارات الفورية',
+                  tooltip: 'تفعيل تنبيهات شريط النظام',
                   onPressed: _enablePushNotifications,
                   icon: const Icon(Icons.notifications_active_outlined),
                 ),
@@ -135,10 +192,12 @@ class _NotificationCenterSheetState
             child: FutureBuilder<List<AppNotification>>(
               future: _future,
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData &&
+                    !snapshot.hasError) {
+                  return const ShopLoading.section();
                 }
-                if (snapshot.hasError) {
+                if (snapshot.hasError && snapshot.data == null) {
                   return _NotificationMessage(
                     icon: Icons.cloud_off_outlined,
                     title: 'تعذر تحميل الإشعارات',
@@ -158,12 +217,40 @@ class _NotificationCenterSheetState
                     message: 'ستظهر تحديثات الطلبات والعروض هنا.',
                   );
                 }
+                final groups = groupNotificationsByDay(notifications);
+                final entries = <Object>[
+                  for (final group in groups) ...[
+                    group.label,
+                    ...group.items,
+                  ],
+                ];
                 return ListView.separated(
                   padding: const EdgeInsets.all(14),
-                  itemCount: notifications.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemCount: entries.length,
+                  separatorBuilder: (context, index) {
+                    if (entries[index] is String) {
+                      return const SizedBox(height: 4);
+                    }
+                    return const SizedBox(height: 8);
+                  },
                   itemBuilder: (context, index) {
-                    final notification = notifications[index];
+                    final entry = entries[index];
+                    if (entry is String) {
+                      return Padding(
+                        padding: const EdgeInsets.fromLTRB(4, 8, 4, 2),
+                        child: Text(
+                          entry,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleSmall
+                              ?.copyWith(
+                                color: AppTheme.darkGreen,
+                                fontWeight: FontWeight.w900,
+                              ),
+                        ),
+                      );
+                    }
+                    final notification = entry as AppNotification;
                     return Card(
                       color: notification.isRead
                           ? Colors.white
@@ -206,14 +293,16 @@ class _NotificationCenterSheetState
   }
 
   IconData _iconFor(String type) => switch (type) {
-        'new_order' || 'order_status' => Icons.receipt_long_outlined,
+        'new_order' || 'order_status' || 'order_status_changed' =>
+          Icons.receipt_long_outlined,
         'product_campaign' || 'promotion' => Icons.local_offer_outlined,
         'account' => Icons.manage_accounts_outlined,
         _ => Icons.notifications_outlined,
       };
 
   Color _colorFor(String type) => switch (type) {
-        'new_order' || 'order_status' => AppTheme.green,
+        'new_order' || 'order_status' || 'order_status_changed' =>
+          AppTheme.green,
         'product_campaign' || 'promotion' => AppTheme.orange,
         'account' => AppTheme.brown,
         _ => AppTheme.darkGreen,

@@ -192,6 +192,27 @@ class OrderItem extends OrderLine {
       product: currentProduct,
     );
   }
+
+  OrderItem copyWith({
+    String? id,
+    double? unitPrice,
+    double? lineTotal,
+  }) {
+    final nextPrice = unitPrice ?? this.unitPrice;
+    return OrderItem(
+      id: id ?? this.id,
+      productId: productId,
+      productName: productName,
+      productSku: productSku,
+      unitSize: unitSize,
+      packageLabel: packageLabel,
+      unitsPerBox: unitsPerBox,
+      quantity: quantity,
+      unitPrice: nextPrice,
+      lineTotal: lineTotal ?? nextPrice * quantity,
+      product: product,
+    );
+  }
 }
 
 int? _asNullableInt(Object? value) {
@@ -242,12 +263,14 @@ class Order {
     this.contactPerson = '',
     this.contactPhone = '',
     this.deliveryAddress = '',
+    this.customerDefaultAddress = '',
     this.deliveryNote = '',
     this.customerNote = '',
     this.adminNote = '',
     this.updatedAt,
     this.deliveryFee = 0,
     this.handlingFee = 0,
+    this.discountAmount = 0,
     this.statusHistory = const [],
     double? subtotal,
     double? total,
@@ -267,21 +290,38 @@ class Order {
   final DateTime createdAt;
   final DateTime? updatedAt;
   final String deliveryAddress;
+  final String customerDefaultAddress;
   final String deliveryNote;
   final String customerNote;
   final String adminNote;
   final double deliveryFee;
   final double handlingFee;
+  final double discountAmount;
   final List<OrderStatusHistoryEntry> statusHistory;
   final double? _subtotal;
   final double? _total;
 
   String get displayNumber => orderNumber.isEmpty ? id : orderNumber;
 
+  String get effectiveDeliveryAddress {
+    final explicit = deliveryAddress.trim();
+    if (explicit.isNotEmpty) return explicit;
+    return customerDefaultAddress.trim();
+  }
+
+  bool get usesCustomDeliveryAddress {
+    final explicit = deliveryAddress.trim();
+    if (explicit.isEmpty) return false;
+    final fallback = customerDefaultAddress.trim();
+    if (fallback.isEmpty) return true;
+    return _normalizeAddress(explicit) != _normalizeAddress(fallback);
+  }
+
   double get subtotal =>
       _subtotal ?? items.fold<double>(0, (sum, item) => sum + item.lineTotal);
 
-  double get total => _total ?? subtotal + deliveryFee + handlingFee;
+  double get total =>
+      _total ?? subtotal + deliveryFee + handlingFee - discountAmount;
 
   List<OrderStatus> get allowedNextStatuses => allowedOrderTransitions(status);
 
@@ -294,6 +334,7 @@ class Order {
     String? businessName,
     String? contactPerson,
     String? contactPhone,
+    String? customerDefaultAddress,
     OrderStatus? status,
     List<OrderLine>? items,
     DateTime? createdAt,
@@ -305,6 +346,7 @@ class Order {
     double? subtotal,
     double? deliveryFee,
     double? handlingFee,
+    double? discountAmount,
     double? total,
     List<OrderStatusHistoryEntry>? statusHistory,
   }) {
@@ -317,6 +359,8 @@ class Order {
       businessName: businessName ?? this.businessName,
       contactPerson: contactPerson ?? this.contactPerson,
       contactPhone: contactPhone ?? this.contactPhone,
+      customerDefaultAddress:
+          customerDefaultAddress ?? this.customerDefaultAddress,
       status: status ?? this.status,
       items: items ?? this.items,
       createdAt: createdAt ?? this.createdAt,
@@ -328,6 +372,7 @@ class Order {
       subtotal: subtotal ?? _subtotal,
       deliveryFee: deliveryFee ?? this.deliveryFee,
       handlingFee: handlingFee ?? this.handlingFee,
+      discountAmount: discountAmount ?? this.discountAmount,
       total: total ?? _total,
       statusHistory: statusHistory ?? this.statusHistory,
     );
@@ -348,14 +393,12 @@ class Order {
         _mapOrNull(row['customer']) ??
         const <String, dynamic>{};
     final id = (row['id'] ?? '').toString();
-    final customerAddress = [
-      customer['city'],
-      customer['area'],
-      customer['address'],
-    ]
-        .where((part) => part != null && part.toString().trim().isNotEmpty)
-        .map((part) => part.toString().trim())
-        .join(' - ');
+    final customerAddress = composeCustomerAddress(
+      city: customer['city']?.toString(),
+      area: customer['area']?.toString(),
+      address: customer['address']?.toString(),
+    );
+    final explicitDelivery = (row['delivery_address'] ?? '').toString().trim();
 
     return Order(
       id: id,
@@ -387,17 +430,40 @@ class Order {
       ],
       createdAt: _dateFrom(row['created_at']),
       updatedAt: _dateOrNull(row['updated_at']),
-      deliveryAddress: (row['delivery_address'] ?? customerAddress).toString(),
+      deliveryAddress: explicitDelivery,
+      customerDefaultAddress: customerAddress,
       deliveryNote: (row['delivery_note'] ?? '').toString(),
       customerNote: (row['customer_note'] ?? row['notes'] ?? '').toString(),
       adminNote: (row['admin_note'] ?? '').toString(),
       subtotal: _asDoubleOrNull(row['subtotal']),
       deliveryFee: _asDouble(row['delivery_fee']),
       handlingFee: _asDouble(row['handling_fee']),
+      discountAmount: _asDouble(row['discount_amount']),
       total: _asDoubleOrNull(row['total']),
       statusHistory: statusHistory,
     );
   }
+
+  static String composeCustomerAddress({
+    String? city,
+    String? area,
+    String? address,
+  }) {
+    return [
+      city,
+      area,
+      address,
+    ]
+        .where((part) => part != null && part.trim().isNotEmpty)
+        .map((part) => part!.trim())
+        .join(' - ');
+  }
+
+  static String _normalizeAddress(String value) => value
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .replaceAll('،', ',')
+      .trim()
+      .toLowerCase();
 }
 
 /// Shared estimate used by both cart and checkout.

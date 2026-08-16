@@ -2,7 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/config/shop_branding.dart';
+import '../../core/localization/arabic_copy.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/branded_auth_loading.dart';
+import '../../core/widgets/shop_brand_logo.dart';
+import '../../data/repositories/demo_data.dart';
 import 'auth_controller.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -22,7 +27,6 @@ class LoginScreen extends ConsumerStatefulWidget {
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   late final TextEditingController username;
   late final TextEditingController password;
-  late final TextEditingController inviteToken;
 
   bool get hasInviteFromLink => widget.inviteToken?.trim().isNotEmpty ?? false;
 
@@ -31,7 +35,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     super.initState();
     username = TextEditingController(text: widget.clientCode?.trim() ?? '');
     password = TextEditingController();
-    inviteToken = TextEditingController();
   }
 
   @override
@@ -49,7 +52,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   void dispose() {
     username.dispose();
     password.dispose();
-    inviteToken.dispose();
     super.dispose();
   }
 
@@ -57,7 +59,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return controller.login(
       username.text,
       password.text,
-      inviteToken: hasInviteFromLink ? widget.inviteToken : inviteToken.text,
+      inviteToken: widget.inviteToken,
       clientCode: widget.clientCode,
     );
   }
@@ -66,6 +68,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     final auth = ref.watch(authControllerProvider);
     final authController = ref.read(authControllerProvider.notifier);
+    final branding = ref.watch(shopBrandingProvider);
     final configurationBlocked = AppConfig.configurationBlocked;
     final theme = Theme.of(context);
     const fieldRadius = BorderRadius.all(Radius.circular(16));
@@ -140,7 +143,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
 
     return Scaffold(
-      body: SafeArea(
+      body: Stack(
+        children: [
+          SafeArea(
         child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(20),
@@ -156,22 +161,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Container(
-                            width: 74,
-                            height: 74,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Color(0xffe3f3eb),
-                            ),
-                            child: const Icon(
-                              Icons.pets,
-                              size: 42,
-                              color: AppTheme.green,
+                          Center(
+                            child: ShopBrandLogo(
+                              logoUrl: branding.logoUrl,
+                              size: 74,
+                              backgroundColor: const Color(0xffe3f3eb),
+                              fallbackIconColor: AppTheme.green,
                             ),
                           ),
                           const SizedBox(height: 14),
                           Text(
-                            AppConfig.shopName,
+                            branding.shopName,
                             textAlign: TextAlign.center,
                             style: Theme.of(context)
                                 .textTheme
@@ -179,8 +179,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 ?.copyWith(fontWeight: FontWeight.w900),
                           ),
                           const SizedBox(height: 8),
-                          const Text(
-                            'مرحباً بك في منصة طلبات الجملة للأعلاف ومستلزمات الحيوانات',
+                          Text(
+                            'مرحباً بك في منصة طلبات الجملة لدى ${branding.shopName}',
                             textAlign: TextAlign.center,
                           ),
                           const SizedBox(height: 14),
@@ -191,38 +191,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     : null),
                             isError: configurationBlocked,
                           ),
-                          if (auth.bootstrapping) ...[
-                            const SizedBox(height: 14),
-                            const LinearProgressIndicator(),
-                            const SizedBox(height: 8),
-                            const Text(
-                              'جار التحقق من جلسة الدخول المحفوظة...',
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                          if (hasInviteFromLink) ...[
-                            const SizedBox(height: 14),
-                            const _InviteReceivedCard(),
-                          ] else ...[
-                            const SizedBox(height: 20),
-                            TextField(
-                              key: const Key('login-invite-field'),
-                              controller: inviteToken,
-                              enabled: !auth.loading,
-                              obscureText: true,
-                              enableSuggestions: false,
-                              autocorrect: false,
-                              textInputAction: TextInputAction.next,
-                              decoration: const InputDecoration(
-                                labelText: 'رمز الدعوة',
-                                hintText: 'أدخل الرمز المرسل من المتجر',
-                                helperText:
-                                    'لأول دخول أو إعادة التعيين فقط. الحسابات المفعلة '
-                                    'لا تحتاجه، ولا تضع كلمة المرور هنا.',
-                                prefixIcon: Icon(Icons.link),
-                              ),
-                            ),
-                          ],
                           const SizedBox(height: 14),
                           TextField(
                             key: const Key('login-username-field'),
@@ -232,7 +200,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             keyboardType: TextInputType.text,
                             textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
-                              labelText: 'اسم المستخدم أو البريد',
+                              labelText: 'اسم المستخدم أو رقم الهاتف',
                               prefixIcon: Icon(Icons.person_outline),
                             ),
                           ),
@@ -254,6 +222,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               prefixIcon: Icon(Icons.lock_outline),
                             ),
                           ),
+                          if (hasInviteFromLink) ...[
+                            const SizedBox(height: 14),
+                            const _InviteReceivedCard(),
+                          ],
                           if (auth.error != null) ...[
                             const SizedBox(height: 12),
                             _AuthMessage(
@@ -297,8 +269,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   onPressed: auth.loading
                                       ? null
                                       : () => authController.login(
-                                            'admin@demo.ly',
-                                            'Admin123!',
+                                            'admin',
+                                            demoAdminPassword,
                                           ),
                                 ),
                                 _DemoLoginButton(
@@ -307,8 +279,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   onPressed: auth.loading
                                       ? null
                                       : () => authController.login(
-                                            'staff@demo.ly',
-                                            'Staff123!',
+                                            'staff',
+                                            demoStaffPassword,
                                           ),
                                 ),
                                 _DemoLoginButton(
@@ -318,7 +290,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       ? null
                                       : () => authController.login(
                                             'tripoli-pets',
-                                            'Customer123!',
+                                            demoCustomerPassword,
                                           ),
                                 ),
                               ],
@@ -333,6 +305,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
           ),
         ),
+      ),
+          if (auth.loading || auth.bootstrapping)
+            BrandedAuthLoading(
+              asOverlay: true,
+              message: auth.bootstrapping && !auth.loading
+                  ? ArabicCopy.sessionRestore
+                  : ArabicCopy.loginVerifying,
+            ),
+        ],
       ),
     );
   }

@@ -19,20 +19,33 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="منصة عربية لطلبات الجملة للأعلاف ومستلزمات الحيوانات.">
+  <meta name="description" content="منصة عربية لطلبات الجملة.">
   <meta name="theme-color" content="#168A63">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="متجر الأعلاف">
+  <meta name="apple-mobile-web-app-title" content="المتجر">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>متجر أعلاف ومستلزمات الحيوانات</title>
+  <title>المتجر</title>
   <link rel="manifest" href="manifest.json">
+  <script>
+    (function restoreShopDocumentTitle() {
+      try {
+        var name = localStorage.getItem('shop_branding.v1.name');
+        if (!name) return;
+        name = String(name).trim();
+        if (!name) return;
+        document.title = name;
+        var appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+        if (appleTitle) appleTitle.setAttribute('content', name);
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <!--

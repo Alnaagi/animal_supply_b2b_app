@@ -96,6 +96,31 @@ test('accepts a complete public production web configuration', () => {
   );
 });
 
+test('allows production when public Supabase is present and Firebase is omitted', () => {
+  assert.doesNotThrow(() =>
+    assertPublicBuildConfiguration(
+      productionDefines({
+        FIREBASE_API_KEY: '',
+        FIREBASE_PROJECT_ID: '',
+        FIREBASE_MESSAGING_SENDER_ID: '',
+        FIREBASE_WEB_APP_ID: '',
+        FIREBASE_WEB_VAPID_KEY: '',
+      }),
+    ),
+  );
+  assert.doesNotThrow(() =>
+    assertPublicBuildConfiguration(
+      productionAndroidDefines({
+        FIREBASE_API_KEY: '',
+        FIREBASE_PROJECT_ID: '',
+        FIREBASE_MESSAGING_SENDER_ID: '',
+        FIREBASE_ANDROID_APP_ID: '',
+      }),
+      { platform: 'android' },
+    ),
+  );
+});
+
 test('uses platform-specific production Firebase requirements for mobile', () => {
   assert.doesNotThrow(() =>
     assertPublicBuildConfiguration(productionAndroidDefines(), {

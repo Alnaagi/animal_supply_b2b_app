@@ -4,25 +4,41 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/concurrency/stale_write.dart';
 import '../../core/config/app_config.dart';
+import '../../core/config/shop_branding.dart';
 import '../../core/constants/order_status.dart';
+import '../../core/files/browser_print.dart';
+import '../../core/refresh/screen_reload.dart';
+import '../../core/notifications/local_alert_coordinator.dart';
 import '../../core/notifications/new_order_alert_sound.dart';
+import '../../core/notifications/new_order_alert_sound_prefs.dart';
+import '../../core/support/customer_contact.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/product_image_placeholder.dart';
+import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../core/widgets/status_chip.dart';
+import '../../data/export/admin_order_invoice.dart';
+import '../../data/local/admin_order_workflow_store.dart';
 import '../../data/local/admin_orders_filter_store.dart';
+import '../../data/models/admin_order_pricing.dart';
 import '../../data/models/order.dart';
 import '../../data/repositories/notifications_repository.dart';
 import '../../data/repositories/orders_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
+import 'admin_order_pricing_sheet.dart';
+import 'admin_order_sound_settings.dart';
 
 class AdminOrdersScreen extends ConsumerStatefulWidget {
   const AdminOrdersScreen({
     this.highlightedOrderId,
     this.showTodayOnly = false,
-    this.autoRefreshInterval = const Duration(seconds: 20),
+    this.autoRefreshInterval = const Duration(seconds: 10),
     super.key,
   });
 
@@ -41,6 +57,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
   Set<OrderStatus> includedStatuses = AdminOrdersFilterStore.productDefault;
   Set<OrderStatus> savedIncludedStatuses =
       AdminOrdersFilterStore.productDefault;
+  Set<OrderStatus> enabledWorkflowSteps = AdminOrderWorkflowStore.allSteps;
   late bool todayOnly;
   late bool soundEnabled;
   late bool soundReady;
@@ -126,16 +143,19 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
 
   @override
   Widget build(BuildContext context) {
+    listenForScreenReload(ref, () => _reload());
     final highlightedOrderId = widget.highlightedOrderId;
     final soundAvailable = ref.watch(newOrderAlertSoundProvider).isAvailable;
+    final alertToneLabel =
+        ref.watch(newOrderAlertSoundSettingsProvider).tone.labelAr;
     final compactLayout = MediaQuery.sizeOf(context).width < 600;
     return AdminShell(
       title: 'إدارة الطلبات',
       child: initialLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ShopLoading.page()
           : loadError != null && orders.isEmpty
               ? _AdminOrdersError(onRetry: _manualRefresh)
-              : RefreshIndicator(
+              : ShopRefreshIndicator(
                   onRefresh: _manualRefresh,
                   child: ListView(
                     controller: listScrollController,
@@ -157,8 +177,10 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                         soundReady: soundReady,
                         refreshBlocked: _backgroundRefreshBlocked,
                         soundToggleBusy: soundToggleBusy,
+                        alertToneLabel: alertToneLabel,
                         onRefresh: () => unawaited(_manualRefresh()),
                         onToggleSound: () => unawaited(_toggleSound()),
+                        onPickAlertSound: () => unawaited(_showAlertSoundPicker()),
                       ),
                       const SizedBox(height: 12),
                       _AdminOrdersFilterPanel(
@@ -193,6 +215,16 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                               _applyStatus(order, status, note: note),
                             ),
                             onCopy: () => _copySummary(order),
+                            onPrint: () => _printInvoice(order),
+                            onSendWhatsapp: () => unawaited(_sendWhatsapp(order)),
+                            onCopyText: _copyText,
+                            onContactWhatsapp: () =>
+                                unawaited(_openCustomerWhatsapp(order)),
+                            onCall: () => unawaited(_callCustomer(order)),
+                            enabledWorkflowSteps: enabledWorkflowSteps,
+                            onEditPricing: AdminOrderPricing.canEdit(order)
+                                ? () => unawaited(_editPricing(order))
+                                : null,
                           ),
                       if (hasMore)
                         Padding(
@@ -201,12 +233,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                             key: const ValueKey('admin-orders-load-more'),
                             onPressed: loadingMore ? null : _loadMore,
                             icon: loadingMore
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
+                                ? const ShopLoading.compact()
                                 : const Icon(Icons.expand_more),
                             label: Text(
                               loadingMore
@@ -278,6 +305,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
 
   Future<void> _restoreSavedFilterPrefs() async {
     final saved = await ref.read(adminOrdersFilterStoreProvider).load();
+    final workflow = await ref.read(adminOrderWorkflowStoreProvider).load();
     if (!mounted) return;
     final alreadyApplied = AdminOrdersFilterStore.sameSet(
           saved,
@@ -287,6 +315,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     setState(() {
       savedIncludedStatuses = saved;
       includedStatuses = saved;
+      enabledWorkflowSteps = workflow;
     });
     if (alreadyApplied) return;
     await _reload(showFullLoading: true);
@@ -316,15 +345,17 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
   }
 
   Future<void> _showFilterSettings() async {
-    final draft = {...includedStatuses};
-    final saved = await showDialog<Set<OrderStatus>>(
+    final filterDraft = {...includedStatuses};
+    final workflowDraft = {...enabledWorkflowSteps};
+    final saved = await showDialog<_AdminOrdersSettingsResult>(
       context: context,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            final canSave = draft.isNotEmpty;
+            final canSave =
+                filterDraft.isNotEmpty && workflowDraft.isNotEmpty;
             return AlertDialog(
-              title: const Text('إعدادات التصفية'),
+              title: const Text('إعدادات الحالات'),
               content: SizedBox(
                 width: 420,
                 child: SingleChildScrollView(
@@ -333,10 +364,18 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const Text(
+                        'تصفية القائمة',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
                         'اختر الحالات التي تظهر افتراضياً عند فتح إدارة الطلبات. يتم حفظ الاختيار على هذا الجهاز فقط.',
                         style: TextStyle(fontSize: 13, height: 1.45),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 8),
                       for (final status in OrderStatus.values)
                         CheckboxListTile(
                           key: ValueKey(
@@ -344,15 +383,53 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                           ),
                           dense: true,
                           contentPadding: EdgeInsets.zero,
-                          value: draft.contains(status),
+                          value: filterDraft.contains(status),
                           title: Text(status.label),
                           controlAffinity: ListTileControlAffinity.leading,
                           onChanged: (selected) {
                             setDialogState(() {
                               if (selected == true) {
-                                draft.add(status);
+                                filterDraft.add(status);
                               } else {
-                                draft.remove(status);
+                                filterDraft.remove(status);
+                              }
+                            });
+                          },
+                        ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'خطوات الحالة',
+                        key: ValueKey('admin-orders-workflow-settings-title'),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'فعّل أو أخفِ أزرار الخطوة التالية في بطاقة الطلب. لا يمكن إضافة حالة جديدة هنا؛ أي خطوة إضافية تحتاج تغييراً في الخادم.',
+                        style: TextStyle(fontSize: 13, height: 1.45),
+                      ),
+                      const SizedBox(height: 8),
+                      for (final status
+                          in AdminOrderWorkflowStore.ordered(
+                            AdminOrderWorkflowStore.allSteps,
+                          ))
+                        CheckboxListTile(
+                          key: ValueKey(
+                            'admin-orders-workflow-pref-${status.value}',
+                          ),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          value: workflowDraft.contains(status),
+                          title: Text(status.label),
+                          controlAffinity: ListTileControlAffinity.leading,
+                          onChanged: (selected) {
+                            setDialogState(() {
+                              if (selected == true) {
+                                workflowDraft.add(status);
+                              } else {
+                                workflowDraft.remove(status);
                               }
                             });
                           },
@@ -361,7 +438,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                         const Padding(
                           padding: EdgeInsets.only(top: 4),
                           child: Text(
-                            'اختر حالة واحدة على الأقل.',
+                            'اختر حالة واحدة على الأقل في التصفية وفي خطوات الحالة.',
                             style: TextStyle(
                               color: AppTheme.red,
                               fontWeight: FontWeight.w700,
@@ -376,9 +453,12 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                 TextButton(
                   onPressed: () {
                     setDialogState(() {
-                      draft
+                      filterDraft
                         ..clear()
                         ..addAll(AdminOrdersFilterStore.productDefault);
+                      workflowDraft
+                        ..clear()
+                        ..addAll(AdminOrderWorkflowStore.allSteps);
                     });
                   },
                   child: const Text('إعادة الافتراضي'),
@@ -389,7 +469,13 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                 ),
                 FilledButton(
                   onPressed: canSave
-                      ? () => Navigator.pop(dialogContext, {...draft})
+                      ? () => Navigator.pop(
+                            dialogContext,
+                            _AdminOrdersSettingsResult(
+                              includedStatuses: {...filterDraft},
+                              enabledWorkflowSteps: {...workflowDraft},
+                            ),
+                          )
                       : null,
                   child: const Text('حفظ الإعدادات'),
                 ),
@@ -400,22 +486,33 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
       },
     );
     if (saved == null || !mounted) return;
-    final persisted = await ref.read(adminOrdersFilterStoreProvider).save(saved);
+    final persistedFilter =
+        await ref.read(adminOrdersFilterStoreProvider).save(saved.includedStatuses);
+    final persistedWorkflow = await ref
+        .read(adminOrderWorkflowStoreProvider)
+        .save(saved.enabledWorkflowSteps);
     if (!mounted) return;
+    final filterChanged = !AdminOrdersFilterStore.sameSet(
+      saved.includedStatuses,
+      includedStatuses,
+    );
     setState(() {
-      savedIncludedStatuses = saved;
-      includedStatuses = saved;
+      savedIncludedStatuses = saved.includedStatuses;
+      includedStatuses = saved.includedStatuses;
+      enabledWorkflowSteps = saved.enabledWorkflowSteps;
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          persisted
-              ? 'تم حفظ إعدادات التصفية على هذا الجهاز.'
-              : 'تعذر حفظ الإعدادات على الجهاز، لكن سيتم استخدامها في هذه الجلسة.',
+          persistedFilter && persistedWorkflow
+              ? 'تم حفظ إعدادات التصفية وخطوات الحالة على هذا الجهاز.'
+              : 'تعذر حفظ بعض الإعدادات على الجهاز، لكن سيتم استخدامها في هذه الجلسة.',
         ),
       ),
     );
-    await _reload(showFullLoading: true);
+    if (filterChanged) {
+      await _reload(showFullLoading: true);
+    }
   }
 
   ({DateTime? from, DateTime? until}) _dateRange() {
@@ -524,7 +621,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
       });
       if (newOrderIds.isNotEmpty) {
         ref.invalidate(unreadNotificationsCountProvider);
-        await _announceNewOrders(newOrderIds.length);
+        await _announceNewOrders(newOrderIds);
       } else if (showFeedback && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -629,6 +726,32 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     }
   }
 
+  Future<void> _showAlertSoundPicker() async {
+    final sound = ref.read(newOrderAlertSoundProvider);
+    if (sound.isAvailable) {
+      await sound.prime();
+    }
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 12,
+            ),
+            child: AdminOrderSoundSettingsPanel(
+              soundEnabled: true,
+              soundReady: soundReady,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _primeSoundFromGesture() async {
     if (!soundEnabled) return;
     final ready = await ref.read(newOrderAlertSoundProvider).prime();
@@ -677,15 +800,34 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     }
   }
 
-  Future<void> _announceNewOrders(int count) async {
-    if (!appIsResumed) return;
-    final sound = ref.read(newOrderAlertSoundProvider);
+  Future<void> _announceNewOrders(Set<String> newOrderIds) async {
+    final count = newOrderIds.length;
+    final coordinator = ref.read(localAlertCoordinatorProvider);
     var played = false;
-    if (soundEnabled && sound.isAvailable) {
-      played = await sound.play();
+    var index = 0;
+    for (final id in newOrderIds) {
+      final result = await coordinator.announce(
+        id: id,
+        title: 'طلب جديد',
+        body: count == 1
+            ? 'وصل طلب جديد إلى المتجر.'
+            : 'وصلت $count طلبات جديدة إلى المتجر.',
+        playSound: appIsResumed && soundEnabled && !played && index == 0,
+        target: '/admin/orders',
+      );
+      played = played || result.playedSound;
+      index += 1;
+    }
+    if (!appIsResumed) return;
+    if (!played && soundEnabled) {
+      final sound = ref.read(newOrderAlertSoundProvider);
+      if (sound.isAvailable) {
+        played = await sound.play();
+      }
     }
     if (!mounted || !appIsResumed) return;
 
+    final sound = ref.read(newOrderAlertSoundProvider);
     final shouldOfferSoundAction =
         soundEnabled && sound.isAvailable && !played && !soundBlockedHintShown;
     final filteredView = todayOnly ||
@@ -725,7 +867,9 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     OrderStatus status, {
     String note = '',
   }) async {
-    if (!order.allowedNextStatuses.contains(status)) {
+    if (updatingOrderId != null) return;
+    if (!order.allowedNextStatuses.contains(status) ||
+        !enabledWorkflowSteps.contains(status)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -746,6 +890,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
             order.id,
             status,
             adminNote: note,
+            expectedUpdatedAt: order.updatedAt,
           );
       if (AppConfig.isDemoMode) {
         ref.read(notificationsRepositoryProvider).addDemoOrderStatus(
@@ -759,12 +904,15 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
           content: Text('تم تحديث الطلب إلى: ${status.label}'),
         ),
       );
-      await _reload();
+      await reloadAfterMutation(this, () => _reload());
     } on OrdersRepositoryException catch (exception) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(exception.message)),
       );
+      if (exception.code == StaleWriteException.code) {
+        await reloadAfterMutation(this, () => _reload());
+      }
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -782,13 +930,163 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
           order,
           order.businessName.isEmpty ? 'عميل B2B' : order.businessName,
         );
-    await Clipboard.setData(ClipboardData(text: summary));
-    if (mounted) {
+    await _copyText(summary, 'تم نسخ ملخص الطلب');
+  }
+
+  Future<void> _copyText(String value, String message) async {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || !mounted) return;
+    await Clipboard.setData(ClipboardData(text: trimmed));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  void _printInvoice(Order order) {
+    final html = AdminOrderInvoiceHtml.build(
+      order: order,
+      shopName: ref.read(shopBrandingProvider).shopName,
+      demoData: AppConfig.isDemoMode,
+    );
+    final opened = kIsWeb && printHtmlDocument(html);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          opened
+              ? 'تم فتح نافذة طباعة الفاتورة'
+              : 'الطباعة متاحة من نسخة المتصفح.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendWhatsapp(Order order) async {
+    final summary = ref.read(ordersRepositoryProvider).whatsappSummary(
+          order,
+          order.businessName.isEmpty ? 'عميل B2B' : order.businessName,
+        );
+    final uri = CustomerContact.whatsappUri(
+      phone: order.contactPhone,
+      text: summary,
+    );
+    if (uri == null) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم نسخ ملخص الطلب')),
+        const SnackBar(
+          content: Text('لا يوجد رقم واتساب لهذا العميل.'),
+        ),
+      );
+      return;
+    }
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر فتح واتساب.')),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر فتح واتساب.')),
       );
     }
   }
+
+  Future<void> _openCustomerWhatsapp(Order order) async {
+    final uri = CustomerContact.whatsappUri(
+      phone: order.contactPhone,
+      text: 'مرحباً، بخصوص الطلب ${order.displayNumber}',
+    );
+    if (uri == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا يوجد رقم واتساب لهذا العميل.')),
+      );
+      return;
+    }
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر فتح واتساب.')),
+      );
+    }
+  }
+
+  Future<void> _callCustomer(Order order) async {
+    final uri = CustomerContact.telUri(order.contactPhone);
+    if (uri == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا يوجد رقم للاتصال بهذا العميل.')),
+      );
+      return;
+    }
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر بدء الاتصال.')),
+      );
+    }
+  }
+
+  Future<void> _editPricing(Order order) async {
+    if (updatingOrderId != null) return;
+    final result = await showAdminOrderPricingSheet(
+      context: context,
+      order: order,
+      demoData: AppConfig.isDemoMode,
+    );
+    if (result == null || !mounted) return;
+    setState(() => updatingOrderId = order.id);
+    try {
+      await ref.read(ordersRepositoryProvider).updateOrderPricing(
+            orderId: order.id,
+            unitPrices: result.unitPrices,
+            deliveryFee: result.deliveryFee,
+            discountAmount: result.discountAmount,
+            expectedUpdatedAt: order.updatedAt,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم اعتماد تسعير الفاتورة.')),
+      );
+      await reloadAfterMutation(this, () => _reload());
+    } on OrdersRepositoryException catch (exception) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(exception.message)),
+      );
+      if (exception.code == StaleWriteException.code) {
+        await reloadAfterMutation(this, () => _reload());
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تعذر حفظ تسعير الفاتورة. حدّث القائمة وحاول مجدداً.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => updatingOrderId = null);
+    }
+  }
+}
+
+class _AdminOrdersSettingsResult {
+  const _AdminOrdersSettingsResult({
+    required this.includedStatuses,
+    required this.enabledWorkflowSteps,
+  });
+
+  final Set<OrderStatus> includedStatuses;
+  final Set<OrderStatus> enabledWorkflowSteps;
 }
 
 class _OrdersLiveStatus extends StatelessWidget {
@@ -802,8 +1100,10 @@ class _OrdersLiveStatus extends StatelessWidget {
     required this.soundReady,
     required this.refreshBlocked,
     required this.soundToggleBusy,
+    required this.alertToneLabel,
     required this.onRefresh,
     required this.onToggleSound,
+    required this.onPickAlertSound,
   });
 
   final Duration autoRefreshInterval;
@@ -815,8 +1115,10 @@ class _OrdersLiveStatus extends StatelessWidget {
   final bool soundReady;
   final bool refreshBlocked;
   final bool soundToggleBusy;
+  final String alertToneLabel;
   final VoidCallback onRefresh;
   final VoidCallback onToggleSound;
+  final VoidCallback onPickAlertSound;
 
   @override
   Widget build(BuildContext context) {
@@ -835,7 +1137,7 @@ class _OrdersLiveStatus extends StatelessWidget {
     final soundLabel = !soundEnabled
         ? 'صوت الطلبات متوقف'
         : soundReady
-            ? 'صوت الطلبات مفعّل'
+            ? 'صوت التنبيه · $alertToneLabel'
             : 'اضغط رمز الصوت مرة واحدة لتفعيله';
 
     return Semantics(
@@ -871,9 +1173,9 @@ class _OrdersLiveStatus extends StatelessWidget {
                   ),
                   child: refreshing
                       ? Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
+                          padding: const EdgeInsets.all(8),
+                          child: ShopLoading.compact(
+                            size: 18,
                             color: statusColor,
                           ),
                         )
@@ -916,6 +1218,14 @@ class _OrdersLiveStatus extends StatelessWidget {
                   const SizedBox(width: 5),
                   IconButton.filledTonal(
                     key: const ValueKey(
+                      'open-admin-orders-alert-sound-button',
+                    ),
+                    onPressed: onPickAlertSound,
+                    tooltip: 'صوت التنبيه',
+                    icon: const Icon(Icons.tune),
+                  ),
+                  IconButton.filledTonal(
+                    key: const ValueKey(
                       'toggle-admin-orders-sound-button',
                     ),
                     onPressed: soundToggleBusy ? null : onToggleSound,
@@ -944,12 +1254,10 @@ class _OrdersLiveStatus extends StatelessWidget {
                   onPressed: refreshBlocked ? null : onRefresh,
                   tooltip: 'تحديث الطلبات الآن',
                   icon: refreshing
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
+                      ? const ShopLoading.compact(
+                          size: 18,
+                          color: Colors.white,
+                          light: true,
                         )
                       : const Icon(Icons.refresh),
                 ),
@@ -971,6 +1279,7 @@ class _OrdersLiveStatus extends StatelessWidget {
                         : Icons.volume_off_outlined,
                     label: soundLabel,
                     highlighted: soundReady,
+                    onTap: onPickAlertSound,
                   ),
               ],
             ),
@@ -983,20 +1292,23 @@ class _OrdersLiveStatus extends StatelessWidget {
 
 class _OrdersStatusPill extends StatelessWidget {
   const _OrdersStatusPill({
+    super.key,
     required this.icon,
     required this.label,
     this.highlighted = false,
+    this.onTap,
   });
 
   final IconData icon;
   final String label;
   final bool highlighted;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final color = highlighted ? scheme.primary : scheme.onSurfaceVariant;
-    return Container(
+    final child = Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
         color: scheme.surface.withValues(alpha: .86),
@@ -1018,6 +1330,12 @@ class _OrdersStatusPill extends StatelessWidget {
           ),
         ],
       ),
+    );
+    if (onTap == null) return child;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: child,
     );
   }
 }
@@ -1272,7 +1590,7 @@ class _AdminOrdersStatusFilter extends StatelessWidget {
             ),
             IconButton(
               key: const ValueKey('admin-orders-filter-settings'),
-              tooltip: 'إعدادات التصفية',
+              tooltip: 'إعدادات التصفية وخطوات الحالة',
               visualDensity: VisualDensity.compact,
               onPressed: onOpenSettings,
               icon: const Icon(Icons.settings_outlined, size: 20),
@@ -1437,6 +1755,13 @@ class _AdminOrderCard extends StatelessWidget {
     required this.onExpanded,
     required this.onSelectStatus,
     required this.onCopy,
+    required this.onPrint,
+    required this.onSendWhatsapp,
+    required this.onCopyText,
+    required this.onContactWhatsapp,
+    required this.onCall,
+    required this.enabledWorkflowSteps,
+    this.onEditPricing,
     this.cardKey,
     super.key,
   });
@@ -1447,6 +1772,13 @@ class _AdminOrderCard extends StatelessWidget {
   final VoidCallback onExpanded;
   final void Function(OrderStatus status, String note) onSelectStatus;
   final VoidCallback onCopy;
+  final VoidCallback onPrint;
+  final VoidCallback onSendWhatsapp;
+  final Future<void> Function(String value, String message) onCopyText;
+  final VoidCallback onContactWhatsapp;
+  final VoidCallback onCall;
+  final Set<OrderStatus> enabledWorkflowSteps;
+  final VoidCallback? onEditPricing;
   final Key? cardKey;
 
   @override
@@ -1454,8 +1786,7 @@ class _AdminOrderCard extends StatelessWidget {
     final customerName =
         order.businessName.isEmpty ? 'عميل B2B' : order.businessName;
     final scheme = Theme.of(context).colorScheme;
-    final hasNotes = order.customerNote.trim().isNotEmpty ||
-        order.adminNote.trim().isNotEmpty;
+    final hasAdminNote = order.adminNote.trim().isNotEmpty;
     return Card(
       key: cardKey,
       clipBehavior: Clip.antiAlias,
@@ -1499,16 +1830,26 @@ class _AdminOrderCard extends StatelessWidget {
                 _AdminOrderCustomerDelivery(
                   order: order,
                   customerName: customerName,
+                  onCopyText: onCopyText,
+                  onContactWhatsapp: onContactWhatsapp,
+                  onCall: onCall,
                 ),
-                _AdminOrderInvoice(order: order),
-                if (hasNotes) _AdminOrderNotes(order: order),
+                _AdminOrderInvoice(
+                  order: order,
+                  demoData: AppConfig.isDemoMode,
+                  onEditPricing: onEditPricing,
+                ),
+                if (hasAdminNote) _AdminOrderNotes(order: order),
                 if (order.statusHistory.isNotEmpty)
                   _AdminOrderHistory(order: order),
                 _AdminOrderActions(
                   order: order,
                   updating: updating,
+                  enabledWorkflowSteps: enabledWorkflowSteps,
                   onSelectStatus: onSelectStatus,
                   onCopy: onCopy,
+                  onPrint: onPrint,
+                  onSendWhatsapp: onSendWhatsapp,
                 ),
               ],
             ),
@@ -1669,47 +2010,115 @@ class _AdminOrderCustomerDelivery extends StatelessWidget {
   const _AdminOrderCustomerDelivery({
     required this.order,
     required this.customerName,
+    required this.onCopyText,
+    required this.onContactWhatsapp,
+    required this.onCall,
   });
 
   final Order order;
   final String customerName;
+  final Future<void> Function(String value, String message) onCopyText;
+  final VoidCallback onContactWhatsapp;
+  final VoidCallback onCall;
 
   @override
   Widget build(BuildContext context) {
+    final phone = order.contactPhone.trim();
+    final hasPhone = phone.isNotEmpty;
+    final address = order.effectiveDeliveryAddress;
+    final customerNote = order.customerNote.trim();
     final customerDetails = <Widget>[
       _AdminOrderDetailLine(
-        label: 'المنشأة',
+        label: 'رقم الطلب',
+        value: order.displayNumber,
+        actions: [
+          _AdminOrderIconAction(
+            key: ValueKey('admin-order-copy-number-${order.id}'),
+            icon: Icons.copy,
+            tooltip: 'نسخ رقم الطلب',
+            onPressed: () => onCopyText(order.displayNumber, 'تم نسخ رقم الطلب'),
+          ),
+        ],
+      ),
+      _AdminOrderDetailLine(
+        label: 'اسم المتجر',
         value: customerName,
+        actions: [
+          _AdminOrderIconAction(
+            key: ValueKey('admin-order-copy-business-${order.id}'),
+            icon: Icons.copy,
+            tooltip: 'نسخ اسم المتجر',
+            onPressed: () => onCopyText(customerName, 'تم نسخ اسم المتجر'),
+          ),
+        ],
       ),
       if (order.contactPerson.trim().isNotEmpty)
         _AdminOrderDetailLine(
           label: 'مسؤول التواصل',
           value: order.contactPerson.trim(),
         ),
-      if (order.contactPhone.trim().isNotEmpty)
+      if (hasPhone)
         _AdminOrderDetailLine(
           label: 'رقم الهاتف',
-          value: order.contactPhone.trim(),
+          value: phone,
           ltr: true,
+          actions: [
+            _AdminOrderIconAction(
+              key: ValueKey('admin-order-copy-phone-${order.id}'),
+              icon: Icons.copy,
+              tooltip: 'نسخ الرقم',
+              onPressed: () => onCopyText(phone, 'تم نسخ رقم الهاتف'),
+            ),
+            _AdminOrderIconAction(
+              key: ValueKey('admin-order-whatsapp-phone-${order.id}'),
+              icon: FontAwesomeIcons.whatsapp,
+              tooltip: 'واتساب',
+              onPressed: onContactWhatsapp,
+            ),
+            _AdminOrderIconAction(
+              key: ValueKey('admin-order-call-phone-${order.id}'),
+              icon: Icons.call_outlined,
+              tooltip: 'اتصال',
+              onPressed: onCall,
+            ),
+          ],
         ),
-      if (order.contactPerson.trim().isEmpty &&
-          order.contactPhone.trim().isEmpty)
+      if (order.contactPerson.trim().isEmpty && !hasPhone)
         const _AdminOrderMissingDetail(
           message: 'بيانات التواصل غير متوفرة في هذا الطلب.',
         ),
     ];
     final deliveryDetails = <Widget>[
-      if (order.deliveryAddress.trim().isNotEmpty)
-        _AdminOrderDetailLine(
-          label: 'عنوان التسليم',
-          value: order.deliveryAddress.trim(),
+      if (address.isNotEmpty)
+        _AdminOrderHighlightCard(
+          key: ValueKey('admin-order-delivery-address-${order.id}'),
+          icon: Icons.location_on,
+          title: order.usesCustomDeliveryAddress
+              ? 'عنوان التسليم'
+              : 'عنوان المتجر',
+          caption: order.usesCustomDeliveryAddress
+              ? 'عنوان إضافي أدخله العميل'
+              : 'العنوان المسجل في بيانات العميل',
+          body: address,
+          color: Theme.of(context).colorScheme.primary,
+          onCopy: () => onCopyText(address, 'تم نسخ العنوان'),
+        ),
+      if (customerNote.isNotEmpty)
+        _AdminOrderHighlightCard(
+          key: ValueKey('admin-order-delivery-customer-note-${order.id}'),
+          icon: Icons.chat_bubble,
+          title: 'ملاحظة العميل',
+          body: customerNote,
+          color: AppTheme.orange,
+          onCopy: () => onCopyText(customerNote, 'تم نسخ ملاحظة العميل'),
         ),
       if (order.deliveryNote.trim().isNotEmpty)
         _AdminOrderDetailLine(
           label: 'تعليمات التسليم',
           value: order.deliveryNote.trim(),
         ),
-      if (order.deliveryAddress.trim().isEmpty &&
+      if (address.isEmpty &&
+          customerNote.isEmpty &&
           order.deliveryNote.trim().isEmpty)
         const _AdminOrderMissingDetail(
           message: 'لم يُسجل عنوان أو تعليمات تسليم.',
@@ -1719,43 +2128,39 @@ class _AdminOrderCustomerDelivery extends StatelessWidget {
     return Container(
       key: ValueKey('admin-order-customer-delivery-${order.id}'),
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-      child: _AdminOrderSection(
-        icon: Icons.local_shipping_outlined,
-        title: 'العميل والتسليم',
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final enlargedText =
-                MediaQuery.textScalerOf(context).scale(1) >= 1.3;
-            final customer = _AdminOrderDetailGroup(
-              icon: Icons.storefront_outlined,
-              title: 'بيانات العميل',
-              children: customerDetails,
-            );
-            final delivery = _AdminOrderDetailGroup(
-              icon: Icons.location_on_outlined,
-              title: 'بيانات التسليم',
-              children: deliveryDetails,
-            );
-            if (constraints.maxWidth >= 520 && !enlargedText) {
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: customer),
-                  const SizedBox(width: 10),
-                  Expanded(child: delivery),
-                ],
-              );
-            }
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final enlargedText =
+              MediaQuery.textScalerOf(context).scale(1) >= 1.3;
+          final customer = _AdminOrderDetailGroup(
+            icon: Icons.storefront_outlined,
+            title: 'بيانات العميل',
+            children: customerDetails,
+          );
+          final delivery = _AdminOrderDetailGroup(
+            icon: Icons.location_on_outlined,
+            title: 'بيانات التسليم',
+            children: deliveryDetails,
+          );
+          if (constraints.maxWidth >= 520 && !enlargedText) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                customer,
-                const SizedBox(height: 9),
-                delivery,
+                Expanded(child: customer),
+                const SizedBox(width: 10),
+                Expanded(child: delivery),
               ],
             );
-          },
-        ),
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              customer,
+              const SizedBox(height: 9),
+              delivery,
+            ],
+          );
+        },
       ),
     );
   }
@@ -1869,46 +2274,166 @@ class _AdminOrderDetailLine extends StatelessWidget {
     required this.label,
     required this.value,
     this.ltr = false,
+    this.actions = const [],
   });
 
   final String label;
   final String value;
   final bool ltr;
+  final List<Widget> actions;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: scheme.onSurfaceVariant,
-            fontSize: 9.5,
-            fontWeight: FontWeight.w700,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              if (ltr)
+                SelectableText(
+                  value,
+                  textDirection: TextDirection.ltr,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                )
+              else
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+            ],
           ),
         ),
-        const SizedBox(height: 2),
-        if (ltr)
-          SelectableText(
-            value,
-            textDirection: TextDirection.ltr,
-            textAlign: TextAlign.right,
-            style: const TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w800,
-            ),
-          )
-        else
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w800,
-            ),
+        if (actions.isNotEmpty)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: actions,
           ),
       ],
+    );
+  }
+}
+
+class _AdminOrderIconAction extends StatelessWidget {
+  const _AdminOrderIconAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    super.key,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+      iconSize: 16,
+      icon: Icon(icon),
+    );
+  }
+}
+
+class _AdminOrderHighlightCard extends StatelessWidget {
+  const _AdminOrderHighlightCard({
+    required this.icon,
+    required this.title,
+    required this.body,
+    required this.color,
+    this.caption,
+    this.onCopy,
+    super.key,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+  final Color color;
+  final String? caption;
+  final VoidCallback? onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: .28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (onCopy != null)
+                IconButton(
+                  tooltip: 'نسخ',
+                  onPressed: onCopy,
+                  visualDensity: VisualDensity.compact,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 32, height: 32),
+                  iconSize: 16,
+                  icon: Icon(Icons.copy, color: color),
+                ),
+            ],
+          ),
+          if (caption != null) ...[
+            Text(
+              caption!,
+              style: TextStyle(
+                color: color.withValues(alpha: .9),
+                fontSize: 9.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+          ],
+          Text(
+            body,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1953,13 +2478,6 @@ class _AdminOrderNotes extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final notes = <Widget>[
-      if (order.customerNote.trim().isNotEmpty)
-        _AdminOrderNoteCard(
-          icon: Icons.chat_bubble_outline,
-          title: 'ملاحظة العميل',
-          note: order.customerNote.trim(),
-          color: AppTheme.orange,
-        ),
       if (order.adminNote.trim().isNotEmpty)
         _AdminOrderNoteCard(
           icon: Icons.admin_panel_settings_outlined,
@@ -2210,14 +2728,20 @@ class _AdminOrderActions extends StatefulWidget {
   const _AdminOrderActions({
     required this.order,
     required this.updating,
+    required this.enabledWorkflowSteps,
     required this.onSelectStatus,
     required this.onCopy,
+    required this.onPrint,
+    required this.onSendWhatsapp,
   });
 
   final Order order;
   final bool updating;
+  final Set<OrderStatus> enabledWorkflowSteps;
   final void Function(OrderStatus status, String note) onSelectStatus;
   final VoidCallback onCopy;
+  final VoidCallback onPrint;
+  final VoidCallback onSendWhatsapp;
 
   @override
   State<_AdminOrderActions> createState() => _AdminOrderActionsState();
@@ -2266,14 +2790,36 @@ class _AdminOrderActionsState extends State<_AdminOrderActions> {
   Widget build(BuildContext context) {
     final order = widget.order;
     final scheme = Theme.of(context).colorScheme;
-    final nextStatuses = order.allowedNextStatuses;
-    final copyButton = SizedBox(
-      height: 48,
+    final nextStatuses = AdminOrderWorkflowStore.visibleNextStatuses(
+      current: order.status,
+      enabledSteps: widget.enabledWorkflowSteps,
+    );
+    final legalNext = order.allowedNextStatuses;
+    final copyButton = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
       child: OutlinedButton.icon(
         key: ValueKey('admin-order-copy-summary-${order.id}'),
         onPressed: widget.updating ? null : widget.onCopy,
         icon: const Icon(Icons.copy),
         label: const Text('نسخ ملخص واتساب'),
+      ),
+    );
+    final printButton = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
+      child: OutlinedButton.icon(
+        key: ValueKey('admin-order-print-invoice-${order.id}'),
+        onPressed: widget.updating ? null : widget.onPrint,
+        icon: const Icon(Icons.print_outlined),
+        label: const Text('طباعة الفاتورة'),
+      ),
+    );
+    final whatsappButton = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
+      child: FilledButton.tonalIcon(
+        key: ValueKey('admin-order-whatsapp-summary-${order.id}'),
+        onPressed: widget.updating ? null : widget.onSendWhatsapp,
+        icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 16),
+        label: const Text('إرسال للعميل عبر واتساب'),
       ),
     );
     final statusActions = Column(
@@ -2311,7 +2857,9 @@ class _AdminOrderActionsState extends State<_AdminOrderActions> {
                 child: Text(
                   order.status == OrderStatus.delivered
                       ? 'اكتملت دورة هذا الطلب.'
-                      : 'لا يمكن تغيير حالة هذا الطلب.',
+                      : legalNext.isEmpty
+                          ? 'لا يمكن تغيير حالة هذا الطلب.'
+                          : 'خطوات الحالة التالية مخفية من الإعدادات.',
                   style: TextStyle(
                     color: scheme.onSurfaceVariant,
                     fontSize: 11,
@@ -2445,7 +2993,15 @@ class _AdminOrderActionsState extends State<_AdminOrderActions> {
         children: [
           statusActions,
           const SizedBox(height: 9),
-          copyButton,
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              copyButton,
+              printButton,
+              whatsappButton,
+            ],
+          ),
         ],
       ),
     );
@@ -2453,9 +3009,15 @@ class _AdminOrderActionsState extends State<_AdminOrderActions> {
 }
 
 class _AdminOrderInvoice extends StatelessWidget {
-  const _AdminOrderInvoice({required this.order});
+  const _AdminOrderInvoice({
+    required this.order,
+    required this.demoData,
+    this.onEditPricing,
+  });
 
   final Order order;
+  final bool demoData;
+  final VoidCallback? onEditPricing;
 
   @override
   Widget build(BuildContext context) {
@@ -2492,6 +3054,18 @@ class _AdminOrderInvoice extends StatelessWidget {
                     style: TextStyle(fontWeight: FontWeight.w900),
                   ),
                 ),
+                if (demoData)
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(end: 6),
+                    child: Text(
+                      'تجريبي',
+                      style: TextStyle(
+                        color: scheme.tertiary,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
@@ -2511,6 +3085,16 @@ class _AdminOrderInvoice extends StatelessWidget {
               ],
             ),
           ),
+          if (onEditPricing != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: OutlinedButton.icon(
+                key: ValueKey('admin-order-edit-pricing-${order.id}'),
+                onPressed: onEditPricing,
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                label: const Text('تعديل التسعير والرسوم'),
+              ),
+            ),
           if (order.items.isEmpty)
             const Padding(
               padding: EdgeInsets.all(14),
@@ -2548,6 +3132,11 @@ class _AdminOrderInvoice extends StatelessWidget {
                   label: 'الإجمالي الفرعي',
                   amount: order.subtotal,
                 ),
+                if (order.discountAmount > 0)
+                  _AdminInvoiceTotalRow(
+                    label: 'الخصم',
+                    amount: order.discountAmount,
+                  ),
                 if (order.deliveryFee > 0)
                   _AdminInvoiceTotalRow(
                     label: 'التوصيل',
@@ -2992,7 +3581,13 @@ String _shortTime(DateTime date) => '${date.hour.toString().padLeft(2, '0')}:'
     '${date.minute.toString().padLeft(2, '0')}';
 
 String _durationLabel(Duration duration) {
-  if (duration.inSeconds < 60) return 'كل ${duration.inSeconds} ثانية';
+  final seconds = duration.inSeconds;
+  if (seconds < 60) {
+    if (seconds <= 1) return 'كل ثانية';
+    if (seconds == 2) return 'كل ثانيتين';
+    if (seconds <= 10) return 'كل $seconds ثوان';
+    return 'كل $seconds ثانية';
+  }
   final minutes = duration.inMinutes;
   return minutes == 1 ? 'كل دقيقة' : 'كل $minutes دقائق';
 }

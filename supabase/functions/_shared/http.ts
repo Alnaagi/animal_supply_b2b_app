@@ -10,11 +10,23 @@ export class HttpError extends Error {
   }
 }
 
-function allowedOrigins(): string[] {
-  return (Deno.env.get("ALLOWED_ORIGINS") ?? "")
+export function resolveAllowedOrigins(
+  allowedOriginsRaw = Deno.env.get("ALLOWED_ORIGINS") ?? "",
+  publicOriginRaw = Deno.env.get("APP_PUBLIC_ORIGIN") ?? "",
+): string[] {
+  const origins = allowedOriginsRaw
     .split(",")
-    .map((origin) => origin.trim())
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
     .filter(Boolean);
+  const publicOrigin = publicOriginRaw.trim().replace(/\/+$/, "");
+  if (publicOrigin && !origins.includes(publicOrigin)) {
+    origins.push(publicOrigin);
+  }
+  return origins;
+}
+
+function allowedOrigins(): string[] {
+  return resolveAllowedOrigins();
 }
 
 export function responseOrigin(
@@ -206,4 +218,31 @@ export function uuidField(
     });
   }
   return value;
+}
+
+export function optionalTimestamptzField(
+  body: Record<string, unknown>,
+  key: string,
+): string | null {
+  if (!Object.prototype.hasOwnProperty.call(body, key) || body[key] == null) {
+    return null;
+  }
+  const raw = body[key];
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value) return null;
+  if (value.length > 40) {
+    throw new HttpError(422, "VALIDATION_ERROR", `${key} is too long.`, {
+      field: key,
+    });
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new HttpError(
+      422,
+      "VALIDATION_ERROR",
+      `${key} must be an ISO-8601 timestamp.`,
+      { field: key },
+    );
+  }
+  return new Date(parsed).toISOString();
 }

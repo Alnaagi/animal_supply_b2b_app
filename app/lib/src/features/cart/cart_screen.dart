@@ -8,6 +8,7 @@ import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/price_text.dart';
 import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/quantity_selector.dart';
+import '../../core/widgets/shop_loading.dart';
 import '../../data/models/order.dart';
 import '../../data/repositories/admin_repository.dart';
 import 'cart_controller.dart';
@@ -160,10 +161,7 @@ class CartScreen extends ConsumerWidget {
             child: ListTile(
               leading: settingsAsync.hasError
                   ? const Icon(Icons.cloud_off_outlined)
-                  : const SizedBox.square(
-                      dimension: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
+                  : const ShopLoading.compact(size: 22),
               title: Text(
                 settingsAsync.hasError
                     ? 'تعذر تحميل رسوم وحد الطلب'

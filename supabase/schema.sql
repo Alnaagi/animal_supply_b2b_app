@@ -61,10 +61,16 @@ create table if not exists categories (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
   description text,
+  icon_key text,
+  icon_url text,
   active boolean not null default true,
   archived_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint categories_icon_required check (
+    (icon_key is not null and length(trim(icon_key)) > 0)
+    or (icon_url is not null and length(trim(icon_url)) > 0)
+  )
 );
 
 create table if not exists products (

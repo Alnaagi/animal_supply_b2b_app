@@ -6,6 +6,9 @@ class ProductCategory {
     this.archivedAt,
     this.productCount = 0,
     this.archivedProductCount = 0,
+    this.iconKey,
+    this.iconUrl,
+    this.updatedAt,
   });
 
   final String id;
@@ -14,8 +17,17 @@ class ProductCategory {
   final DateTime? archivedAt;
   final int productCount;
   final int archivedProductCount;
+  final String? iconKey;
+  final String? iconUrl;
+  final DateTime? updatedAt;
 
   bool get isArchived => archivedAt != null;
+
+  bool get hasIcon {
+    final key = iconKey?.trim() ?? '';
+    final url = iconUrl?.trim() ?? '';
+    return key.isNotEmpty || url.isNotEmpty;
+  }
 
   ProductCategory copyWith({
     String? id,
@@ -25,6 +37,11 @@ class ProductCategory {
     bool clearArchivedAt = false,
     int? productCount,
     int? archivedProductCount,
+    String? iconKey,
+    String? iconUrl,
+    bool clearIconKey = false,
+    bool clearIconUrl = false,
+    DateTime? updatedAt,
   }) {
     return ProductCategory(
       id: id ?? this.id,
@@ -33,6 +50,9 @@ class ProductCategory {
       archivedAt: clearArchivedAt ? null : archivedAt ?? this.archivedAt,
       productCount: productCount ?? this.productCount,
       archivedProductCount: archivedProductCount ?? this.archivedProductCount,
+      iconKey: clearIconKey ? null : iconKey ?? this.iconKey,
+      iconUrl: clearIconUrl ? null : iconUrl ?? this.iconUrl,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
@@ -48,6 +68,14 @@ class ProductCategory {
       archivedAt: DateTime.tryParse(row['archived_at']?.toString() ?? ''),
       productCount: productCount,
       archivedProductCount: archivedProductCount,
+      iconKey: _optionalText(row['icon_key']),
+      iconUrl: _optionalText(row['icon_url']),
+      updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? ''),
     );
+  }
+
+  static String? _optionalText(Object? value) {
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? null : text;
   }
 }

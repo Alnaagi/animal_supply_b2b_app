@@ -1,14 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/config/app_runtime_mode.dart';
+import '../../core/config/shop_branding.dart';
+import '../../core/notifications/browser_notification_permission_banner.dart';
+import '../../core/notifications/in_app_notification_poller.dart';
 import '../../core/notifications/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/network_status.dart';
+import '../../core/widgets/shop_brand_logo.dart';
 import '../../data/repositories/notifications_repository.dart';
 import '../auth/auth_controller.dart';
 import '../notifications/notification_center_sheet.dart';
+import 'pending_orders_kpi_alert.dart';
 
 class AdminShell extends ConsumerWidget {
   const AdminShell(
@@ -68,6 +76,9 @@ class AdminShell extends ConsumerWidget {
                     ref.watch(appRuntimeModeProvider) ||
                     user?.isDemo == true)
                   const AdminDemoModeNotice(),
+                const NetworkStatusHeader(),
+                const BrowserNotificationPermissionBanner(),
+                const InAppNotificationPoller(adminOrdersOnly: true),
                 Expanded(child: child),
               ],
             ),
@@ -118,14 +129,15 @@ class AdminDemoModeNotice extends StatelessWidget {
   }
 }
 
-class _AdminNav extends StatelessWidget {
+class _AdminNav extends ConsumerWidget {
   const _AdminNav({required this.isAdmin, required this.onLogout});
   final bool isAdmin;
   final VoidCallback onLogout;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final current = GoRouterState.of(context).matchedLocation;
+    final branding = ref.watch(shopBrandingProvider);
     return SafeArea(
       child: ListView(
         padding: const EdgeInsets.all(14),
@@ -135,14 +147,18 @@ class _AdminNav extends StatelessWidget {
             decoration: BoxDecoration(
                 color: AppTheme.green.withValues(alpha: .10),
                 borderRadius: BorderRadius.circular(22)),
-            child: const Row(children: [
-              CircleAvatar(
-                  backgroundColor: AppTheme.green,
-                  child: Icon(Icons.pets, color: Colors.white)),
-              SizedBox(width: 10),
+            child: Row(children: [
+              ShopBrandLogo(
+                logoUrl: branding.logoUrl,
+                size: 40,
+              ),
+              const SizedBox(width: 10),
               Expanded(
-                  child: Text('${AppConfig.shopName}\nلوحة العمليات',
-                      style: TextStyle(fontWeight: FontWeight.w900))),
+                child: Text(
+                  '${branding.shopName}\nلوحة العمليات',
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
             ]),
           ),
           const SizedBox(height: 16),
@@ -206,7 +222,7 @@ class _AdminNav extends StatelessWidget {
   }
 }
 
-class _NavTile extends StatelessWidget {
+class _NavTile extends ConsumerWidget {
   const _NavTile(
       {required this.path,
       required this.current,
@@ -218,7 +234,7 @@ class _NavTile extends StatelessWidget {
   final String label;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final selected = current == path;
     return ListTile(
       selected: selected,
@@ -228,7 +244,15 @@ class _NavTile extends StatelessWidget {
       title: Text(label,
           style: TextStyle(
               fontWeight: selected ? FontWeight.w900 : FontWeight.w600)),
-      onTap: () => context.go(path),
+      onTap: () {
+        if (path == '/admin/orders') {
+          unawaited(
+            openAdminOrders(ref, (next) => context.go(next), location: path),
+          );
+          return;
+        }
+        context.go(path);
+      },
     );
   }
 }

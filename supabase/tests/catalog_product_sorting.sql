@@ -105,8 +105,8 @@ declare
   v_animal_type text := 'SORT-ANIMAL-' || v_suffix;
   v_unit_size text := 'SORT-UNIT-' || v_suffix;
 begin
-  insert into public.categories (name, active)
-  values (v_category_name, true)
+  insert into public.categories (name, active, icon_key)
+  values (v_category_name, true, 'category')
   returning id into v_category_id;
 
   insert into public.products (

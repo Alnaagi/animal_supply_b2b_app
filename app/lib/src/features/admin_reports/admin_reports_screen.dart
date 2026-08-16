@@ -3,8 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/config/shop_branding.dart';
+import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/order.dart';
 import '../../data/models/product.dart';
@@ -12,6 +16,8 @@ import '../../data/repositories/admin_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/orders_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
+import 'admin_report_detail_sheet.dart';
+import 'admin_report_export_sheet.dart';
 
 class AdminReportsScreen extends ConsumerStatefulWidget {
   const AdminReportsScreen({super.key});
@@ -70,19 +76,20 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    listenForScreenReload(ref, _refresh);
     return AdminShell(
       title: 'التقارير التشغيلية',
       child: FutureBuilder<AdminReportData>(
         future: reportFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const ShopLoading.page();
           }
           if (snapshot.hasError || snapshot.data == null) {
             return _ReportsLoadError(onRetry: _refresh);
           }
           final report = snapshot.data!;
-          return RefreshIndicator(
+          return ShopRefreshIndicator(
             onRefresh: _refresh,
             child: ListView(
               padding: const EdgeInsets.all(18),
@@ -102,8 +109,7 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                         SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'تقرير تجريبي مبني على بيانات محلية غير حقيقية. '
-                            'الأرصدة المعروضة قيم مرجعية تُسجل يدوياً وليست دفتر حسابات.',
+                            'تقرير تجريبي مبني على بيانات محلية غير حقيقية.',
                             style: TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),
@@ -140,6 +146,17 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                       icon: const Icon(Icons.copy_all_outlined),
                       label: const Text('نسخ ملخص التقرير'),
                     ),
+                    FilledButton.tonalIcon(
+                      key: const Key('admin-reports-export-button'),
+                      onPressed: () => showAdminReportExportSheet(
+                        context: context,
+                        report: report,
+                        periodLabel: period.label,
+                        shopName: ref.read(shopBrandingProvider).shopName,
+                      ),
+                      icon: const Icon(Icons.ios_share_outlined),
+                      label: const Text('تصدير'),
+                    ),
                     IconButton.filledTonal(
                       onPressed: _refresh,
                       tooltip: 'تحديث البيانات',
@@ -152,7 +169,7 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                   builder: (context, constraints) {
                     const spacing = 12.0;
                     final columns = constraints.maxWidth >= 1100
-                        ? 4
+                        ? 3
                         : constraints.maxWidth >= 650
                             ? 2
                             : 1;
@@ -164,6 +181,7 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                       runSpacing: spacing,
                       children: [
                         _ReportMetricCard(
+                          key: const Key('admin-report-kpi-sales'),
                           width: width,
                           title: 'مبيعات الفترة',
                           value: lyd(report.salesTotal),
@@ -171,8 +189,13 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                               '${report.deliveredOrderCount} طلبات مسلّمة',
                           icon: Icons.payments_outlined,
                           color: AppTheme.green,
+                          onTap: () => _openDetail(
+                            AdminReportDetailKind.sales,
+                            report,
+                          ),
                         ),
                         _ReportMetricCard(
+                          key: const Key('admin-report-kpi-average'),
                           width: width,
                           title: 'متوسط الطلب المسلّم',
                           value: lyd(report.averageOrderValue),
@@ -180,23 +203,23 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                               '${report.periodOrderCount} طلبات بكل الحالات',
                           icon: Icons.analytics_outlined,
                           color: AppTheme.darkGreen,
+                          onTap: () => _openDetail(
+                            AdminReportDetailKind.averageOrder,
+                            report,
+                          ),
                         ),
                         _ReportMetricCard(
+                          key: const Key('admin-report-kpi-cancelled'),
                           width: width,
                           title: 'طلبات ملغاة',
                           value: '${report.cancelledOrderCount}',
                           subtitle: period.label,
                           icon: Icons.cancel_outlined,
                           color: AppTheme.red,
-                        ),
-                        _ReportMetricCard(
-                          width: width,
-                          title: 'أرصدة مرجعية مسجلة',
-                          value: lyd(report.outstandingBalance),
-                          subtitle:
-                              '${report.outstandingCustomers.length} عملاء — إدخال يدوي',
-                          icon: Icons.account_balance_wallet_outlined,
-                          color: AppTheme.orange,
+                          onTap: () => _openDetail(
+                            AdminReportDetailKind.cancelled,
+                            report,
+                          ),
                         ),
                       ],
                     );
@@ -207,14 +230,36 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                   builder: (context, constraints) {
                     final panels = [
                       _ReportPanel(
+                        key: const Key('admin-report-panel-customers'),
                         title: 'أفضل العملاء حسب المبيعات',
                         icon: Icons.groups_outlined,
-                        child: _TopCustomers(rows: report.topCustomers),
+                        onTap: () => _openDetail(
+                          AdminReportDetailKind.customers,
+                          report,
+                        ),
+                        child: _TopCustomers(
+                          rows: report.topCustomers,
+                          onOpen: () => _openDetail(
+                            AdminReportDetailKind.customers,
+                            report,
+                          ),
+                        ),
                       ),
                       _ReportPanel(
+                        key: const Key('admin-report-panel-products'),
                         title: 'أفضل المنتجات حسب الكمية',
                         icon: Icons.inventory_2_outlined,
-                        child: _TopProducts(rows: report.topProducts),
+                        onTap: () => _openDetail(
+                          AdminReportDetailKind.products,
+                          report,
+                        ),
+                        child: _TopProducts(
+                          rows: report.topProducts,
+                          onOpen: () => _openDetail(
+                            AdminReportDetailKind.products,
+                            report,
+                          ),
+                        ),
                       ),
                     ];
                     if (constraints.maxWidth < 900) {
@@ -237,47 +282,39 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                   },
                 ),
                 const SizedBox(height: 16),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final panels = [
-                      _ReportPanel(
-                        title: 'تنبيه المخزون',
-                        icon: Icons.warning_amber_outlined,
-                        child: _LowStock(rows: report.lowStockProducts),
-                      ),
-                      _ReportPanel(
-                        title: 'الأرصدة المسجلة يدوياً',
-                        icon: Icons.request_quote_outlined,
-                        helper:
-                            'مرجع تشغيلي فقط؛ لا توجد فواتير أو مدفوعات تلقائية ضمن هذا الإصدار.',
-                        child: _OutstandingBalances(
-                            rows: report.outstandingCustomers),
-                      ),
-                    ];
-                    if (constraints.maxWidth < 900) {
-                      return Column(
-                        children: [
-                          panels[0],
-                          const SizedBox(height: 12),
-                          panels[1],
-                        ],
-                      );
-                    }
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: panels[0]),
-                        const SizedBox(width: 12),
-                        Expanded(child: panels[1]),
-                      ],
-                    );
-                  },
+                _ReportPanel(
+                  key: const Key('admin-report-panel-inventory'),
+                  title: 'تنبيه المخزون',
+                  icon: Icons.warning_amber_outlined,
+                  onTap: () => _openDetail(
+                    AdminReportDetailKind.inventory,
+                    report,
+                  ),
+                  child: _LowStock(
+                    rows: report.lowStockProducts,
+                    onOpen: () => _openDetail(
+                      AdminReportDetailKind.inventory,
+                      report,
+                    ),
+                  ),
                 ),
               ],
             ),
           );
         },
       ),
+    );
+  }
+
+  void _openDetail(AdminReportDetailKind kind, AdminReportData report) {
+    final now = DateTime.now();
+    showAdminReportDetailSheet(
+      context: context,
+      kind: kind,
+      report: report,
+      periodLabel: period.label,
+      from: period.startAt(now),
+      to: now,
     );
   }
 
@@ -289,7 +326,6 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
       'إجمالي الطلبات: ${report.periodOrderCount}',
       'متوسط الطلب المسلّم: ${lyd(report.averageOrderValue)}',
       'الطلبات الملغاة: ${report.cancelledOrderCount}',
-      'الأرصدة المرجعية المسجلة يدوياً: ${lyd(report.outstandingBalance)}',
       '',
       'أفضل العملاء:',
       if (report.topCustomers.isEmpty)
@@ -348,6 +384,8 @@ class _ReportMetricCard extends StatelessWidget {
     required this.subtitle,
     required this.icon,
     required this.color,
+    required this.onTap,
+    super.key,
   });
 
   final double width;
@@ -356,39 +394,64 @@ class _ReportMetricCard extends StatelessWidget {
   final String subtitle;
   final IconData icon;
   final Color color;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: width,
       child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                backgroundColor: color.withValues(alpha: .12),
-                child: Icon(icon, color: color),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                value,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Colors.grey.shade700),
-              ),
-            ],
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: color.withValues(alpha: .12),
+                      child: Icon(icon, color: color),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      Icons.chevron_left,
+                      color: Colors.grey.shade500,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  value,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w900),
+                ),
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: Colors.grey.shade700),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'اضغط لعرض التفاصيل',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: AppTheme.green,
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -401,50 +464,54 @@ class _ReportPanel extends StatelessWidget {
     required this.title,
     required this.icon,
     required this.child,
-    this.helper,
+    required this.onTap,
+    super.key,
   });
 
   final String title;
   final IconData icon;
   final Widget child;
-  final String? helper;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: AppTheme.green),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w900),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, color: AppTheme.green),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            if (helper != null) ...[
-              const SizedBox(height: 6),
-              Text(
-                helper!,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Colors.grey.shade700),
+                  Text(
+                    'التفاصيل',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: AppTheme.green,
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_left, color: Colors.grey.shade500),
+                ],
               ),
+              const Divider(height: 24),
+              child,
             ],
-            const Divider(height: 24),
-            child,
-          ],
+          ),
         ),
       ),
     );
@@ -452,9 +519,10 @@ class _ReportPanel extends StatelessWidget {
 }
 
 class _TopCustomers extends StatelessWidget {
-  const _TopCustomers({required this.rows});
+  const _TopCustomers({required this.rows, required this.onOpen});
 
   final List<AdminCustomerReportRow> rows;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -467,6 +535,7 @@ class _TopCustomers extends StatelessWidget {
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
+            onTap: onOpen,
             leading: CircleAvatar(
               radius: 16,
               child: Text('${indexed.$1 + 1}'),
@@ -484,9 +553,10 @@ class _TopCustomers extends StatelessWidget {
 }
 
 class _TopProducts extends StatelessWidget {
-  const _TopProducts({required this.rows});
+  const _TopProducts({required this.rows, required this.onOpen});
 
   final List<AdminProductReportRow> rows;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -499,6 +569,7 @@ class _TopProducts extends StatelessWidget {
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
+            onTap: onOpen,
             leading: CircleAvatar(
               radius: 16,
               child: Text('${indexed.$1 + 1}'),
@@ -518,9 +589,10 @@ class _TopProducts extends StatelessWidget {
 }
 
 class _LowStock extends StatelessWidget {
-  const _LowStock({required this.rows});
+  const _LowStock({required this.rows, required this.onOpen});
 
   final List<AdminInventoryReportRow> rows;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -533,6 +605,7 @@ class _LowStock extends StatelessWidget {
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
+            onTap: onOpen,
             leading: Icon(
               row.availableQuantity == 0
                   ? Icons.error_outline
@@ -549,38 +622,6 @@ class _LowStock extends StatelessWidget {
               style: TextStyle(
                 color:
                     row.availableQuantity == 0 ? AppTheme.red : AppTheme.orange,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _OutstandingBalances extends StatelessWidget {
-  const _OutstandingBalances({required this.rows});
-
-  final List<AdminBalanceReportRow> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    if (rows.isEmpty) {
-      return const _EmptyReport(message: 'لا توجد أرصدة يدوية مسجلة.');
-    }
-    return Column(
-      children: [
-        for (final row in rows.take(20))
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.storefront_outlined),
-            title: Text(row.businessName),
-            subtitle: Text('حد ائتمان مرجعي: ${lyd(row.creditLimit)}'),
-            trailing: Text(
-              lyd(row.outstandingBalance),
-              style: const TextStyle(
-                color: AppTheme.red,
                 fontWeight: FontWeight.w900,
               ),
             ),

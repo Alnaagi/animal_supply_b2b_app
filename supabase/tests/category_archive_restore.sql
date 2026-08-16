@@ -121,16 +121,16 @@ declare
   v_independent_product_id uuid;
   v_suffix text := substr(replace(gen_random_uuid()::text, '-', ''), 1, 12);
 begin
-  insert into public.categories (name, active)
-  values ('اختبار أرشفة تصنيف ' || v_suffix, true)
+  insert into public.categories (name, active, icon_key)
+  values ('اختبار أرشفة تصنيف ' || v_suffix, true, 'category')
   returning id into v_category_id;
 
-  insert into public.categories (name, active)
-  values ('اختبار تصنيف مخفي ' || v_suffix, false)
+  insert into public.categories (name, active, icon_key)
+  values ('اختبار تصنيف مخفي ' || v_suffix, false, 'category')
   returning id into v_inactive_category_id;
 
-  insert into public.categories (name, active)
-  values ('اختبار تصنيف بديل ' || v_suffix, true)
+  insert into public.categories (name, active, icon_key)
+  values ('اختبار تصنيف بديل ' || v_suffix, true, 'category')
   returning id into v_other_category_id;
 
   insert into public.products (

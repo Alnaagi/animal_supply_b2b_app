@@ -101,6 +101,8 @@ serve(async (req) => {
         p_account_status: input.accountStatus,
         p_credit_limit: input.creditLimit,
         p_outstanding_balance: input.outstandingBalance,
+        p_phone_is_whatsapp: input.phoneIsWhatsapp,
+        p_expected_updated_at: input.expectedUpdatedAt,
       },
     );
     if (updateError) {
@@ -118,25 +120,22 @@ serve(async (req) => {
       );
     }
 
-    const { data: whatsappRow, error: whatsappError } = await adminClient
-      .from("business_customers")
-      .update({ phone_is_whatsapp: input.phoneIsWhatsapp })
-      .eq("id", input.customerId)
-      .select("id, phone_is_whatsapp")
-      .maybeSingle();
-    if (whatsappError || !whatsappRow) {
-      console.error("Customer WhatsApp preference update failed", whatsappError);
+    const savedCustomer = customer as Record<string, unknown>;
+    if (typeof savedCustomer.phone_is_whatsapp !== "boolean") {
+      savedCustomer.phone_is_whatsapp = input.phoneIsWhatsapp;
+    }
+    if (
+      typeof savedCustomer.account_status !== "string" ||
+      !["active", "suspended", "archived"].includes(
+        savedCustomer.account_status,
+      )
+    ) {
       throw new HttpError(
         500,
         "CUSTOMER_UPDATE_FAILED",
-        "The customer WhatsApp preference could not be saved.",
+        "The customer account update did not return a valid status.",
       );
     }
-
-    const savedCustomer = {
-      ...(customer as Record<string, unknown>),
-      phone_is_whatsapp: whatsappRow.phone_is_whatsapp === true,
-    };
 
     return successResponse(req, { customer: savedCustomer }, 200, {
       customer: savedCustomer,

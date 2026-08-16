@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:animal_supply_b2b/src/core/notifications/new_order_alert_sound.dart';
+import 'package:animal_supply_b2b/src/core/notifications/new_order_alert_tone.dart';
 import 'package:animal_supply_b2b/src/core/constants/order_status.dart';
 import 'package:animal_supply_b2b/src/core/utils/formatters.dart';
 import 'package:animal_supply_b2b/src/core/widgets/product_image_placeholder.dart';
@@ -13,6 +14,7 @@ import 'package:animal_supply_b2b/src/data/repositories/orders_repository.dart';
 import 'package:animal_supply_b2b/src/features/admin_orders/admin_orders_screen.dart';
 import 'package:animal_supply_b2b/src/features/auth/auth_controller.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -78,6 +80,90 @@ void main() {
 
       expect(sound.primeCalls, 2);
       expect(sound.playCalls, 1);
+    },
+  );
+
+  testWidgets(
+    'live tracking pill uses a 10-second Arabic interval',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: _MutableOrdersRepository([_order('order-1')]),
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: const Duration(seconds: 10),
+      );
+      await tester.pump();
+      await _flushImmediateWork(tester);
+
+      expect(find.textContaining('كل 10 ثوان'), findsOneWidget);
+      expect(find.textContaining('كل 20 ثانية'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('toggle-admin-orders-sound-button')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'alert sound picker previews and persists an Arabic preset',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final sound = _FakeNewOrderAlertSound();
+      await _pumpOrdersScreen(
+        tester,
+        orders: _MutableOrdersRepository([_order('order-1')]),
+        notifications: _MutableNotificationsRepository(const []),
+        sound: sound,
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('صوت التنبيه · صوت الصندوق'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('open-admin-orders-alert-sound-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('صوت الصندوق'), findsWidgets);
+      expect(find.text('جرس المتجر'), findsOneWidget);
+      expect(find.text('ماريمبا'), findsOneWidget);
+      expect(find.text('رنين هادئ'), findsOneWidget);
+      expect(find.text('عملة ذهبية'), findsOneWidget);
+      expect(find.text('بلوري'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('admin-orders-sound-volume-slider')),
+        findsOneWidget,
+      );
+
+      final marimbaTone = find.byKey(
+        const ValueKey('admin-orders-sound-tone-marimba'),
+      );
+      await tester.scrollUntilVisible(
+        marimbaTone,
+        180,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.tap(marimbaTone);
+      await tester.pumpAndSettle();
+
+      expect(sound.playCalls, greaterThanOrEqualTo(1));
+      expect(sound.lastTone, NewOrderAlertTone.marimba);
+
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString('admin_orders.new_order_alert_sound.v1');
+      expect(stored, contains('marimba'));
+
+      Navigator.of(
+        tester.element(find.text('صوت التنبيه')),
+      ).pop();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('صوت التنبيه · ماريمبا'), findsOneWidget);
     },
   );
 
@@ -668,7 +754,8 @@ void main() {
         find.byKey(const ValueKey('admin-orders-filter-settings')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('إعدادات التصفية'), findsOneWidget);
+      expect(find.text('تصفية القائمة'), findsOneWidget);
+      expect(find.text('خطوات الحالة'), findsOneWidget);
       await tester.tap(
         find.byKey(const ValueKey('admin-orders-filter-pref-cancelled')),
       );
@@ -680,6 +767,210 @@ void main() {
       expect(orders.lastStatuses, isNot(contains(OrderStatus.delivered)));
     },
   );
+
+  testWidgets(
+    'workflow settings hide a legal next-status button without inventing a skip',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final orders = _MutableOrdersRepository([_invoiceOrder()]);
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-filter-settings')),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('admin-orders-workflow-pref-cancelled')),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-workflow-pref-cancelled')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('حفظ الإعدادات'));
+      await tester.pumpAndSettle();
+
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-confirmed'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-cancelled'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-delivered'),
+        ),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'order detail copies phone, highlights delivery, and exposes invoice actions',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      final orders = _MutableOrdersRepository([_invoiceOrder()]);
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('عنوان إضافي أدخله العميل'), findsOneWidget);
+      expect(find.text('ملاحظة العميل'), findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-delivery-customer-note-invoice-order'),
+        ),
+        findsOneWidget,
+      );
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-copy-phone-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('تم نسخ رقم الهاتف'), findsOneWidget);
+
+      expect(
+        find.byKey(const ValueKey('admin-order-print-invoice-invoice-order')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-whatsapp-summary-invoice-order'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('admin-order-copy-summary-invoice-order')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'default business address is used when the client did not enter another',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final orders = _MutableOrdersRepository([
+        _invoiceOrder(deliveryAddress: ''),
+      ]);
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('اسم المتجر'), findsOneWidget);
+      expect(find.text('عنوان المتجر'), findsOneWidget);
+      expect(find.text('العنوان المسجل في بيانات العميل'), findsOneWidget);
+      expect(find.text('طرابلس - حي الأندلس - المقر'), findsOneWidget);
+      expect(find.text('عنوان إضافي أدخله العميل'), findsNothing);
+    },
+  );
+
+  testWidgets('invoice pricing sheet recalculates and saves through the repository',
+      (tester) async {
+    const surfaceSize = Size(390, 844);
+    await tester.binding.setSurfaceSize(surfaceSize);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final orders = _MutableOrdersRepository([_invoiceOrder()]);
+    await _pumpOrdersScreen(
+      tester,
+      orders: orders,
+      notifications: _MutableNotificationsRepository(const []),
+      sound: _FakeNewOrderAlertSound(),
+      autoRefreshInterval: Duration.zero,
+    );
+    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+    );
+    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey('admin-order-edit-pricing-invoice-order')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('admin-order-price-field-invoice-order-0')),
+      '15.00',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('admin-order-delivery-fee-invoice-order')),
+      '4.00',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('admin-order-discount-invoice-order')),
+      '1.50',
+    );
+    await tester.pump();
+    expect(find.textContaining('الإجمالي المعتمد'), findsWidgets);
+    await tester.tap(
+      find.byKey(const ValueKey('admin-order-save-pricing-invoice-order')),
+    );
+    await tester.pumpAndSettle();
+    expect(orders.lastPricing, isNotNull);
+    expect(orders.lastPricing!.unitPrices, [15]);
+    expect(orders.lastPricing!.deliveryFee, 4);
+    expect(orders.lastPricing!.discountAmount, 1.5);
+    expect(find.text('تم اعتماد تسعير الفاتورة.'), findsOneWidget);
+  });
 
   testWidgets(
     'inline next-status buttons update without a dialog',
@@ -978,6 +1269,8 @@ class _MutableOrdersRepository extends OrdersRepository {
   OrderStatus? lastStatus;
   List<OrderStatus>? lastStatuses;
   OrderStatus? lastTransition;
+  ({List<double> unitPrices, double deliveryFee, double discountAmount})?
+      lastPricing;
 
   @override
   Future<OrdersPage> ordersPage({
@@ -1010,12 +1303,48 @@ class _MutableOrdersRepository extends OrdersRepository {
     String orderId,
     OrderStatus status, {
     String adminNote = '',
+    DateTime? expectedUpdatedAt,
   }) async {
     lastTransition = status;
     current = [
       for (final order in current)
         if (order.id == orderId)
           order.copyWith(status: status, adminNote: adminNote)
+        else
+          order,
+    ];
+    return current.firstWhere((order) => order.id == orderId);
+  }
+
+  @override
+  Future<Order> updateOrderPricing({
+    required String orderId,
+    required List<double> unitPrices,
+    required double deliveryFee,
+    required double discountAmount,
+    DateTime? expectedUpdatedAt,
+  }) async {
+    lastPricing = (
+      unitPrices: unitPrices,
+      deliveryFee: deliveryFee,
+      discountAmount: discountAmount,
+    );
+    current = [
+      for (final order in current)
+        if (order.id == orderId)
+          order.copyWith(
+            deliveryFee: deliveryFee,
+            discountAmount: discountAmount,
+            items: [
+              for (var index = 0; index < order.items.length; index++)
+                if (order.items[index] is OrderItem)
+                  (order.items[index] as OrderItem).copyWith(
+                    unitPrice: unitPrices[index],
+                  )
+                else
+                  order.items[index],
+            ],
+          )
         else
           order,
     ];
@@ -1040,6 +1369,7 @@ class _MutableNotificationsRepository extends NotificationsRepository {
 class _FakeNewOrderAlertSound extends NewOrderAlertSound {
   int primeCalls = 0;
   int playCalls = 0;
+  NewOrderAlertTone? lastTone;
   Completer<bool>? primeCompleter;
 
   @override
@@ -1052,8 +1382,12 @@ class _FakeNewOrderAlertSound extends NewOrderAlertSound {
   }
 
   @override
-  Future<bool> play() async {
+  Future<bool> play({
+    NewOrderAlertTone? tone,
+    double? volume,
+  }) async {
     playCalls++;
+    lastTone = tone;
     return true;
   }
 }
@@ -1091,6 +1425,7 @@ Order _invoiceOrder({
   double lineTotal = 37.5,
   String customerNote = 'يفضل التسليم صباحاً.',
   String adminNote = 'تمت مراجعة بيانات التسليم.',
+  String deliveryAddress = 'طرابلس، طريق المطار',
   bool includeHistory = true,
 }) {
   const currentProduct = Product(
@@ -1128,7 +1463,8 @@ Order _invoiceOrder({
     status: OrderStatus.pending,
     items: [orderItem],
     createdAt: DateTime.utc(2026, 8, 14, 12),
-    deliveryAddress: 'طرابلس، طريق المطار',
+    deliveryAddress: deliveryAddress,
+    customerDefaultAddress: 'طرابلس - حي الأندلس - المقر',
     deliveryNote: 'يرجى الاتصال قبل الوصول.',
     customerNote: customerNote,
     adminNote: adminNote,

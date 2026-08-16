@@ -68,7 +68,9 @@ void main() {
     expect(find.text('العملاء'), findsOneWidget);
     expect(find.text('طلبات تحتاج مراجعة'), findsOneWidget);
     expect(find.byKey(const Key('admin-dashboard-fullness-card')), findsOneWidget);
-    expect(find.text('امتلاء البيانات'), findsOneWidget);
+    expect(find.text('امتلاء قاعدة البيانات'), findsOneWidget);
+    expect(find.text('تحديثات التطبيق'), findsNothing);
+    expect(find.text('الإعدادات'), findsNothing);
     expect(find.text('تجريبي'), findsWidgets);
     expect(
       find.text('تقدير تجريبي من الكتالوج والطلبات المحلية — غير تشغيلي'),

@@ -37,6 +37,20 @@ Uri? resolvePublicWebAppUri({
   return current?.replace(path: '/', query: null, fragment: null);
 }
 
+Uri? resolvePublicLoginUri({
+  required String publicAppOrigin,
+  Uri? currentBase,
+  bool isWeb = false,
+}) {
+  final origin = safeHttpsUpdateUri(publicAppOrigin);
+  if (origin != null) {
+    return origin.replace(path: '/login', query: null, fragment: null);
+  }
+  if (!isWeb || currentBase == null) return null;
+  final current = safeHttpsUpdateUri(currentBase.toString());
+  return current?.replace(path: '/login', query: null, fragment: null);
+}
+
 Uri whatsappDownloadShareUri({
   required Uri downloadPage,
   required String shopName,

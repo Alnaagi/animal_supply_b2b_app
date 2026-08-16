@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supabase;
 
 import '../../core/config/app_config.dart';
+import '../../core/config/app_runtime_mode.dart';
 import '../../core/auth/login_identifier.dart';
 import '../../core/auth/account_bootstrap.dart';
 import '../../data/local/local_auth_session_store.dart';
@@ -107,9 +108,9 @@ class AuthController extends StateNotifier<AuthState> {
       (event) {
         if (_disposed) return;
         if (event.event == supabase.AuthChangeEvent.signedOut) {
-          if (_interactiveAuthInProgress || client.auth.currentUser != null) {
-            return;
-          }
+          if (_interactiveAuthInProgress) return;
+          if (client.auth.currentUser != null) return;
+          unawaited(_sessionStore.clear());
           state = AuthState(
             notice:
                 AppConfig.isDemoMode ? AppConfig.configurationMessageAr : null,
@@ -179,7 +180,7 @@ class AuthController extends StateNotifier<AuthState> {
     final normalized = username.trim().toLowerCase();
     if (normalized.isEmpty || password.isEmpty) {
       state = AuthState(
-        error: 'أدخل اسم المستخدم وكلمة المرور.',
+        error: 'أدخل اسم المستخدم أو رقم الهاتف وكلمة المرور.',
         notice: state.notice,
       );
       return;
@@ -200,6 +201,15 @@ class AuthController extends StateNotifier<AuthState> {
         notice: state.notice,
       );
       return;
+    }
+
+    if (AppConfig.allowsDemoCredentials &&
+        matchesDemoLoginCredentials(normalized, password)) {
+      final overlayReady = await _activateLocalDemoOverlayIfNeeded();
+      if (overlayReady || !AppConfig.remoteBackendEnabled) {
+        await _loginDemo(normalized, password);
+        return;
+      }
     }
 
     if (!AppConfig.remoteBackendEnabled) {
@@ -225,18 +235,24 @@ class AuthController extends StateNotifier<AuthState> {
     _interactiveAuthInProgress = true;
     state = const AuthState(loading: true);
     try {
-      final email = loginEmailForIdentifier(
-        identifier: normalized,
-        customerLoginDomain: AppConfig.customerLoginDomain,
-      );
-      if (email == null) {
-        state = const AuthState(
-          error: 'دخول العملاء غير مهيأ بعد. راجع نطاق حسابات العملاء.',
+      final target = await _resolveRemoteLoginTarget(client, normalized) ??
+          loginAuthTargetForIdentifier(
+            identifier: normalized,
+            customerLoginDomain: AppConfig.customerLoginDomain,
+          );
+      if (target == null) {
+        state = AuthState(
+          error: normalizeLibyanLoginPhone(normalized) == null &&
+                  !normalized.contains('@') &&
+                  !isValidCustomerLoginDomain(AppConfig.customerLoginDomain)
+              ? 'دخول العملاء غير مهيأ بعد. راجع نطاق حسابات العملاء.'
+              : 'أدخل اسم مستخدم صالحاً أو رقم هاتف.',
         );
         return;
       }
       final result = await client.auth.signInWithPassword(
-        email: email,
+        email: target.email,
+        phone: target.phone,
         password: password,
       );
       final authUser = result.user;
@@ -277,6 +293,23 @@ class AuthController extends StateNotifier<AuthState> {
     }
   }
 
+  Future<bool> _activateLocalDemoOverlayIfNeeded() async {
+    if (AppConfig.isProduction) return false;
+    if (!AppConfig.hasInitializedRemoteBackend) return true;
+    if (!AppRuntimeMode.preferLocalDemo) {
+      final result = await AppRuntimeMode.setPreferLocalDemo(
+        true,
+        productionBackendAvailable: true,
+      );
+      if (!result.applied || !AppRuntimeMode.preferLocalDemo) {
+        return false;
+      }
+    }
+    await _authSubscription?.cancel();
+    _authSubscription = null;
+    return true;
+  }
+
   Future<void> _loginDemo(String normalized, String password) async {
     state = AuthState(
       loading: true,
@@ -286,15 +319,18 @@ class AuthController extends StateNotifier<AuthState> {
     if (_disposed) return;
 
     AppUser? user;
-    if ((normalized == 'admin@demo.ly' || normalized == 'admin') &&
-        password == 'Admin123!') {
+    final demoPhone = normalizeLibyanLoginPhone(normalized);
+    final customerPhone = normalizeLibyanLoginPhone(demoCustomer.phone ?? '');
+    if ((normalized == 'admin' || normalized == 'admin@demo.ly') &&
+        password == demoAdminPassword) {
       user = demoAdmin.copyWith(isDemo: true);
-    } else if ((normalized == 'staff@demo.ly' || normalized == 'staff') &&
-        password == 'Staff123!') {
+    } else if ((normalized == 'staff' || normalized == 'staff@demo.ly') &&
+        password == demoStaffPassword) {
       user = demoStaff.copyWith(isDemo: true);
     } else if ((normalized == 'tripoli-pets' ||
-            normalized == 'customer@demo.ly') &&
-        password == 'Customer123!') {
+            normalized == 'customer@demo.ly' ||
+            (demoPhone != null && demoPhone == customerPhone)) &&
+        password == demoCustomerPassword) {
       user = demoCustomer.copyWith(
         accountStatus: 'active',
         isDemo: true,
@@ -315,6 +351,36 @@ class AuthController extends StateNotifier<AuthState> {
       notice: 'حساب تجريبي: أي تغييرات هنا ليست بيانات تشغيل حقيقية.',
       restoredRoute: _restoredRoute,
     );
+  }
+
+  Future<LoginAuthTarget?> _resolveRemoteLoginTarget(
+    supabase.SupabaseClient client,
+    String identifier,
+  ) async {
+    try {
+      final payload = await client.rpc(
+        'resolve_login_identifier',
+        params: {'p_identifier': identifier},
+      );
+      if (payload is! Map) return null;
+      final data = <String, dynamic>{
+        for (final entry in payload.entries) entry.key.toString(): entry.value,
+      };
+      final email = data['email']?.toString().trim() ?? '';
+      final phone = data['phone']?.toString().trim() ?? '';
+      final typedPhone = normalizeLibyanLoginPhone(identifier);
+      if (typedPhone != null) {
+        if (phone.isNotEmpty) return LoginAuthTarget.phone(phone);
+        return LoginAuthTarget.phone(typedPhone);
+      }
+      if (email.isNotEmpty) {
+        return LoginAuthTarget.email(email.toLowerCase());
+      }
+      if (phone.isNotEmpty) return LoginAuthTarget.phone(phone);
+    } catch (_) {
+      return null;
+    }
+    return null;
   }
 
   Future<void> _redeemInvite({
@@ -532,10 +598,10 @@ class AuthController extends StateNotifier<AuthState> {
         return 'تعذر التحقق من كلمة المرور في هذا الوضع.';
       }
       final expected = user.isAdmin
-          ? 'Admin123!'
+          ? demoAdminPassword
           : user.isStaff
-              ? 'Staff123!'
-              : 'Customer123!';
+              ? demoStaffPassword
+              : demoCustomerPassword;
       if (password != expected) {
         return 'كلمة المرور غير صحيحة.';
       }

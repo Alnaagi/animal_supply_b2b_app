@@ -1,26 +1,33 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/app_config.dart';
-import '../../core/routing/banner_destination.dart';
+import '../../core/config/shop_branding.dart';
+import '../../core/connectivity/connectivity_provider.dart';
+import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/category_icon_view.dart';
 import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/price_text.dart';
 import '../../core/widgets/product_image_placeholder.dart';
+import '../../core/widgets/product_info_chip.dart';
+import '../../core/widgets/shop_brand_logo.dart';
+import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/product.dart';
+import '../../data/models/product_category.dart';
 import '../../data/models/order.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/notifications_repository.dart';
 import '../../data/repositories/orders_repository.dart';
 import '../auth/auth_controller.dart';
+import '../cart/added_to_cart_prompt.dart';
 import '../cart/cart_controller.dart';
 import '../notifications/notification_center_sheet.dart';
+import 'offer_banner_carousel.dart';
 
 class CustomerHomeScreen extends ConsumerStatefulWidget {
   const CustomerHomeScreen({super.key});
@@ -31,6 +38,7 @@ class CustomerHomeScreen extends ConsumerStatefulWidget {
 
 class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
   Future<List<Product>>? _productsFuture;
+  Future<List<ProductCategory>>? _categoriesFuture;
   Future<List<Order>>? _ordersFuture;
   Future<List<AppBanner>>? _bannersFuture;
   String? _homeCustomerKey;
@@ -39,19 +47,47 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
   void _ensureHomeFutures(String customerKey) {
     if (_productsFuture != null && _homeCustomerKey == customerKey) return;
     _homeCustomerKey = customerKey;
-    _productsFuture = ref.read(catalogRepositoryProvider).products();
-    _ordersFuture =
-        ref.read(ordersRepositoryProvider).ordersForCustomer(customerKey);
-    _bannersFuture = ref.read(adminRepositoryProvider).banners();
+    final catalog = ref.read(catalogRepositoryProvider);
+    _productsFuture = _asFuture(() => catalog.products());
+    _categoriesFuture = _asFuture(() => catalog.productCategories());
+    _ordersFuture = _asFuture(
+      () => ref.read(ordersRepositoryProvider).ordersForCustomer(customerKey),
+    );
+    _bannersFuture = _asFuture(
+      () => ref.read(adminRepositoryProvider).banners(),
+    );
   }
 
-  void _reloadHome() {
+  static Future<T> _asFuture<T>(Future<T> Function() load) {
+    try {
+      return load();
+    } catch (error, stack) {
+      return Future<T>.error(error, stack);
+    }
+  }
+
+  Future<void> _reloadHome() async {
     _productsFuture = null;
+    _categoriesFuture = null;
     _ordersFuture = null;
     _bannersFuture = null;
     ref.invalidate(unreadNotificationsCountProvider);
     _homeCustomerKey = null;
     setState(() {});
+    final user = ref.read(authControllerProvider).user;
+    if (user == null) return;
+    final customerKey = user.customerId ?? user.id;
+    _ensureHomeFutures(customerKey);
+    await Future.wait<Object>([
+      if (_productsFuture != null)
+        _productsFuture!.onError((_, __) => const <Product>[]),
+      if (_categoriesFuture != null)
+        _categoriesFuture!.onError((_, __) => const <ProductCategory>[]),
+      if (_ordersFuture != null)
+        _ordersFuture!.onError((_, __) => const <Order>[]),
+      if (_bannersFuture != null)
+        _bannersFuture!.onError((_, __) => const <AppBanner>[]),
+    ]);
   }
 
   @override
@@ -60,6 +96,10 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
         ref.watch(authControllerProvider.select((state) => state.user))!;
     final customerKey = user.customerId ?? user.id;
     _ensureHomeFutures(customerKey);
+    listenForScreenReload(ref, _reloadHome);
+    ref.listen<int>(networkRetryTickProvider, (previous, next) {
+      if (previous != next) _reloadHome();
+    });
     final unread = ref.watch(unreadNotificationsCountProvider).valueOrNull ?? 0;
     final location = [
       user.city,
@@ -68,150 +108,140 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
           ' - ',
         );
 
-    return ListView(
-      key: const Key('customer-home-scroll'),
-      padding: const EdgeInsets.all(16),
-      children: [
-        Row(children: [
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('مرحباً، ${user.businessName ?? user.username}',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.w900)),
-              if (location.isNotEmpty) ...[
-                const SizedBox(height: 3),
-                Text(
-                  location,
-                  style: const TextStyle(color: Colors.grey),
+    return ShopRefreshIndicator(
+      onRefresh: _reloadHome,
+      child: ListView(
+        key: const Key('customer-home-scroll'),
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(18, 10, 18, 20),
+        children: [
+          _HomeGreetingHeader(
+            name: user.businessName ?? user.username,
+            location: location,
+            unread: unread,
+            onSearch: () => context.go('/catalog'),
+            onNotifications: () => showNotificationCenter(context, ref),
+          ),
+          const SizedBox(height: 14),
+          FutureBuilder<List<AppBanner>>(
+            future: _bannersFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const _HomeSectionLoading(
+                  label: 'جارٍ تحميل العروض...',
+                  height: 88,
+                );
+              }
+              if (snapshot.hasError) {
+                return _HomeSectionNotice(
+                  icon: Icons.image_not_supported_outlined,
+                  title: 'تعذر تحميل العروض',
+                  message: 'يمكنك متابعة تصفح المنتجات والطلب بشكل طبيعي.',
+                  onRetry: _reloadHome,
+                );
+              }
+              final banners = AppConfig.remoteBackendEnabled
+                  ? HomeBannerSlide.fromAdminBanners(snapshot.data ?? const [])
+                  : HomeBannerSlide.demo();
+              if (banners.isEmpty) return const SizedBox.shrink();
+              return Column(
+                children: [
+                  // Owns its own PageController/timer/setState so banner ticks
+                  // never rebuild product lists below.
+                  OfferBannerCarousel(banners: banners),
+                  const SizedBox(height: 16),
+                ],
+              );
+            },
+          ),
+          FutureBuilder<List<Product>>(
+            future: _productsFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const _HomeSectionLoading(
+                  label: 'جارٍ تحميل المنتجات...',
+                  height: 180,
+                );
+              }
+              if (snapshot.hasError) {
+                return _HomeSectionNotice(
+                  icon: Icons.cloud_off_outlined,
+                  title: 'تعذر تحميل المنتجات',
+                  message:
+                      'لم نجد كتالوجاً محفوظاً على هذا الجهاز. تحقق من الاتصال ثم أعد المحاولة.',
+                  onRetry: _reloadHome,
+                );
+              }
+              return FutureBuilder<List<ProductCategory>>(
+                future: _categoriesFuture,
+                builder: (context, categorySnapshot) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: _productSections(
+                      snapshot.data ?? const [],
+                      categorySnapshot.data ?? const [],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          FutureBuilder<List<Order>>(
+            future: _ordersFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const _HomeSectionLoading(
+                  label: 'جارٍ تحديث آخر الطلبات...',
+                  height: 72,
+                );
+              }
+              if (snapshot.hasError) {
+                return _HomeSectionNotice(
+                  icon: Icons.receipt_long_outlined,
+                  title: 'تعذر تحديث آخر الطلبات',
+                  message:
+                      'الكتالوج والسلة ما زالا متاحين، ويمكنك مراجعة الطلبات لاحقاً.',
+                  onRetry: _reloadHome,
+                );
+              }
+              final orders = snapshot.data ?? const [];
+              if (orders.isEmpty) return const SizedBox.shrink();
+              return Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                  child: Row(children: [
+                    const Icon(Icons.refresh, color: AppTheme.green),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: Text(
+                            'إعادة آخر طلب (${orders.first.items.length} منتجات)',
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold))),
+                    FilledButton(
+                      onPressed:
+                          _reordering ? null : () => _reorder(orders.first),
+                      child: _reordering
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('إعادة الطلب'),
+                    ),
+                  ]),
                 ),
-              ],
-            ]),
+              );
+            },
           ),
-          IconButton.filledTonal(
-              tooltip: 'البحث في المنتجات',
-              onPressed: () => context.go('/catalog'),
-              icon: const Icon(Icons.search)),
-          const SizedBox(width: 6),
-          IconButton.filledTonal(
-            tooltip: 'الإشعارات',
-            onPressed: () => showNotificationCenter(context, ref),
-            icon: Badge(
-              isLabelVisible: unread > 0,
-              label: Text(unread > 99 ? '99+' : '$unread'),
-              child: const Icon(Icons.notifications_none),
-            ),
-          ),
-        ]),
-        const SizedBox(height: 16),
-        FutureBuilder<List<AppBanner>>(
-          future: _bannersFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const _HomeSectionLoading(
-                label: 'جارٍ تحميل العروض...',
-                height: 88,
-              );
-            }
-            if (snapshot.hasError) {
-              return _HomeSectionNotice(
-                icon: Icons.image_not_supported_outlined,
-                title: 'تعذر تحميل العروض',
-                message: 'يمكنك متابعة تصفح المنتجات والطلب بشكل طبيعي.',
-                onRetry: _reloadHome,
-              );
-            }
-            final banners = AppConfig.remoteBackendEnabled
-                ? _HomeBannerData.fromAdminBanners(snapshot.data ?? const [])
-                : _HomeBannerData.demo();
-            if (banners.isEmpty) return const SizedBox.shrink();
-            return Column(
-              children: [
-                // Owns its own PageController/timer/setState so banner ticks
-                // never rebuild product lists below.
-                _OfferBannerCarousel(banners: banners),
-                const SizedBox(height: 20),
-              ],
-            );
-          },
-        ),
-        FutureBuilder<List<Product>>(
-          future: _productsFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const _HomeSectionLoading(
-                label: 'جارٍ تحميل المنتجات...',
-                height: 180,
-              );
-            }
-            if (snapshot.hasError) {
-              return _HomeSectionNotice(
-                icon: Icons.cloud_off_outlined,
-                title: 'تعذر تحميل المنتجات',
-                message:
-                    'لم نجد كتالوجاً محفوظاً على هذا الجهاز. تحقق من الاتصال ثم أعد المحاولة.',
-                onRetry: _reloadHome,
-              );
-            }
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: _productSections(snapshot.data ?? const []),
-            );
-          },
-        ),
-        const SizedBox(height: 12),
-        FutureBuilder<List<Order>>(
-          future: _ordersFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const _HomeSectionLoading(
-                label: 'جارٍ تحديث آخر الطلبات...',
-                height: 72,
-              );
-            }
-            if (snapshot.hasError) {
-              return _HomeSectionNotice(
-                icon: Icons.receipt_long_outlined,
-                title: 'تعذر تحديث آخر الطلبات',
-                message:
-                    'الكتالوج والسلة ما زالا متاحين، ويمكنك مراجعة الطلبات لاحقاً.',
-                onRetry: _reloadHome,
-              );
-            }
-            final orders = snapshot.data ?? const [];
-            if (orders.isEmpty) return const SizedBox.shrink();
-            return Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(children: [
-                  const Icon(Icons.refresh, color: AppTheme.green),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: Text(
-                          'إعادة آخر طلب (${orders.first.items.length} منتجات)',
-                          style: const TextStyle(fontWeight: FontWeight.bold))),
-                  FilledButton(
-                    onPressed:
-                        _reordering ? null : () => _reorder(orders.first),
-                    child: _reordering
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('إعادة الطلب'),
-                  ),
-                ]),
-              ),
-            );
-          },
-        ),
-      ],
+        ],
+      ),
     );
   }
 
-  List<Widget> _productSections(List<Product> products) {
+  List<Widget> _productSections(
+    List<Product> products,
+    List<ProductCategory> categoryMeta,
+  ) {
     if (products.isEmpty) {
       return [
         const EmptyState(
@@ -222,30 +252,63 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
       ];
     }
 
-    final categories =
-        products.map((product) => product.category).toSet().toList();
+    final byName = <String, ProductCategory>{
+      for (final category in categoryMeta)
+        if (category.active && !category.isArchived) category.name: category,
+    };
+    final categories = <ProductCategory>[
+      ...byName.values,
+    ];
+    for (final product in products) {
+      final name = product.category.trim();
+      if (name.isEmpty || byName.containsKey(name)) continue;
+      final fallback = ProductCategory(
+        id: product.categoryId ?? name,
+        name: name,
+      );
+      byName[name] = fallback;
+      categories.add(fallback);
+    }
     final latest = products.take(12).toList(growable: false);
     return [
-      _SectionHeader(title: 'التصنيفات', onTap: () => context.go('/catalog')),
-      const SizedBox(height: 10),
-      SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-            children: categories
-                .map((category) => _CategoryCircle(
-                    label: category,
-                    onTap: () => context.go(
-                        '/catalog?category=${Uri.encodeComponent(category)}')))
-                .toList()),
-      ),
-      const SizedBox(height: 20),
       _SectionHeader(
-          title: 'أحدث المنتجات', onTap: () => context.go('/catalog')),
-      const SizedBox(height: 10),
+        title: 'التصنيفات',
+        count: categories.length,
+        onTap: () => context.go('/catalog'),
+      ),
+      const SizedBox(height: 8),
       SizedBox(
-        height: 300,
+        height: 108,
         child: ListView.separated(
+          key: const Key('customer-home-categories'),
           scrollDirection: Axis.horizontal,
+          padding: const EdgeInsetsDirectional.only(end: 36),
+          itemCount: categories.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (context, index) {
+            final category = categories[index];
+            return _HomeCategoryTile(
+              category: category,
+              onTap: () => context.go(
+                '/catalog?category=${Uri.encodeComponent(category.name)}',
+              ),
+            );
+          },
+        ),
+      ),
+      const SizedBox(height: 18),
+      _SectionHeader(
+        title: 'أحدث المنتجات',
+        count: latest.length,
+        onTap: () => context.go('/catalog'),
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        height: 338,
+        child: ListView.separated(
+          key: const Key('customer-home-products'),
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsetsDirectional.only(end: 28),
           itemCount: latest.length,
           separatorBuilder: (_, __) => const SizedBox(width: 12),
           itemBuilder: (context, index) =>
@@ -311,7 +374,10 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
           SnackBar(content: Text('${parts.join('، ')}.')),
         );
       }
-      if (added > 0 && mounted) context.go('/cart');
+      if (added > 0 && mounted) {
+        requestScreenReload(ref);
+        context.go('/cart');
+      }
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -344,7 +410,7 @@ class _HomeSectionLoading extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const CircularProgressIndicator(),
+              const ShopLoading.compact(),
               const SizedBox(height: 10),
               Text(label),
             ],
@@ -399,500 +465,414 @@ class _HomeSectionNotice extends StatelessWidget {
       );
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, this.onTap});
-  final String title;
-  final VoidCallback? onTap;
+class _HomeGreetingHeader extends ConsumerWidget {
+  const _HomeGreetingHeader({
+    required this.name,
+    required this.location,
+    required this.unread,
+    required this.onSearch,
+    required this.onNotifications,
+  });
+
+  final String name;
+  final String location;
+  final int unread;
+  final VoidCallback onSearch;
+  final VoidCallback onNotifications;
+
   @override
-  Widget build(BuildContext context) => Row(children: [
-        Text(title,
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.w900)),
-        const Spacer(),
-        TextButton(onPressed: onTap, child: const Text('عرض الكل')),
-      ]);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final branding = ref.watch(shopBrandingProvider);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        ShopBrandLogo(
+          key: const Key('customer-home-shop-logo'),
+          logoUrl: branding.logoUrl,
+          size: 48,
+          backgroundColor: const Color(0xffe3f3eb),
+          fallbackIconColor: AppTheme.green,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'مرحباً، $name',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: AppTheme.darkGreen,
+                      height: 1.15,
+                    ),
+              ),
+              if (location.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.location_on_outlined,
+                      size: 16,
+                      color: AppTheme.darkGreen.withValues(alpha: .62),
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        location,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: AppTheme.darkGreen.withValues(alpha: .68),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .06),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                key: const Key('customer-home-search'),
+                tooltip: 'البحث في المنتجات',
+                onPressed: onSearch,
+                icon: const Icon(Icons.search, color: AppTheme.green),
+              ),
+              IconButton(
+                key: const Key('customer-home-notifications'),
+                tooltip: 'الإشعارات',
+                onPressed: onNotifications,
+                icon: Badge(
+                  isLabelVisible: unread > 0,
+                  label: Text(unread > 99 ? '99+' : '$unread'),
+                  child: const Icon(
+                    Icons.notifications_none,
+                    color: AppTheme.green,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
-class _HomeBannerData {
-  const _HomeBannerData({
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({
     required this.title,
-    required this.subtitle,
-    required this.cta,
-    required this.imageUrl,
-    required this.category,
-    required this.destination,
-    required this.sourceUrl,
-    required this.isDemo,
+    this.count,
+    this.onTap,
   });
 
   final String title;
-  final String subtitle;
-  final String cta;
-  final String imageUrl;
-  final String category;
-  final BannerDestination destination;
-  final String sourceUrl;
-  final bool isDemo;
-
-  static List<_HomeBannerData> fromAdminBanners(List<AppBanner> banners) {
-    return [
-      for (final banner in banners)
-        _HomeBannerData(
-          title: banner.title,
-          subtitle: banner.body,
-          cta: banner.ctaText,
-          imageUrl: banner.imageUrl,
-          category: banner.targetType,
-          destination: resolveBannerDestination(
-            targetType: banner.targetType,
-            targetValue: banner.targetValue,
-          ),
-          sourceUrl: '',
-          isDemo: false,
-        ),
-    ];
-  }
-
-  static List<_HomeBannerData> demo() {
-    // External demo photo URLs only. Do not copy these images into the repo.
-    // Replace with client-approved Supabase Storage banners before production.
-    return [
-      _HomeBannerData(
-        title: 'عروض خاصة لتجار مستلزمات الحيوانات',
-        subtitle: 'أصناف قطط وكلاب بالجملة مع أسعار تجريبية للعرض',
-        cta: 'تسوق الآن',
-        imageUrl:
-            'https://images.unsplash.com/photo-1714068691210-073dc52c6c1d?auto=format&fit=crop&w=1600&h=620&q=80',
-        sourceUrl:
-            'https://unsplash.com/photos/a-brown-and-white-dog-eating-food-out-of-a-bowl-Qvbr5Uxgz_Q',
-        category: 'كلاب',
-        destination: BannerDestination.internal(
-          '/catalog?category=${Uri.encodeComponent('كلاب')}',
-        ),
-        isDemo: true,
-      ),
-      _HomeBannerData(
-        title: 'توريد أكل قطط للمحال والعيادات',
-        subtitle: 'منتجات مختارة بكميات جملة وحد أدنى مناسب للطلبات',
-        cta: 'منتجات القطط',
-        imageUrl:
-            'https://images.unsplash.com/photo-1520811607976-6d7812b0ecac?auto=format&fit=crop&w=1600&h=620&q=80',
-        sourceUrl:
-            'https://unsplash.com/photos/two-gray-and-black-cats-eating-food-on-white-plastic-pet-bowl-2Cl0lX_4bag',
-        category: 'قطط',
-        destination: BannerDestination.internal(
-          '/catalog?category=${Uri.encodeComponent('قطط')}',
-        ),
-        isDemo: true,
-      ),
-      _HomeBannerData(
-        title: 'أغذية وأدوات الطيور',
-        subtitle: 'خلطات بذور، مكملات، وأقفاص للتوريد التجاري',
-        cta: 'تصفح الطيور',
-        imageUrl:
-            'https://images.unsplash.com/photo-1728774266756-abd3d2b36047?auto=format&fit=crop&w=1600&h=620&q=80',
-        sourceUrl:
-            'https://unsplash.com/photos/a-bird-is-eating-seeds-from-a-bird-feeder--9IwHUIqdXM',
-        category: 'طيور',
-        destination: BannerDestination.internal(
-          '/catalog?category=${Uri.encodeComponent('طيور')}',
-        ),
-        isDemo: true,
-      ),
-      _HomeBannerData(
-        title: 'مستلزمات أحواض وأسماك',
-        subtitle: 'طعام أسماك ومنظفات ومستلزمات للأحواض',
-        cta: 'منتجات الأسماك',
-        imageUrl:
-            'https://images.unsplash.com/photo-1732312645795-c25b0f4f5759?auto=format&fit=crop&w=1600&h=620&q=80',
-        sourceUrl:
-            'https://unsplash.com/photos/a-large-aquarium-filled-with-lots-of-different-types-of-fish-kHjAZor7dh0',
-        category: 'أسماك',
-        destination: BannerDestination.internal(
-          '/catalog?category=${Uri.encodeComponent('أسماك')}',
-        ),
-        isDemo: true,
-      ),
-      const _HomeBannerData(
-        title: 'طلبات علف ومستلزمات بالجملة',
-        subtitle: 'جهز طلبك بسرعة وسيقوم فريق المتجر بالتأكيد عبر واتساب',
-        cta: 'عرض كل المنتجات',
-        imageUrl:
-            'https://images.unsplash.com/photo-1758778820716-df5ab0444e93?auto=format&fit=crop&w=1600&h=620&q=80',
-        sourceUrl:
-            'https://unsplash.com/photos/a-bird-feeder-filled-with-seed-and-suet-jUJoWw1pdGI',
-        category: 'مستلزمات',
-        destination: BannerDestination.internal('/catalog'),
-        isDemo: true,
-      ),
-    ];
-  }
-}
-
-class _OfferBannerCarousel extends StatefulWidget {
-  const _OfferBannerCarousel({required this.banners});
-
-  final List<_HomeBannerData> banners;
-
-  @override
-  State<_OfferBannerCarousel> createState() => _OfferBannerCarouselState();
-}
-
-class _OfferBannerCarouselState extends State<_OfferBannerCarousel> {
-  late final PageController _controller;
-  Timer? _timer;
-  int _activeIndex = 0;
-  bool _reduceMotion = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = PageController();
-    _startTimer();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final reduceMotion = MediaQuery.disableAnimationsOf(context) ||
-        MediaQuery.accessibleNavigationOf(context);
-    if (_reduceMotion == reduceMotion) return;
-    _reduceMotion = reduceMotion;
-    _timer?.cancel();
-    _timer = null;
-    _startTimer();
-  }
-
-  @override
-  void didUpdateWidget(covariant _OfferBannerCarousel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.banners.length != widget.banners.length) {
-      _timer?.cancel();
-      _timer = null;
-      _activeIndex = 0;
-      _startTimer();
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _startTimer() {
-    if (_reduceMotion || widget.banners.length < 2 || _timer != null) return;
-    _timer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (!_controller.hasClients || !mounted) return;
-      final next = (_activeIndex + 1) % widget.banners.length;
-      _controller.animateToPage(
-        next,
-        duration: const Duration(milliseconds: 420),
-        curve: Curves.easeOutCubic,
-      );
-    });
-  }
+  final int? count;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final banners = widget.banners;
-    return Column(children: [
-      LayoutBuilder(
-        builder: (context, constraints) {
-          final width = constraints.maxWidth;
-          final height = width >= 900
-              ? 280.0
-              : width >= 640
-                  ? 250.0
-                  : 240.0;
-          return SizedBox(
-            height: height,
-            child: PageView.builder(
-              controller: _controller,
-              onPageChanged: (index) {
-                if (_activeIndex == index) return;
-                setState(() => _activeIndex = index);
-              },
-              itemCount: banners.length,
-              itemBuilder: (context, index) =>
-                  _OfferBannerCard(banner: banners[index]),
-            ),
-          );
-        },
-      ),
-      const SizedBox(height: 10),
-      Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          for (var i = 0; i < banners.length; i++)
-            Semantics(
-              label:
-                  'العرض ${i + 1} من ${banners.length}${_activeIndex == i ? '، معروض حالياً' : ''}',
-              selected: _activeIndex == i,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                width: _activeIndex == i ? 22 : 7,
-                height: 7,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(99),
-                  color: _activeIndex == i
-                      ? AppTheme.green
-                      : AppTheme.green.withValues(alpha: .22),
+    return Row(
+      children: [
+        Flexible(
+          fit: FlexFit.loose,
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.darkGreen,
                 ),
+          ),
+        ),
+        if (count != null) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppTheme.green.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Text(
+              '$count',
+              style: const TextStyle(
+                color: AppTheme.green,
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
               ),
             ),
+          ),
         ],
-      ),
-    ]);
+        const SizedBox(width: 4),
+        TextButton(
+          onPressed: onTap,
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            minimumSize: const Size(48, 40),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            foregroundColor: AppTheme.green,
+          ),
+          child: const Text(
+            'عرض الكل',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ),
+      ],
+    );
   }
 }
 
-class _OfferBannerCard extends StatelessWidget {
-  const _OfferBannerCard({required this.banner});
-  final _HomeBannerData banner;
+class _HomeCategoryTile extends StatelessWidget {
+  const _HomeCategoryTile({
+    required this.category,
+    required this.onTap,
+  });
 
-  Future<void> _openDestination(BuildContext context) async {
-    final externalUri = banner.destination.externalUri;
-    if (externalUri == null) {
-      context.go(banner.destination.path);
-      return;
-    }
-    final opened = await launchUrl(
-      externalUri,
-      mode: LaunchMode.externalApplication,
-    );
-    if (!opened && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تعذر فتح رابط العرض حالياً')),
-      );
-    }
-  }
+  final ProductCategory category;
+  final VoidCallback onTap;
+
+  static const _palettes = <(Color, Color)>[
+    (Color(0xffd9f0e6), Color(0xff146c4e)),
+    (Color(0xfff4e6d4), Color(0xff8a623f)),
+    (Color(0xffdceaf4), Color(0xff2b6488)),
+    (Color(0xfff7e4d8), Color(0xffb25a2b)),
+    (Color(0xffe7e4f4), Color(0xff5b4d8a)),
+    (Color(0xffe8f1d8), Color(0xff4d6b2b)),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(28),
-        onTap: () => _openDestination(context),
-        child: Container(
-          clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(28),
-            gradient: const LinearGradient(
-                colors: [AppTheme.green, AppTheme.darkGreen],
-                begin: Alignment.topRight,
-                end: Alignment.bottomLeft),
-          ),
-          child: Stack(fit: StackFit.expand, children: [
-            Image.network(
-              banner.imageUrl,
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
-              filterQuality: FilterQuality.medium,
-              webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                return const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                        colors: [AppTheme.green, AppTheme.darkGreen],
-                        begin: Alignment.topRight,
-                        end: Alignment.bottomLeft),
-                  ),
-                  child: Center(
-                      child: CircularProgressIndicator(color: Colors.white)),
-                );
-              },
-              errorBuilder: (context, error, stackTrace) {
-                return DecoratedBox(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                        colors: [AppTheme.green, AppTheme.darkGreen],
-                        begin: Alignment.topRight,
-                        end: Alignment.bottomLeft),
-                  ),
-                  child: Align(
-                    alignment: AlignmentDirectional.centerEnd,
-                    child: Padding(
-                      padding: const EdgeInsetsDirectional.only(end: 24),
-                      child: Icon(Icons.pets,
-                          color: Colors.white.withValues(alpha: .24),
-                          size: 112),
-                    ),
-                  ),
-                );
-              },
-            ),
-            Positioned.fill(
-              child: DecoratedBox(
+    final palette = _palettes[category.name.hashCode.abs() % _palettes.length];
+    return SizedBox(
+      width: 84,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: Key('customer-home-category-${category.name}'),
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Column(
+            children: [
+              Container(
+                width: 76,
+                height: 68,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.black.withValues(alpha: .70),
-                      Colors.black.withValues(alpha: .36),
-                      Colors.black.withValues(alpha: .08),
-                    ],
-                    stops: const [0, .54, 1],
-                    begin: Alignment.centerRight,
-                    end: Alignment.centerLeft,
+                  color: palette.$1,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: AppTheme.green.withValues(alpha: .10),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: .05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Center(
+                  child: CategoryIconView.fromCategory(
+                    category,
+                    size: 32,
+                    color: palette.$2,
                   ),
                 ),
               ),
-            ),
-            Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 430),
-                child: Padding(
-                  padding: EdgeInsets.all(
-                      MediaQuery.sizeOf(context).width < 420 ? 16 : 22),
-                  child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (banner.isDemo) ...[
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: .16),
-                                borderRadius: BorderRadius.circular(99)),
-                            child: const Text('بانر تجريبي من الإنترنت',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 12)),
-                          ),
-                          const SizedBox(height: 8),
-                        ],
-                        Text(
-                          banner.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineSmall
-                              ?.copyWith(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w900,
-                                  height: 1.12),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          banner.subtitle,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: Colors.white, fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(height: 10),
-                        FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: AppTheme.green),
-                          onPressed: () => _openDestination(context),
-                          icon: const Icon(Icons.arrow_back),
-                          label: Text(banner.cta),
-                        ),
-                      ]),
+              const SizedBox(height: 6),
+              Text(
+                category.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                  color: AppTheme.darkGreen,
                 ),
               ),
-            ),
-          ]),
+            ],
+          ),
         ),
       ),
     );
   }
-}
-
-class _CategoryCircle extends StatelessWidget {
-  const _CategoryCircle({required this.label, required this.onTap});
-  final String label;
-  final VoidCallback onTap;
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsetsDirectional.only(end: 12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(22),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: Column(children: [
-              ProductImagePlaceholder(category: label, size: 64),
-              const SizedBox(height: 6),
-              Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-            ]),
-          ),
-        ),
-      );
 }
 
 class _HomeProductCard extends ConsumerWidget {
   const _HomeProductCard({required this.product});
   final Product product;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) => InkWell(
-        onTap: () => context.push('/product/${product.id}'),
-        borderRadius: BorderRadius.circular(22),
-        child: Container(
-          width: 170,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(22),
-              boxShadow: const [
-                BoxShadow(
-                    color: Colors.black12, blurRadius: 12, offset: Offset(0, 6))
-              ]),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Center(
-                child: ProductImagePlaceholder(
-                    category: product.category,
-                    productId: product.id,
-                    imageUrl: product.imageUrl,
-                    size: 92)),
-            const SizedBox(height: 8),
-            Text(product.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w900)),
-            if (product.brand.trim().isNotEmpty)
-              Text(product.brand,
-                  style: const TextStyle(color: Colors.grey, fontSize: 12)),
-            const Spacer(),
-            const Text(
-              'سعر الجملة',
-              style: TextStyle(color: Colors.grey, fontSize: 11),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final muted = AppTheme.darkGreen.withValues(alpha: .62);
+    return InkWell(
+      onTap: () => context.push('/product/${product.id}'),
+      borderRadius: BorderRadius.circular(22),
+      child: Container(
+        width: 196,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .08),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
             ),
-            PriceText(price: product.price),
-            if (product.retailUnitPrice != null)
-              Text(
-                'بيع الوحدة: '
-                '${product.retailUnitPrice!.toStringAsFixed(2)} د.ل',
-                style: const TextStyle(color: Colors.grey, fontSize: 11),
-              ),
-            Row(children: [
-              Text(product.isOrderable ? 'متوفر' : 'غير متوفر',
-                  style: TextStyle(
-                      color:
-                          product.isOrderable ? AppTheme.green : AppTheme.red,
-                      fontSize: 12)),
-              const Spacer(),
-              IconButton.filled(
-                  tooltip: 'إضافة ${product.name} إلى السلة',
-                  onPressed: product.isOrderable
-                      ? () =>
-                          ref.read(cartControllerProvider.notifier).add(product)
-                      : null,
-                  icon: const Icon(Icons.add)),
-            ]),
-          ]),
+          ],
         ),
-      );
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              height: 148,
+              width: double.infinity,
+              child: ProductImagePlaceholder(
+                category: product.category,
+                productId: product.id,
+                imageUrl: product.imageUrl,
+                expand: true,
+                borderRadius: BorderRadius.zero,
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                        height: 1.2,
+                        color: AppTheme.darkGreen,
+                      ),
+                    ),
+                    if (product.brand.trim().isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        product.brand,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    if (product.unitSize.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        product.unitSize,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: muted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    const Spacer(),
+                    Text(
+                      'سعر الجملة',
+                      style: TextStyle(
+                        color: muted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    PriceText(price: product.price),
+                    if (product.retailUnitPrice != null)
+                      Text(
+                        'بيع الوحدة: '
+                        '${product.retailUnitPrice!.toStringAsFixed(2)} د.ل',
+                        style: TextStyle(
+                          color: muted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ProductChipWrap(
+                            children: [
+                              Tooltip(
+                                message: product.isOrderable
+                                    ? AddedToCartPromptCopy.orderActionTooltip
+                                    : product.customerAvailabilityLabel,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(999),
+                                  onTap: product.isOrderable
+                                      ? () => addProductToCartThenPrompt(
+                                            context: context,
+                                            ref: ref,
+                                            product: product,
+                                          )
+                                      : null,
+                                  child: ProductInfoChip(
+                                    product.customerAvailabilityLabel,
+                                    color: product.isOrderable
+                                        ? AppTheme.green
+                                        : AppTheme.red,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton.filled(
+                          tooltip: 'إضافة ${product.name} إلى السلة',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: product.isOrderable
+                              ? () => addProductToCartThenPrompt(
+                                    context: context,
+                                    ref: ref,
+                                    product: product,
+                                  )
+                              : null,
+                          icon: const Icon(Icons.add, size: 20),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

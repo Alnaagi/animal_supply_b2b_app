@@ -13,8 +13,7 @@ enum DashboardWidgetId {
   monthSales('month_sales', 'مبيعات الشهر'),
   pendingOrdersPanel('pending_orders_panel', 'طلبات تحتاج مراجعة'),
   lowStockPanel('low_stock_panel', 'قائمة المخزون المنخفض'),
-  appUpdates('app_updates', 'تحديثات التطبيق'),
-  dataFullness('data_fullness', 'امتلاء البيانات');
+  dataFullness('data_fullness', 'امتلاء قاعدة البيانات');
 
   const DashboardWidgetId(this.storageKey, this.labelAr);
 

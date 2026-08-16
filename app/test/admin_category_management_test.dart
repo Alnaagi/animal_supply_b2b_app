@@ -41,6 +41,9 @@ void main() {
         find.byKey(const ValueKey('new-category-name-field')),
         'طيور',
       );
+      await tester.tap(
+        find.byKey(const ValueKey('category-icon-preset-bird')),
+      );
       await tester.tap(find.byKey(const ValueKey('save-category-button')));
       await tester.pumpAndSettle();
 
@@ -165,11 +168,15 @@ void main() {
         'طيور',
       );
       await tester.tap(
+        find.byKey(const ValueKey('category-icon-preset-bird')),
+      );
+      await tester.tap(
         find.byKey(const ValueKey('save-category-button')),
       );
       await tester.pumpAndSettle();
 
       expect(repository.createdCategory, isNotNull);
+      expect(repository.createdCategory!.iconKey, 'bird');
       expect(
         find.byKey(
           ValueKey(
@@ -180,6 +187,145 @@ void main() {
       );
       expect(find.textContaining('تم إنشاء تصنيف «طيور»'), findsOneWidget);
       expect(find.textContaining('تعذر إنشاء التصنيف'), findsNothing);
+    },
+  );
+
+  test('createCategory rejects a missing icon in demo mode', () async {
+    final repository = CatalogRepository.demo(seed: const []);
+    expect(
+      () => repository.createCategory('أعلاف'),
+      throwsA(isA<CategoryIconRequiredException>()),
+    );
+  });
+
+  test('createCategory stores a stable preset icon key', () async {
+    final repository = CatalogRepository.demo(seed: const []);
+    final created = await repository.createCategory(
+      'أعلاف',
+      iconKey: 'feed',
+    );
+    expect(created.iconKey, 'feed');
+    expect(created.iconUrl, isNull);
+    final listed = await repository.productCategories();
+    expect(
+      listed.singleWhere((item) => item.name == 'أعلاف').iconKey,
+      'feed',
+    );
+  });
+
+  test('createCategory stores an uploaded HTTPS icon URL', () async {
+    final repository = CatalogRepository.demo(seed: const []);
+    final created = await repository.createCategory(
+      'أدوية',
+      iconUrl: 'https://cdn.example/category-icon.png',
+    );
+    expect(created.iconKey, isNull);
+    expect(created.iconUrl, 'https://cdn.example/category-icon.png');
+  });
+
+  test('updateCategory keeps an existing icon and rejects clearing it', () async {
+    final repository = CatalogRepository.demo(seed: const []);
+    final created = await repository.createCategory(
+      'أعلاف',
+      iconKey: 'feed',
+    );
+    expect(
+      () => repository.updateCategory(
+        created.id,
+        iconKey: '',
+        iconUrl: '',
+      ),
+      throwsA(isA<CategoryIconRequiredException>()),
+    );
+    final renamed = await repository.updateCategory(
+      created.id,
+      name: 'علف جملة',
+    );
+    expect(renamed.name, 'علف جملة');
+    expect(renamed.iconKey, 'feed');
+  });
+
+  testWidgets(
+    'admin cannot save a category without choosing a preset or upload',
+    (tester) async {
+      final repository = CatalogRepository.demo(seed: const []);
+      await _pumpProducts(tester, repository);
+
+      await tester.tap(find.byKey(const ValueKey('create-category-button')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('new-category-name-field')),
+        'أعلاف تجريبية',
+      );
+      await tester.tap(find.byKey(const ValueKey('save-category-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('اختر أيقونة جاهزة أو ارفع أيقونة للتصنيف.'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('save-category-button')), findsOneWidget);
+      final listed = await repository.productCategories();
+      expect(
+        listed.any((item) => item.name == 'أعلاف تجريبية'),
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets(
+    'admin preset category icon is required and then shown after save',
+    (tester) async {
+      final repository = CatalogRepository.demo(seed: const []);
+      await _pumpProducts(tester, repository);
+
+      await tester.tap(find.byKey(const ValueKey('create-category-button')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('new-category-name-field')),
+        'أعلاف',
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('category-icon-preset-feed')),
+      );
+      await tester.tap(find.byKey(const ValueKey('category-icon-preset-feed')));
+      await tester.tap(find.byKey(const ValueKey('save-category-button')));
+      await tester.pumpAndSettle();
+
+      final created = (await repository.productCategories())
+          .singleWhere((item) => item.name == 'أعلاف');
+      expect(created.iconKey, 'feed');
+      expect(find.byKey(const ValueKey('admin-products-category-أعلاف')),
+          findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'admin can save a category with an HTTPS uploaded icon URL',
+    (tester) async {
+      final repository = CatalogRepository.demo(seed: const []);
+      await _pumpProducts(tester, repository);
+
+      await tester.tap(find.byKey(const ValueKey('create-category-button')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('new-category-name-field')),
+        'أدوية بيطرية',
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('category-icon-https-field')),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('category-icon-https-field')),
+        'https://cdn.example/vet.png',
+      );
+      await tester.tap(find.byKey(const ValueKey('save-category-button')));
+      await tester.pumpAndSettle();
+
+      final created = (await repository.productCategories())
+          .singleWhere((item) => item.name == 'أدوية بيطرية');
+      expect(created.iconUrl, 'https://cdn.example/vet.png');
+      expect(created.iconKey, isNull);
     },
   );
 }
@@ -424,8 +570,18 @@ class _CreateRefreshFailureRepository extends CatalogRepository {
   bool _failNextCategoryList = false;
 
   @override
-  Future<ProductCategory> createCategory(String rawName) async {
-    createdCategory = await super.createCategory(rawName);
+  Future<ProductCategory> createCategory(
+    String rawName, {
+    String? iconKey,
+    String? iconUrl,
+    bool inferIconIfMissing = false,
+  }) async {
+    createdCategory = await super.createCategory(
+      rawName,
+      iconKey: iconKey,
+      iconUrl: iconUrl,
+      inferIconIfMissing: inferIconIfMissing,
+    );
     _failNextCategoryList = true;
     return createdCategory!;
   }

@@ -1,10 +1,20 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/concurrency/stale_write.dart';
 import '../../core/config/app_config.dart';
 import '../../core/constants/order_status.dart';
+import '../../core/localization/arabic_copy.dart';
+import '../../core/support/customer_invite_copy.dart';
+import '../../core/updates/download_page_links.dart';
 import '../../core/updates/update_link.dart';
+import '../../core/security/destructive_confirm_phrase.dart';
 import '../models/admin_models.dart';
+import '../models/application_data_reset.dart';
+import '../models/database_usage.dart';
 import '../models/order.dart';
 import '../models/product.dart';
 import '../remote/supabase_clients.dart';
@@ -30,6 +40,60 @@ const _supportedCustomerStatuses = <String>{
   'archived',
 };
 
+class AdminRemoteException implements Exception {
+  const AdminRemoteException({
+    required this.code,
+    required this.message,
+    this.status,
+  });
+
+  final String code;
+  final String message;
+  final int? status;
+
+  @override
+  String toString() {
+    if (message.trim().isNotEmpty) return message.trim();
+    if (code.trim().isNotEmpty) return code.trim();
+    return 'AdminRemoteException';
+  }
+}
+
+class AdminRemoteErrorInfo {
+  const AdminRemoteErrorInfo({
+    this.code = '',
+    this.message = '',
+    this.status,
+  });
+
+  final String code;
+  final String message;
+  final int? status;
+
+  AdminRemoteException asException() {
+    final resolvedCode =
+        code.trim().isEmpty ? 'CUSTOMER_UPDATE_FAILED' : code.trim();
+    final resolvedMessage =
+        resolvedCode == 'STALE_WRITE' ||
+                resolvedCode == 'CUSTOMER_UPDATE_CONFLICT' ||
+                resolvedCode == 'RESET_IN_PROGRESS'
+            ? mutationFailureMessageAr(
+                AdminRemoteException(
+                  code: resolvedCode,
+                  message: '',
+                  status: status,
+                ),
+                fallback: ArabicCopy.staleWrite,
+              )
+            : message.trim();
+    return AdminRemoteException(
+      code: resolvedCode,
+      message: resolvedMessage,
+      status: status,
+    );
+  }
+}
+
 class AdminCustomerPage {
   AdminCustomerPage({
     required List<BusinessCustomer> customers,
@@ -53,6 +117,10 @@ class InviteResult {
     required this.inviteLink,
     required this.whatsappMessage,
     required this.customerPhone,
+    this.customerId = '',
+    this.profileId,
+    this.businessName = '',
+    this.contactName = '',
   });
 
   final String username;
@@ -60,6 +128,34 @@ class InviteResult {
   final String inviteLink;
   final String whatsappMessage;
   final String customerPhone;
+  final String customerId;
+  final String? profileId;
+  final String businessName;
+  final String contactName;
+
+  InviteResult copyWith({
+    String? username,
+    String? temporaryPassword,
+    String? inviteLink,
+    String? whatsappMessage,
+    String? customerPhone,
+    String? customerId,
+    String? profileId,
+    String? businessName,
+    String? contactName,
+  }) {
+    return InviteResult(
+      username: username ?? this.username,
+      temporaryPassword: temporaryPassword ?? this.temporaryPassword,
+      inviteLink: inviteLink ?? this.inviteLink,
+      whatsappMessage: whatsappMessage ?? this.whatsappMessage,
+      customerPhone: customerPhone ?? this.customerPhone,
+      customerId: customerId ?? this.customerId,
+      profileId: profileId ?? this.profileId,
+      businessName: businessName ?? this.businessName,
+      contactName: contactName ?? this.contactName,
+    );
+  }
 
   factory InviteResult.fromFunctionResponse(
     Object? responseData, {
@@ -88,12 +184,28 @@ class InviteResult {
       'WhatsApp message',
     );
 
+    final customerPayload = _stringKeyedMap(payload['customer']);
+    final customerId = _firstNonEmpty(customerPayload, const ['id']);
+    final profileId = _firstNonEmpty(customerPayload, const ['profile_id']);
+    final businessName = _firstNonEmpty(customerPayload, const [
+      'business_name',
+      'businessName',
+    ]);
+    final contactName = _firstNonEmpty(customerPayload, const [
+      'contact_person',
+      'contactPerson',
+    ]);
+
     return InviteResult(
       username: username.isEmpty ? fallbackUsername : username,
       temporaryPassword: temporaryPassword,
       inviteLink: inviteLink,
       whatsappMessage: whatsappMessage,
       customerPhone: customerPhone,
+      customerId: customerId,
+      profileId: profileId.isEmpty ? null : profileId,
+      businessName: businessName,
+      contactName: contactName,
     );
   }
 }
@@ -178,6 +290,41 @@ String? _validatedCustomerStatus(String? rawStatus) {
     );
   }
   return status;
+}
+
+double _accountAmount(double value) => (value * 100).round() / 100;
+
+AdminRemoteErrorInfo _errorInfoFromEnvelope(
+  Object? raw, {
+  required int? status,
+}) {
+  Object? current = raw;
+  if (current is String && current.trim().isNotEmpty) {
+    try {
+      current = jsonDecode(current);
+    } catch (_) {}
+  }
+  if (current is AdminRemoteException) {
+    return AdminRemoteErrorInfo(
+      code: current.code,
+      message: current.message,
+      status: current.status ?? status,
+    );
+  }
+  final root = _stringKeyedMap(current);
+  final nested = _stringKeyedMap(root['error']);
+  final code = (nested['code'] ?? root['code'] ?? '').toString().trim();
+  final message =
+      (nested['message'] ?? root['message'] ?? '').toString().trim();
+  if (code.isNotEmpty || message.isNotEmpty || root.isNotEmpty) {
+    return AdminRemoteErrorInfo(
+      code: code,
+      message: message,
+      status: status,
+    );
+  }
+  final fallback = raw?.toString().trim() ?? '';
+  return AdminRemoteErrorInfo(message: fallback, status: status);
 }
 
 void _validateCustomerPageArguments({
@@ -621,6 +768,52 @@ class AdminRepository {
     );
   }
 
+  Future<DatabaseUsageSnapshot> remoteDatabaseUsage() async {
+    final responseData = await _invokeDatabaseUsage();
+    return DatabaseUsageSnapshot.fromFunctionResponse(responseData);
+  }
+
+  Future<ApplicationDataResetResult> resetProductionApplicationData() async {
+    final responseData = await _invokeApplicationDataReset();
+    return ApplicationDataResetResult.fromFunctionResponse(responseData);
+  }
+
+  Future<Object?> _invokeDatabaseUsage() async {
+    const body = <String, dynamic>{};
+    if (_edgeFunctionInvoker != null) {
+      return _edgeFunctionInvoker('admin-database-usage', body);
+    }
+    final client = supabaseClient;
+    if (client == null) {
+      throw StateError('A remote backend is required for database usage.');
+    }
+    return (await client.functions.invoke(
+      'admin-database-usage',
+      body: body,
+    ))
+        .data;
+  }
+
+  Future<Object?> _invokeApplicationDataReset() async {
+    final body = <String, dynamic>{
+      'confirm_phrase': DestructiveConfirmPhrase.requiredPhrase,
+    };
+    if (_edgeFunctionInvoker != null) {
+      return _edgeFunctionInvoker('admin-reset-application-data', body);
+    }
+    final client = supabaseClient;
+    if (client == null) {
+      throw StateError(
+        'A remote backend is required to reset production data.',
+      );
+    }
+    return (await client.functions.invoke(
+      'admin-reset-application-data',
+      body: body,
+    ))
+        .data;
+  }
+
   Future<AdminReportData> reports(
     List<Product> products,
     List<Order> orders, {
@@ -811,45 +1004,71 @@ class AdminRepository {
   }
 
   Future<BusinessCustomer> saveCustomer(BusinessCustomer customer) async {
+    final status = _validatedCustomerStatus(customer.accountStatus);
+    if (status == null) {
+      throw ArgumentError.value(
+        customer.accountStatus,
+        'accountStatus',
+        'Unsupported customer account status.',
+      );
+    }
     final normalized = customer.copyWith(
       discountPercent:
           validatedCustomerDiscountPercent(customer.discountPercent),
+      accountStatus: status,
+      creditLimit: _accountAmount(customer.creditLimit),
+      outstandingBalance: _accountAmount(customer.outstandingBalance),
     );
     final client = supabaseClient;
     if (client != null) {
-      final response = await client.functions.invoke(
-        'admin-update-customer',
-        body: customerUpdatePayload(normalized),
-      );
-      return customerFromUpdateResponse(response.data);
+      try {
+        final response = await client.functions.invoke(
+          'admin-update-customer',
+          body: customerUpdatePayload(normalized),
+        );
+        return customerFromUpdateResponse(response.data);
+      } on FunctionException catch (error) {
+        throw describeRemoteError(error).asException();
+      }
     }
     final index = _customers.indexWhere((item) => item.id == normalized.id);
     if (index == -1) {
       _customers.insert(0, normalized);
     } else {
-      _customers[index] = normalized;
+      throwIfStaleWrite(
+        current: _customers[index].updatedAt,
+        expected: normalized.updatedAt,
+      );
+      _customers[index] = normalized.copyWith(updatedAt: DateTime.now());
     }
-    return normalized;
+    return index == -1
+        ? normalized
+        : _customers[index];
   }
 
   static Map<String, dynamic> customerUpdatePayload(
     BusinessCustomer customer,
-  ) =>
-      {
-        'customer_id': customer.id,
-        'business_name': customer.businessName,
-        'contact_person': customer.contactPerson,
-        'phone': customer.phone,
-        'phone_is_whatsapp': customer.phoneIsWhatsapp,
-        'city': customer.city,
-        'area': customer.area,
-        'address': customer.address,
-        'discount_percent':
-            validatedCustomerDiscountPercent(customer.discountPercent),
-        'account_status': customer.accountStatus,
-        'credit_limit': customer.creditLimit,
-        'outstanding_balance': customer.outstandingBalance,
-      };
+  ) {
+    final expected = utcIsoOrNull(customer.updatedAt);
+    return {
+      'customer_id': customer.id,
+      'business_name': customer.businessName,
+      'contact_person': customer.contactPerson,
+      'phone': customer.phone,
+      'phone_is_whatsapp': customer.phoneIsWhatsapp,
+      'city': customer.city,
+      'area': customer.area,
+      'address': customer.address,
+      'discount_percent':
+          validatedCustomerDiscountPercent(customer.discountPercent),
+      'account_status':
+          _validatedCustomerStatus(customer.accountStatus) ??
+              customer.accountStatus,
+      'credit_limit': _accountAmount(customer.creditLimit),
+      'outstanding_balance': _accountAmount(customer.outstandingBalance),
+      if (expected != null) 'expected_updated_at': expected,
+    };
+  }
 
   static Map<String, dynamic> customerCreatePayload(
     BusinessCustomer customer, {
@@ -872,8 +1091,38 @@ class AdminRepository {
     };
   }
 
+  static AdminRemoteErrorInfo describeRemoteError(Object error) {
+    if (error is StaleWriteException) {
+      return AdminRemoteErrorInfo(
+        code: StaleWriteException.code,
+        message: error.message,
+        status: 409,
+      );
+    }
+    if (error is AdminRemoteException) {
+      return AdminRemoteErrorInfo(
+        code: error.code,
+        message: error.message,
+        status: error.status,
+      );
+    }
+    if (error is FunctionException) {
+      return _errorInfoFromEnvelope(error.details, status: error.status);
+    }
+    if (error is ArgumentError) {
+      return AdminRemoteErrorInfo(
+        code: 'VALIDATION_ERROR',
+        message: error.message?.toString() ?? error.toString(),
+      );
+    }
+    return _errorInfoFromEnvelope(error, status: null);
+  }
+
   static BusinessCustomer customerFromUpdateResponse(Object? responseData) {
     final root = _stringKeyedMap(responseData);
+    if (root['ok'] == false) {
+      throw describeRemoteError(root).asException();
+    }
     final nested = _stringKeyedMap(root['data']);
     final customer = _stringKeyedMap(
       nested['customer'] ?? root['customer'],
@@ -889,6 +1138,7 @@ class AdminRepository {
   Future<InviteResult> createCustomerInvite(
     BusinessCustomer customer, {
     String? password,
+    String? inviteTemplate,
   }) async {
     final client = supabaseClient;
     if (client != null) {
@@ -896,10 +1146,15 @@ class AdminRepository {
         'admin-create-customer',
         body: customerCreatePayload(customer, password: password),
       );
-      return InviteResult.fromFunctionResponse(
+      final parsed = InviteResult.fromFunctionResponse(
         response.data,
         fallbackUsername: customer.username,
         customerPhone: customer.phone,
+      );
+      return _withLocalInviteCopy(
+        parsed,
+        customer: customer,
+        inviteTemplate: inviteTemplate,
       );
     }
     final id = customer.id == 'new' ? const Uuid().v4() : customer.id;
@@ -910,14 +1165,21 @@ class AdminRepository {
     final token = 'inv_${const Uuid().v4().substring(0, 8)}';
     final inviteLink =
         'animalsupplyb2b://invite?token=$token&client=${Uri.encodeComponent(saved.username)}';
-    final message = _inviteMessage(
-        saved.businessName, saved.username, temporaryPassword, inviteLink);
-    return InviteResult(
+    return _withLocalInviteCopy(
+      InviteResult(
         username: saved.username,
         temporaryPassword: temporaryPassword,
         inviteLink: inviteLink,
-        whatsappMessage: message,
-        customerPhone: saved.phone);
+        whatsappMessage: '',
+        customerPhone: saved.phone,
+        customerId: saved.id,
+        profileId: saved.profileId,
+        businessName: saved.businessName,
+        contactName: saved.contactPerson,
+      ),
+      customer: saved,
+      inviteTemplate: inviteTemplate,
+    );
   }
 
   Map<String, dynamic> _customerPasswordResetBody(BusinessCustomer customer) {
@@ -982,48 +1244,136 @@ class AdminRepository {
       final responseData = await _invokeCustomerPasswordReset(
         _customerPasswordResetBody(customer),
       );
-      return InviteResult.fromFunctionResponse(
-        responseData,
-        fallbackUsername: customer.username,
-        customerPhone: customer.phone,
+      return _withLocalInviteCopy(
+        InviteResult.fromFunctionResponse(
+          responseData,
+          fallbackUsername: customer.username,
+          customerPhone: customer.phone,
+        ),
+        customer: customer,
       );
     }
     const temp = 'Temp-48291!';
     final inviteLink =
         'animalsupplyb2b://invite?token=reset_demo&client=${Uri.encodeComponent(customer.username)}';
-    return InviteResult(
+    return _withLocalInviteCopy(
+      InviteResult(
         username: customer.username,
         temporaryPassword: temp,
         inviteLink: inviteLink,
-        whatsappMessage: _inviteMessage(
-            customer.businessName, customer.username, temp, inviteLink),
-        customerPhone: customer.phone);
+        whatsappMessage: '',
+        customerPhone: customer.phone,
+        customerId: customer.id,
+        profileId: customer.profileId,
+        businessName: customer.businessName,
+        contactName: customer.contactPerson,
+      ),
+      customer: customer,
+    );
+  }
+
+  InviteResult composeLoginReminder(
+    BusinessCustomer customer, {
+    String? knownPassword,
+    String? inviteTemplate,
+  }) {
+    return _withLocalInviteCopy(
+      InviteResult(
+        username: customer.username,
+        temporaryPassword: knownPassword?.trim() ?? '',
+        inviteLink: _publicLoginLink(),
+        whatsappMessage: '',
+        customerPhone: customer.phone,
+        customerId: customer.id == 'new' ? '' : customer.id,
+        profileId: customer.profileId,
+        businessName: customer.businessName,
+        contactName: customer.contactPerson,
+      ),
+      customer: customer,
+      inviteTemplate: inviteTemplate,
+    );
+  }
+
+  InviteResult _withLocalInviteCopy(
+    InviteResult result, {
+    required BusinessCustomer customer,
+    String? inviteTemplate,
+  }) {
+    final businessName = result.businessName.isNotEmpty
+        ? result.businessName
+        : customer.businessName;
+    final contactName = result.contactName.isNotEmpty
+        ? result.contactName
+        : customer.contactPerson;
+    return result.copyWith(
+      businessName: businessName,
+      contactName: contactName,
+      customerId: result.customerId.isNotEmpty
+          ? result.customerId
+          : (customer.id == 'new' ? '' : customer.id),
+      profileId: result.profileId ?? customer.profileId,
+      whatsappMessage: _inviteMessage(
+        businessName,
+        result.username.isEmpty ? customer.username : result.username,
+        temporaryPassword: result.temporaryPassword,
+        contactName: contactName,
+        inviteTemplate: inviteTemplate,
+      ),
+    );
   }
 
   Future<AppSettingsData> settings() async {
     final client = supabaseClient;
     if (client != null) {
-      final rows = await client.from('app_settings').select('key,value');
-      return AppSettingsData.fromKeyValues({
-        for (final row in rows) row['key'].toString(): row['value'].toString()
-      });
+      final rows =
+          await client.from('app_settings').select('key,value,updated_at');
+      DateTime? latest;
+      final values = <String, String>{};
+      for (final row in rows) {
+        values[row['key'].toString()] = row['value'].toString();
+        final at = DateTime.tryParse(row['updated_at']?.toString() ?? '');
+        if (at != null && (latest == null || at.isAfter(latest))) {
+          latest = at;
+        }
+      }
+      return AppSettingsData.fromKeyValues(values, updatedAt: latest);
     }
     return _settings;
   }
 
   Future<void> saveSettings(AppSettingsData settings) async {
     final client = supabaseClient;
-    _settings = settings;
     if (client != null) {
-      await client.from('app_settings').upsert([
-        for (final entry in settings.toKeyValues().entries)
-          {
-            'key': entry.key,
-            'value': entry.value,
-            'updated_at': DateTime.now().toIso8601String()
-          }
-      ]);
+      try {
+        await client.rpc(
+          'admin_save_app_settings',
+          params: {
+            'p_settings': settings.toKeyValues(),
+            'p_expected_updated_at': utcIsoOrNull(settings.updatedAt),
+          },
+        );
+      } catch (error) {
+        rethrowIfStaleWrite(error);
+        if (!_isMissingRpc(error, 'admin_save_app_settings')) {
+          rethrow;
+        }
+        await client.from('app_settings').upsert([
+          for (final entry in settings.toKeyValues().entries)
+            {
+              'key': entry.key,
+              'value': entry.value,
+              'updated_at': DateTime.now().toIso8601String(),
+            }
+        ]);
+      }
+      _settings = settings;
+      return;
     }
+    throwIfStaleWrite(
+      current: _settings.updatedAt,
+      expected: settings.updatedAt,
+    );
+    _settings = settings.copyWith(updatedAt: DateTime.now());
   }
 
   Future<List<AppBanner>> banners() => _loadBanners(includeInactive: false);
@@ -1065,16 +1415,36 @@ class AdminRepository {
         ...normalized.toSupabasePayload(),
         'updated_at': DateTime.now().toIso8601String(),
       };
-      final Map<String, dynamic> saved;
+      final Map<String, dynamic>? saved;
       if (normalized.id == 'new') {
         saved = await client.from('banners').insert(payload).select().single();
       } else {
-        saved = await client
-            .from('banners')
-            .update(payload)
-            .eq('id', normalized.id)
-            .select()
-            .single();
+        try {
+          final existing = await client
+              .from('banners')
+              .select('updated_at')
+              .eq('id', normalized.id)
+              .maybeSingle();
+          if (existing == null) {
+            throw const StaleWriteException();
+          }
+          throwIfStaleWrite(
+            current: DateTime.tryParse(existing['updated_at']?.toString() ?? ''),
+            expected: normalized.updatedAt,
+          );
+          saved = await client
+              .from('banners')
+              .update(payload)
+              .eq('id', normalized.id)
+              .select()
+              .maybeSingle();
+        } catch (error) {
+          rethrowIfStaleWrite(error);
+          rethrow;
+        }
+      }
+      if (saved == null) {
+        throw StateError('Banner write did not return a saved row.');
       }
       return AppBanner.fromSupabase(saved);
     }
@@ -1088,8 +1458,12 @@ class AdminRepository {
     if (index == -1) {
       throw StateError('Banner not found.');
     }
-    _banners[index] = normalized;
-    return normalized;
+    throwIfStaleWrite(
+      current: _banners[index].updatedAt,
+      expected: normalized.updatedAt,
+    );
+    _banners[index] = normalized.copyWith(updatedAt: DateTime.now());
+    return _banners[index];
   }
 
   Future<AppBanner> setBannerActive(
@@ -1205,22 +1579,35 @@ class AdminRepository {
     return _notifications;
   }
 
-  String _inviteMessage(String businessName, String username,
-      String temporaryPassword, String inviteLink) {
-    return '''مرحباً $businessName 👋
+  String _publicLoginLink() {
+    return resolvePublicLoginUri(publicAppOrigin: AppConfig.publicAppOrigin)
+            ?.toString() ??
+        '';
+  }
 
-تم إنشاء حسابكم في تطبيق ${_settings.shopName} لطلبات الأعلاف ومستلزمات الحيوانات بالجملة.
+  String _inviteMessage(
+    String businessName,
+    String username, {
+    String? temporaryPassword,
+    String? contactName,
+    String? inviteTemplate,
+  }) {
+    return customerWhatsappWelcomeMessage(
+      businessName: businessName,
+      shopName: _settings.shopName,
+      username: username,
+      loginUrl: _publicLoginLink(),
+      temporaryPassword: temporaryPassword,
+      contactName: contactName,
+      template: inviteTemplate,
+    );
+  }
 
-بيانات الدخول:
-اسم المستخدم: $username
-كلمة المرور المؤقتة: $temporaryPassword
-
-رابط تحميل التطبيق:
-${_settings.downloadLink}
-
-رابط تفعيل الحساب:
-$inviteLink
-
-ملاحظة: حفاظاً على أمان حسابكم، يرجى تغيير كلمة المرور بعد أول تسجيل دخول.''';
+  static bool _isMissingRpc(Object error, String name) {
+    final text = error.toString().toLowerCase();
+    return text.contains(name.toLowerCase()) &&
+        (text.contains('pgrst202') ||
+            text.contains('could not find the function') ||
+            text.contains('schema cache'));
   }
 }

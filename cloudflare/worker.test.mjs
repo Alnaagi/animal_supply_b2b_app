@@ -84,7 +84,7 @@ test('serves a client route from the Flutter entry point', async () => {
   );
   assert.match(
     response.headers.get('Content-Security-Policy') ?? '',
-    /script-src 'self' https:\/\/www\.gstatic\.com 'wasm-unsafe-eval'/,
+    /connect-src 'self' blob: https: wss:/,
   );
   assert.equal(
     response.headers.get('Strict-Transport-Security'),

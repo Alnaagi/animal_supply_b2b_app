@@ -1,12 +1,33 @@
+import '../../core/auth/login_identifier.dart';
 import '../../core/constants/order_status.dart';
 import '../models/app_user.dart';
 import '../models/order.dart';
 import '../models/product.dart';
 
-const demoAdmin =
-    AppUser(id: 'admin-1', username: 'admin@demo.ly', role: 'admin');
-const demoStaff =
-    AppUser(id: 'staff-1', username: 'staff@demo.ly', role: 'staff');
+const demoAdmin = AppUser(id: 'admin-1', username: 'admin', role: 'admin');
+const demoStaff = AppUser(id: 'staff-1', username: 'staff', role: 'staff');
+const demoAdminPassword = 'admin';
+const demoStaffPassword = 'Staff123!';
+const demoCustomerPassword = 'Customer123!';
+
+bool matchesDemoLoginCredentials(String identifier, String password) {
+  final normalized = identifier.trim().toLowerCase();
+  if (normalized.isEmpty || password.isEmpty) return false;
+  final demoPhone = normalizeLibyanLoginPhone(normalized);
+  final customerPhone = normalizeLibyanLoginPhone(demoCustomer.phone ?? '');
+  if ((normalized == 'admin' || normalized == 'admin@demo.ly') &&
+      password == demoAdminPassword) {
+    return true;
+  }
+  if ((normalized == 'staff' || normalized == 'staff@demo.ly') &&
+      password == demoStaffPassword) {
+    return true;
+  }
+  return (normalized == 'tripoli-pets' ||
+          normalized == 'customer@demo.ly' ||
+          (demoPhone != null && demoPhone == customerPhone)) &&
+      password == demoCustomerPassword;
+}
 const demoCustomer = AppUser(
   id: 'customer-user-1',
   username: 'tripoli-pets',
@@ -950,7 +971,16 @@ final demoOrders = <Order>[
         CartItem(product: demoProducts[1], quantity: 4)
       ],
       createdAt: DateTime.now().subtract(const Duration(days: 1)),
-      customerNote: 'يفضل التسليم صباحاً.'),
+      customerNote: 'يفضل التسليم صباحاً.',
+      customerDefaultAddress: Order.composeCustomerAddress(
+        city: demoCustomer.city,
+        area: demoCustomer.area,
+        address: demoCustomer.address,
+      ),
+      contactPhone: demoCustomer.phone ?? '',
+      businessName: demoCustomer.businessName ?? '',
+      contactPerson: demoCustomer.fullName ?? '',
+  ),
   Order(
       id: 'o1002',
       customerId: 'customer-1',
@@ -959,5 +989,14 @@ final demoOrders = <Order>[
         CartItem(product: demoProducts[5], quantity: 2),
         CartItem(product: demoProducts[6], quantity: 6)
       ],
-      createdAt: DateTime.now().subtract(const Duration(days: 7))),
+      createdAt: DateTime.now().subtract(const Duration(days: 7)),
+      customerDefaultAddress: Order.composeCustomerAddress(
+        city: demoCustomer.city,
+        area: demoCustomer.area,
+        address: demoCustomer.address,
+      ),
+      contactPhone: demoCustomer.phone ?? '',
+      businessName: demoCustomer.businessName ?? '',
+      contactPerson: demoCustomer.fullName ?? '',
+  ),
 ];

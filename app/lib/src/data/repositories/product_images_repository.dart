@@ -1,10 +1,10 @@
 import 'dart:typed_data';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/files/browser_product_image_picker.dart';
 import '../remote/supabase_clients.dart';
 
 final productImagesRepositoryProvider = Provider<ProductImagesRepository>(
@@ -52,6 +52,8 @@ abstract interface class ProductImagePicker {
   Future<PickedProductImage?> pick();
 }
 
+typedef ProductImageUploadProgress = void Function(double? fraction);
+
 abstract interface class ProductImageStorageGateway {
   String? get currentUserId;
 
@@ -59,6 +61,7 @@ abstract interface class ProductImageStorageGateway {
     required String path,
     required Uint8List bytes,
     required String contentType,
+    ProductImageUploadProgress? onProgress,
   });
 
   String publicUrl(String path);
@@ -80,6 +83,8 @@ class ProductImagesRepository {
   static const bucketName = 'product-images';
   static const productsFolder = 'products';
   static const bannersFolder = 'banners';
+  static const logosFolder = 'logos';
+  static const categoryIconsFolder = 'category-icons';
   static const maxBytes = 5 * 1024 * 1024;
 
   final ProductImagePicker _picker;
@@ -89,17 +94,47 @@ class ProductImagesRepository {
   bool get canUpload =>
       _storage != null && (_storage.currentUserId?.trim().isNotEmpty ?? false);
 
+  Future<PickedProductImage?> pick() => _picker.pick();
+
   Future<ProductImageUploadResult?> pickAndUpload({
     String folder = productsFolder,
+    ProductImageUploadProgress? onProgress,
   }) =>
-      _pickAndUpload(folder: folder);
+      _pickAndUpload(folder: folder, onProgress: onProgress);
 
-  Future<ProductImageUploadResult?> pickAndUploadBanner() =>
-      _pickAndUpload(folder: bannersFolder);
+  Future<ProductImageUploadResult?> pickAndUploadBanner({
+    ProductImageUploadProgress? onProgress,
+  }) =>
+      _pickAndUpload(folder: bannersFolder, onProgress: onProgress);
+
+  Future<ProductImageUploadResult?> pickAndUploadLogo({
+    ProductImageUploadProgress? onProgress,
+  }) =>
+      _pickAndUpload(folder: logosFolder, onProgress: onProgress);
+
+  Future<ProductImageUploadResult?> pickAndUploadCategoryIcon({
+    ProductImageUploadProgress? onProgress,
+  }) =>
+      _pickAndUpload(folder: categoryIconsFolder, onProgress: onProgress);
+
+  Future<ProductImageUploadResult> uploadPicked(
+    PickedProductImage picked, {
+    String folder = productsFolder,
+    ProductImageUploadProgress? onProgress,
+  }) =>
+      _uploadPicked(picked, folder: folder, onProgress: onProgress);
 
   Future<ProductImageUploadResult?> _pickAndUpload({
     required String folder,
+    ProductImageUploadProgress? onProgress,
   }) async {
+    _assertCanUpload(folder);
+    final picked = await _picker.pick();
+    if (picked == null) return null;
+    return _uploadPicked(picked, folder: folder, onProgress: onProgress);
+  }
+
+  void _assertCanUpload(String folder) {
     final storage = _storage;
     final ownerId = storage?.currentUserId?.trim();
     if (storage == null || ownerId == null || ownerId.isEmpty) {
@@ -109,15 +144,25 @@ class ProductImagesRepository {
             'رفع الصور يحتاج ربط Supabase الإنتاجي وتسجيل دخول إداري. استخدم رابط HTTPS يدوياً حالياً.',
       );
     }
-    if (folder != productsFolder && folder != bannersFolder) {
+    if (folder != productsFolder &&
+        folder != bannersFolder &&
+        folder != logosFolder &&
+        folder != categoryIconsFolder) {
       throw const ProductImageUploadException(
         code: 'INVALID_FOLDER',
         message: 'مسار رفع الصورة غير مدعوم.',
       );
     }
+  }
 
-    final picked = await _picker.pick();
-    if (picked == null) return null;
+  Future<ProductImageUploadResult> _uploadPicked(
+    PickedProductImage picked, {
+    required String folder,
+    ProductImageUploadProgress? onProgress,
+  }) async {
+    _assertCanUpload(folder);
+    final storage = _storage!;
+    final ownerId = storage.currentUserId!.trim();
     final type = _validatedType(picked.fileName, picked.bytes);
     final randomId = _randomId().replaceAll(RegExp(r'[^a-zA-Z0-9-]'), '');
     if (randomId.isEmpty) {
@@ -127,16 +172,16 @@ class ProductImagesRepository {
       );
     }
     final path = '$folder/$ownerId/$randomId.${type.extension}';
-    final forbiddenMessage = folder == bannersFolder
-        ? 'ليس للحساب صلاحية رفع صور البانرات. تحقق من دور الموظف وسياسات التخزين.'
-        : 'ليس للحساب صلاحية رفع صور المنتجات. تحقق من دور الموظف وسياسات التخزين.';
+    onProgress?.call(0);
 
     try {
       await storage.upload(
         path: path,
         bytes: picked.bytes,
         contentType: type.contentType,
+        onProgress: onProgress,
       );
+      onProgress?.call(1);
       final url = storage.publicUrl(path);
       final uri = Uri.tryParse(url);
       if (uri == null ||
@@ -159,21 +204,16 @@ class ProductImagesRepository {
       );
     } on ProductImageUploadException {
       rethrow;
-    } on StorageException catch (error) {
-      final forbidden = error.statusCode == '401' || error.statusCode == '403';
-      throw ProductImageUploadException(
-        code: forbidden ? 'UPLOAD_FORBIDDEN' : 'UPLOAD_FAILED',
-        message: forbidden
-            ? forbiddenMessage
-            : 'تعذر رفع الصورة إلى التخزين. تحقق من الاتصال ثم حاول من جديد.',
-      );
-    } catch (_) {
-      throw const ProductImageUploadException(
-        code: 'UPLOAD_FAILED',
-        message:
-            'تعذر رفع الصورة إلى التخزين. تحقق من الاتصال ثم حاول من جديد.',
-      );
+    } catch (error) {
+      throw mapUploadError(error, folder: folder);
     }
+  }
+
+  static ProductImageUploadException mapUploadError(
+    Object error, {
+    required String folder,
+  }) {
+    return mapProductImageUploadError(error, folder: folder);
   }
 
   static _ValidatedImageType _validatedType(
@@ -244,37 +284,205 @@ class ProductImagesRepository {
   }
 }
 
+ProductImageUploadException mapProductImageUploadError(
+  Object error, {
+  required String folder,
+}) {
+  if (error is ProductImageUploadException) return error;
+  if (error is BrowserPickedImageException) {
+    return ProductImageUploadException(
+      code: error.code,
+      message: error.message,
+    );
+  }
+
+  final forbiddenMessage = switch (folder) {
+    ProductImagesRepository.bannersFolder =>
+      'ليس للحساب صلاحية رفع صور البانرات. تحقق من دور المدير وسياسات التخزين.',
+    ProductImagesRepository.logosFolder =>
+      'ليس للحساب صلاحية رفع شعار المتجر. تحقق من دور المدير وسياسات التخزين.',
+    ProductImagesRepository.categoryIconsFolder =>
+      'ليس للحساب صلاحية رفع أيقونات التصنيف. تحقق من دور الموظف وسياسات التخزين.',
+    _ =>
+      'ليس للحساب صلاحية رفع صور المنتجات. تحقق من دور الموظف وسياسات التخزين.',
+  };
+  final detail = _uploadErrorDetail(error);
+  final status = _uploadStatusCode(error);
+  final combined = '${error.runtimeType} $detail'.toLowerCase();
+
+  if (status == 401) {
+    return const ProductImageUploadException(
+      code: 'UPLOAD_UNAUTHORIZED',
+      message:
+          'انتهت الجلسة أو غير صالحة. سجّل الدخول من جديد ثم أعد رفع الصورة.',
+    );
+  }
+  if (status == 403 ||
+      combined.contains('row-level security') ||
+      combined.contains('unauthorized') ||
+      combined.contains('not allowed')) {
+    return ProductImageUploadException(
+      code: 'UPLOAD_FORBIDDEN',
+      message: forbiddenMessage,
+    );
+  }
+  if (status == 404 || combined.contains('bucket not found')) {
+    return const ProductImageUploadException(
+      code: 'BUCKET_MISSING',
+      message:
+          'مجلد التخزين product-images غير موجود. طبّق ترحيلات التخزين ثم أعد المحاولة.',
+    );
+  }
+  if (status == 409 ||
+      combined.contains('duplicate') ||
+      combined.contains('already exists')) {
+    return const ProductImageUploadException(
+      code: 'UPLOAD_CONFLICT',
+      message: 'يوجد ملف بنفس الاسم في التخزين. حاول رفع الصورة من جديد.',
+    );
+  }
+  if (status == 413 ||
+      combined.contains('maximum allowed size') ||
+      combined.contains('payload too large') ||
+      combined.contains('exceeded the maximum')) {
+    return const ProductImageUploadException(
+      code: 'FILE_TOO_LARGE',
+      message: 'حجم الصورة أكبر من 5 ميغابايت المسموح بها في التخزين.',
+    );
+  }
+  if (status == 415 ||
+      combined.contains('mime') ||
+      combined.contains('content type') ||
+      combined.contains('invalid file')) {
+    return ProductImageUploadException(
+      code: 'UNSUPPORTED_IMAGE',
+      message: _withDetail(
+        'نوع الصورة غير مسموح في التخزين. استخدم JPEG أو PNG أو WebP.',
+        detail,
+      ),
+    );
+  }
+  if (status == 400) {
+    return ProductImageUploadException(
+      code: 'UPLOAD_REJECTED',
+      message: _withDetail(
+        'رفض التخزين ملف الصورة. تحقق من النوع والحجم والمسار.',
+        detail,
+      ),
+    );
+  }
+  if (_isRevokedBlobFailure(combined)) {
+    return const ProductImageUploadException(
+      code: 'UPLOAD_BROWSER_FILE',
+      message:
+          'تعذر قراءة ملف الصورة في المتصفح. اختر الصورة مرة أخرى ثم أعد الرفع.',
+    );
+  }
+  if (_isNetworkUploadFailure(combined)) {
+    return ProductImageUploadException(
+      code: 'UPLOAD_NETWORK',
+      message: _withDetail(
+        'تعذر الاتصال بخادم التخزين. تحقق من الشبكة أو إعدادات CORS للنطاق.',
+        detail,
+      ),
+    );
+  }
+  if (combined.contains('permission denied') &&
+      combined.contains('current_role')) {
+    return const ProductImageUploadException(
+      code: 'UPLOAD_FORBIDDEN',
+      message:
+          'سياسة التخزين لا تستطيع قراءة صلاحية الحساب. طبّق ترحيل صلاحيات current_role ثم أعد المحاولة.',
+    );
+  }
+  return ProductImageUploadException(
+    code: 'UPLOAD_FAILED',
+    message: _withDetail(
+      status == null
+          ? 'تعذر رفع الصورة إلى التخزين.'
+          : 'تعذر رفع الصورة إلى التخزين (رمز $status).',
+      detail,
+    ),
+  );
+}
+
+int? _uploadStatusCode(Object error) {
+  if (error is StorageException) {
+    return int.tryParse(error.statusCode ?? '');
+  }
+  final match = RegExp(r'status(?:Code)?:\s*(\d{3})', caseSensitive: false)
+      .firstMatch(error.toString());
+  return match == null ? null : int.tryParse(match.group(1)!);
+}
+
+String _uploadErrorDetail(Object error) {
+  if (error is StorageException) {
+    final parts = [
+      if ((error.error ?? '').trim().isNotEmpty) error.error!.trim(),
+      if (error.message.trim().isNotEmpty) error.message.trim(),
+    ];
+    return parts.join(' — ');
+  }
+  return error.toString().trim();
+}
+
+bool _isRevokedBlobFailure(String combined) {
+  return combined.contains('could not load blob') ||
+      combined.contains('has it been revoked') ||
+      combined.contains('cannot read bytes from blob');
+}
+
+bool _isNetworkUploadFailure(String combined) {
+  return combined.contains('clientexception') ||
+      combined.contains('socketexception') ||
+      combined.contains('failed host lookup') ||
+      combined.contains('failed to fetch') ||
+      combined.contains('xmlhttprequest') ||
+      combined.contains('cors') ||
+      combined.contains('timed out') ||
+      combined.contains('timeout') ||
+      combined.contains('network is unreachable');
+}
+
+String _withDetail(String arabic, String detail) {
+  final cleaned = detail
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .replaceAll(RegExp(r'bearer\s+[a-z0-9._\-]+', caseSensitive: false), '')
+      .trim();
+  if (cleaned.isEmpty || _isTechnicalClientDump(cleaned)) return arabic;
+  final clipped =
+      cleaned.length > 160 ? '${cleaned.substring(0, 157)}...' : cleaned;
+  return '$arabic\n$clipped';
+}
+
+bool _isTechnicalClientDump(String detail) {
+  final lower = detail.toLowerCase();
+  return lower.contains('exception:') ||
+      lower.contains('could not load blob') ||
+      lower.contains('has it been revoked') ||
+      lower.startsWith('instance of');
+}
+
 class FileSelectorProductImagePicker implements ProductImagePicker {
   const FileSelectorProductImagePicker();
 
   @override
   Future<PickedProductImage?> pick() async {
-    const types = XTypeGroup(
-      label: 'صور المنتجات',
-      extensions: ['jpg', 'jpeg', 'png', 'webp'],
-      mimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
-      uniformTypeIdentifiers: [
-        'public.jpeg',
-        'public.png',
-        'org.webmproject.webp',
-      ],
-    );
-    final file = await openFile(
-      acceptedTypeGroups: const [types],
-      confirmButtonText: 'اختيار الصورة',
-    );
-    if (file == null) return null;
-    final length = await file.length();
-    if (length > ProductImagesRepository.maxBytes) {
-      throw const ProductImageUploadException(
-        code: 'FILE_TOO_LARGE',
-        message: 'حجم الصورة أكبر من 5 MiB.',
+    try {
+      final picked = await pickBrowserProductImage(
+        maxBytes: ProductImagesRepository.maxBytes,
+      );
+      if (picked == null) return null;
+      return PickedProductImage(
+        fileName: picked.fileName,
+        bytes: picked.bytes,
+      );
+    } on BrowserPickedImageException catch (error) {
+      throw ProductImageUploadException(
+        code: error.code,
+        message: error.message,
       );
     }
-    return PickedProductImage(
-      fileName: file.name,
-      bytes: await file.readAsBytes(),
-    );
   }
 }
 
@@ -291,7 +499,10 @@ class SupabaseProductImageStorageGateway implements ProductImageStorageGateway {
     required String path,
     required Uint8List bytes,
     required String contentType,
+    ProductImageUploadProgress? onProgress,
   }) async {
+    // storage_client 2.5 has no byte-level upload progress callback.
+    onProgress?.call(null);
     await client.storage.from(ProductImagesRepository.bucketName).uploadBinary(
           path,
           bytes,
@@ -301,6 +512,7 @@ class SupabaseProductImageStorageGateway implements ProductImageStorageGateway {
             upsert: false,
           ),
         );
+    onProgress?.call(1);
   }
 
   @override

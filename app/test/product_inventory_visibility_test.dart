@@ -148,6 +148,14 @@ void main() {
     expect(tester.widget<TextField>(stockField).controller!.text, isEmpty);
     expect(quantityVisibilitySwitch, findsOneWidget);
     expect(quantityVisibilitySwitch, isNot(trackingSwitch));
+    expect(
+      tester.widget<SwitchListTile>(trackingSwitch).value,
+      isFalse,
+    );
+    expect(
+      tester.widget<SwitchListTile>(quantityVisibilitySwitch).onChanged,
+      isNull,
+    );
 
     final categoryField = find.byKey(const ValueKey('product-category-field'));
     final existingCategoryCount = find.text('أعلاف').evaluate().length;
@@ -173,9 +181,10 @@ void main() {
 
     expect(stockField, findsOneWidget);
     expect(quantityVisibilitySwitch, findsOneWidget);
+    expect(tester.widget<SwitchListTile>(trackingSwitch).value, isTrue);
     expect(
       tester.widget<SwitchListTile>(quantityVisibilitySwitch).onChanged,
-      isNull,
+      isNotNull,
     );
     expect(scrollHint, findsOneWidget);
     expect(scrollView, findsOneWidget);
@@ -217,6 +226,14 @@ void main() {
       find.byKey(const ValueKey('product-bulk-minimum-field')),
       '3',
     );
+
+    final trackingSwitch =
+        find.byKey(const ValueKey('product-track-stock-switch'));
+    await tester.ensureVisible(trackingSwitch);
+    expect(tester.widget<SwitchListTile>(trackingSwitch).value, isFalse);
+    await tester.tap(trackingSwitch);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(trackingSwitch).value, isTrue);
 
     await tester.ensureVisible(quantityVisibilitySwitch);
     await tester.tap(quantityVisibilitySwitch);

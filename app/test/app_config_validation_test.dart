@@ -114,6 +114,29 @@ void main() {
         isNotNull,
       );
     });
+
+    test('explains OS tray works without Firebase while the tab can run', () {
+      expect(
+        firebaseClosedAppRequirementAr(configured: false),
+        contains('شريط إشعارات'),
+      );
+      expect(
+        firebaseClosedAppRequirementAr(configured: false),
+        contains('العملية بالكامل'),
+      );
+      expect(
+        firebaseClosedAppRequirementAr(configured: false),
+        contains('لا نستخدم Firebase حالياً'),
+      );
+      expect(
+        firebaseClosedAppRequirementAr(configured: true),
+        contains('لا نستخدم Firebase حالياً'),
+      );
+      expect(
+        firebaseClosedAppRequirementAr(configured: true),
+        isNot(contains('بعد تسجيل الجهاز')),
+      );
+    });
   });
 
   test('public app origin accepts only a real HTTPS origin', () {

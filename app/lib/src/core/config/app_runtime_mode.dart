@@ -7,8 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// An explicit demo build still cannot silently attach to production just
 /// because credentials exist on the machine. A production/staging build that
 /// already initialized Supabase may prefer a labelled local demo overlay.
+/// Production deploys default to remote data; a leftover v1 overlay from a
+/// previous demo review build is ignored.
 class AppRuntimeMode {
-  static const preferLocalDemoPrefsKey = 'app_runtime.prefer_local_demo.v1';
+  static const preferLocalDemoPrefsKey = 'app_runtime.prefer_local_demo.v2';
 
   static bool _preferLocalDemo = false;
   static bool _loaded = false;

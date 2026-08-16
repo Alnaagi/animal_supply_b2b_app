@@ -7,7 +7,11 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 
 import 'src/core/config/app_config.dart';
 import 'src/core/config/app_runtime_mode.dart';
+import 'src/core/config/shop_branding.dart';
+import 'src/core/config/shop_branding_cache.dart';
+import 'src/core/config/shop_document_title.dart';
 import 'src/core/notifications/push_notifications.dart';
+import 'src/core/refresh/stale_tab_reloader.dart';
 import 'src/core/routing/app_router.dart';
 import 'src/core/routing/deep_link_service.dart';
 import 'src/core/theme/app_theme.dart';
@@ -20,6 +24,7 @@ Future<void> main() async {
   usePathUrlStrategy();
   await AppRuntimeMode.load();
   await AppConfig.tryInitializeSupabase();
+  await ShopBrandingCache.load();
   runApp(const ProviderScope(child: AnimalSupplyApp()));
 }
 
@@ -44,6 +49,7 @@ class _AnimalSupplyAppState extends ConsumerState<AnimalSupplyApp> {
   @override
   void initState() {
     super.initState();
+    applyShopDocumentTitle(ShopBrandingCache.current.shopName);
     final pushService = ref.read(pushNotificationsServiceProvider);
     _notificationSubscription =
         pushService.navigation.listen(_handleNotificationNavigation);
@@ -135,8 +141,10 @@ class _AnimalSupplyAppState extends ConsumerState<AnimalSupplyApp> {
   @override
   Widget build(BuildContext context) {
     final router = ref.watch(appRouterProvider);
+    final shopName = ref.watch(shopBrandingProvider).shopName;
+    applyShopDocumentTitle(shopName);
     return MaterialApp.router(
-      title: AppConfig.shopName,
+      title: shopName,
       debugShowCheckedModeBanner: false,
       locale: const Locale('ar'),
       supportedLocales: const [Locale('ar'), Locale('en')],
@@ -150,7 +158,9 @@ class _AnimalSupplyAppState extends ConsumerState<AnimalSupplyApp> {
       routerConfig: router,
       builder: (context, child) => Directionality(
         textDirection: TextDirection.rtl,
-        child: AppUpdateGate(child: child ?? const SizedBox.shrink()),
+        child: StaleTabReloader(
+          child: AppUpdateGate(child: child ?? const SizedBox.shrink()),
+        ),
       ),
     );
   }

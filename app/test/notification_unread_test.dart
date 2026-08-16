@@ -45,4 +45,15 @@ void main() {
       0,
     );
   });
+
+  test('mark all read clears every unread demo notification', () async {
+    final repository = NotificationsRepository();
+    repository.addDemoOrderStatus(
+      orderId: 'demo-order-extra',
+      statusLabel: 'جاهز',
+    );
+    expect(await repository.unreadCount(), 2);
+    expect(await repository.markAllRead(), 2);
+    expect(await repository.unreadCount(), 0);
+  });
 }

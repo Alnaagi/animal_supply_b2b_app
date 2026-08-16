@@ -160,6 +160,7 @@ class PushNotificationsService {
   StreamSubscription<String>? _tokenSubscription;
   Future<void> Function(String token)? _onToken;
   bool _initialized = false;
+  bool _mobileLocalReady = false;
 
   Stream<PushNotificationNavigation> get navigation =>
       _navigationController.stream;
@@ -172,38 +173,14 @@ class PushNotificationsService {
     if (_initialized) return true;
     if (AppConfig.isDemoMode || !AppConfig.remoteBackendEnabled) return false;
 
+    await _ensureMobileLocalNotifications();
+
     final options = firebaseOptionsForCurrentPlatform();
     if (options == null) return false;
 
     await Firebase.initializeApp(options: options);
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     _onToken = onToken;
-
-    // The web implementation of flutter_local_notifications registers its own
-    // root-scoped worker. The app already owns that scope for offline caching
-    // and FCM, so local notifications are deliberately mobile-only.
-    final usesMobileLocalNotifications = !kIsWeb &&
-        (defaultTargetPlatform == TargetPlatform.android ||
-            defaultTargetPlatform == TargetPlatform.iOS);
-    if (usesMobileLocalNotifications) {
-      await _localNotifications.initialize(
-        settings: const InitializationSettings(
-          android: AndroidInitializationSettings(androidNotificationIconName),
-          iOS: DarwinInitializationSettings(
-            requestAlertPermission: false,
-            requestBadgePermission: false,
-            requestSoundPermission: false,
-          ),
-        ),
-        onDidReceiveNotificationResponse: _handleLocalNotificationResponse,
-      );
-      if (defaultTargetPlatform == TargetPlatform.android) {
-        await _localNotifications
-            .resolvePlatformSpecificImplementation<
-                AndroidFlutterLocalNotificationsPlugin>()
-            ?.createNotificationChannel(_androidOrdersAndUpdatesChannel);
-      }
-    }
 
     _foregroundSubscription = FirebaseMessaging.onMessage.listen((message) {
       unawaited(_handleForegroundMessage(message));
@@ -238,15 +215,100 @@ class PushNotificationsService {
     return true;
   }
 
+  Future<bool> requestOsNotificationPermission() async {
+    await _ensureMobileLocalNotifications();
+    if (!_mobileLocalReady) return false;
+    try {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        final android = _localNotifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+        return await android?.requestNotificationsPermission() ?? false;
+      }
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        final ios = _localNotifications.resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin>();
+        return await ios?.requestPermissions(
+              alert: true,
+              badge: true,
+              sound: true,
+            ) ??
+            false;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<bool> showInboxNotification({
+    required String id,
+    required String title,
+    required String body,
+  }) async {
+    await _ensureMobileLocalNotifications();
+    if (!_mobileLocalReady) return false;
+    try {
+      await _localNotifications.show(
+        id: id.hashCode & 0x7fffffff,
+        title: title,
+        body: body,
+        notificationDetails: const NotificationDetails(
+          android: AndroidNotificationDetails(
+            androidOrdersAndUpdatesChannelId,
+            'طلبات وإشعارات المتجر',
+            channelDescription: 'حالات الطلبات والعروض المهمة',
+            importance: Importance.max,
+            priority: Priority.high,
+            icon: androidNotificationIconName,
+          ),
+          iOS: DarwinNotificationDetails(),
+        ),
+        payload: jsonEncode({'notification_id': id}),
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _ensureMobileLocalNotifications() async {
+    if (_mobileLocalReady || kIsWeb) return;
+    final usesMobileLocalNotifications =
+        defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS;
+    if (!usesMobileLocalNotifications) return;
+    try {
+      await _localNotifications.initialize(
+        settings: const InitializationSettings(
+          android: AndroidInitializationSettings(androidNotificationIconName),
+          iOS: DarwinInitializationSettings(
+            requestAlertPermission: false,
+            requestBadgePermission: false,
+            requestSoundPermission: false,
+          ),
+        ),
+        onDidReceiveNotificationResponse: _handleLocalNotificationResponse,
+      );
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        await _localNotifications
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.createNotificationChannel(_androidOrdersAndUpdatesChannel);
+      }
+      _mobileLocalReady = true;
+    } catch (_) {
+      _mobileLocalReady = false;
+    }
+  }
+
   Future<bool> requestPermissionAndRegister() async {
-    if (!_initialized) return false;
+    final osGranted = await requestOsNotificationPermission();
+    if (!_initialized) return osGranted;
     final settings = await FirebaseMessaging.instance.requestPermission(
       alert: true,
       badge: true,
       sound: true,
       provisional: false,
     );
-    if (!_isAuthorized(settings.authorizationStatus)) return false;
+    if (!_isAuthorized(settings.authorizationStatus)) return osGranted;
     await _configureAuthorizedNotifications();
     return true;
   }
@@ -425,8 +487,10 @@ class PushNotificationsCoordinator {
   Future<bool> requestPermissionAndRegister() async {
     if (!_enabled || _currentUser == null) return false;
     await initialize(_currentUser);
-    if (!_ready) return false;
-    return service.requestPermissionAndRegister();
+    if (_ready) {
+      return service.requestPermissionAndRegister();
+    }
+    return service.requestOsNotificationPermission();
   }
 
   Future<PushNotificationPermissionState> permissionState() async {

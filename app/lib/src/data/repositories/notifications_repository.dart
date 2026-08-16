@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/config/app_config.dart';
@@ -8,12 +9,25 @@ import '../models/app_notification.dart';
 import '../models/notification_campaign_summary.dart';
 import '../remote/supabase_clients.dart';
 
+class NotificationCampaignException implements Exception {
+  const NotificationCampaignException(this.messageAr, {this.code = ''});
+
+  final String messageAr;
+  final String code;
+
+  @override
+  String toString() => messageAr;
+}
+
 final notificationsRepositoryProvider =
     Provider<NotificationsRepository>((ref) => NotificationsRepository());
 
 final unreadNotificationsCountProvider = FutureProvider.autoDispose<int>(
   (ref) => ref.watch(notificationsRepositoryProvider).unreadCount(),
 );
+
+/// Bumped when a new in-app notification is observed so open inboxes reload.
+final notificationInboxEpochProvider = StateProvider<int>((ref) => 0);
 
 class NotificationsRepository {
   static final RegExp _uuidPattern = RegExp(
@@ -50,25 +64,27 @@ class NotificationsRepository {
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     }
 
-    final rows = await client
-        .from('notifications')
-        .select('id, type, title, body, payload, read_at, created_at')
-        .order('created_at', ascending: false)
-        .limit(limit);
+    final rows = await _inboxRows(client, limit);
     return rows
-        .map<AppNotification>((row) => AppNotification.fromSupabase(row))
-        .toList();
+        .map(AppNotification.fromSupabase)
+        .toList(growable: false);
   }
 
   Future<int> unreadCount() async {
     final client = supabaseClient;
-    if (client != null) {
-      return client.from('notifications').count().isFilter('read_at', null);
+    if (client == null) {
+      return _demoNotifications
+          .where((notification) => !notification.isRead)
+          .length;
     }
 
-    return _demoNotifications
-        .where((notification) => !notification.isRead)
-        .length;
+    try {
+      final count = await client.rpc('unread_notification_count');
+      if (count is num) return count.toInt();
+    } catch (_) {}
+
+    final rows = await _inboxRows(client, 100);
+    return rows.where((row) => row['read_at'] == null).length;
   }
 
   Future<void> markRead(String notificationId) async {
@@ -87,6 +103,86 @@ class NotificationsRepository {
       _demoNotifications[index] =
           _demoNotifications[index].copyWith(readAt: DateTime.now());
     }
+  }
+
+  Future<int> markAllRead() async {
+    final client = supabaseClient;
+    if (client != null) {
+      try {
+        final updated = await client.rpc('mark_all_my_notifications_read');
+        if (updated is num) return updated.toInt();
+      } catch (_) {}
+
+      final unread = await client
+          .from('notifications')
+          .select('id')
+          .isFilter('read_at', null);
+      final ids = unread
+          .map((row) => row['id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
+      if (ids.isEmpty) return 0;
+      await client
+          .from('notifications')
+          .update({'read_at': DateTime.now().toIso8601String()}).inFilter(
+              'id', ids);
+      return ids.length;
+    }
+
+    var marked = 0;
+    final readAt = DateTime.now();
+    for (var index = 0; index < _demoNotifications.length; index++) {
+      if (_demoNotifications[index].isRead) continue;
+      _demoNotifications[index] =
+          _demoNotifications[index].copyWith(readAt: readAt);
+      marked++;
+    }
+    return marked;
+  }
+
+  Future<List<Map<String, dynamic>>> _inboxRows(
+    SupabaseClient client,
+    int limit,
+  ) async {
+    final clampedLimit = limit.clamp(1, 100);
+    try {
+      final parsed = parseInboxRpcPayload(
+        await client.rpc(
+          'list_my_notifications',
+          params: {'p_limit': clampedLimit},
+        ),
+      );
+      if (parsed != null) return parsed;
+    } catch (_) {}
+
+    final userId = client.auth.currentUser?.id;
+    var query = client
+        .from('notifications')
+        .select('id, type, title, body, payload, read_at, created_at');
+    if (userId != null && userId.isNotEmpty) {
+      query = query.eq('recipient_profile_id', userId);
+    }
+    final rows = await query
+        .order('created_at', ascending: false)
+        .limit(clampedLimit);
+    return [
+      for (final row in rows) Map<String, dynamic>.from(row),
+    ];
+  }
+
+  /// PostgREST table RPCs usually return a JSON array. Some gateways wrap it.
+  static List<Map<String, dynamic>>? parseInboxRpcPayload(Object? rows) {
+    if (rows is List) {
+      return [
+        for (final row in rows)
+          if (row is Map) Map<String, dynamic>.from(row),
+      ];
+    }
+    if (rows is Map) {
+      final nested = rows['data'] ?? rows['result'];
+      if (nested is List) return parseInboxRpcPayload(nested);
+    }
+    return null;
   }
 
   void addDemoOrderStatus({
@@ -228,25 +324,38 @@ class NotificationsRepository {
       audienceType: audienceType,
       profileIds: profileIds,
     );
-    final response = await client.functions.invoke(
-      AppConfig.sendNotificationCampaignFunction,
-      body: {
-        'idempotency_key': campaignId,
-        'title': title,
-        'body': body,
-        'type': 'product_campaign',
-        'audience': audience,
-        'payload': {
-          if (productId != null && productId.isNotEmpty)
-            'product_id': productId,
+    try {
+      final response = await client.functions.invoke(
+        AppConfig.sendNotificationCampaignFunction,
+        body: {
+          'idempotency_key': campaignId,
+          'title': title,
+          'body': body,
+          'type': 'product_campaign',
+          'audience': audience,
+          'payload': {
+            if (productId != null && productId.isNotEmpty)
+              'product_id': productId,
+          },
         },
-      },
-    );
-    final data = response.data;
-    if (data is! Map || data['ok'] != true) {
-      throw StateError('Campaign delivery was not accepted.');
+      );
+      final data = response.data;
+      if (data is! Map || data['ok'] != true) {
+        throw NotificationCampaignException(
+          campaignFailureMessageAr(data ?? 'Campaign delivery was not accepted.'),
+        );
+      }
+      return (data['recipient_count'] as num?)?.toInt() ?? 0;
+    } on NotificationCampaignException {
+      rethrow;
+    } on FunctionException catch (error) {
+      throw NotificationCampaignException(
+        campaignFailureMessageAr(error),
+        code: _campaignErrorCode(error),
+      );
+    } catch (error) {
+      throw NotificationCampaignException(campaignFailureMessageAr(error));
     }
-    return (data['recipient_count'] as num?)?.toInt() ?? 0;
   }
 
   Future<List<NotificationCampaignSummary>> listCampaignSummaries({
@@ -273,6 +382,57 @@ class NotificationsRepository {
   }
 
   static String newCampaignIdempotencyKey() => const Uuid().v4();
+
+  static String campaignFailureMessageAr(Object error) {
+    if (error is NotificationCampaignException) return error.messageAr;
+    final code = _campaignErrorCode(error);
+    final status = error is FunctionException ? error.status : null;
+    if (status == 404 || code == 'NOT_FOUND') {
+      return 'تعذر الإرسال لأن خدمة الحملات غير منشورة على الخادم.';
+    }
+    return switch (code) {
+      'ORIGIN_NOT_ALLOWED' =>
+        'تعذر الإرسال من هذا الموقع. راجع إعداد النطاق المسموح.',
+      'NO_CAMPAIGN_RECIPIENTS' => 'لا يوجد مستلمون مطابقون لهذا الجمهور.',
+      'RATE_LIMITED' => 'تم تجاوز حد الإرسال. حاول بعد قليل.',
+      'AUTH_REQUIRED' || 'INVALID_SESSION' || 'ADMIN_AUTH_REQUIRED' =>
+        'انتهت الجلسة أو لا توجد صلاحية إرسال. أعد تسجيل الدخول.',
+      'CAMPAIGN_PRODUCT_UNAVAILABLE' =>
+        'المنتج المختار غير متاح أو مؤرشف.',
+      'SERVER_CONFIGURATION_ERROR' =>
+        'إعداد الخادم ناقص. الإشعارات داخل التطبيق تتطلب نشر دالة الإرسال.',
+      _ => _looksLikeBrowserCors(error)
+          ? 'تعذر الاتصال بخدمة الإرسال من المتصفح. تحقق من الاتصال ثم أعد المحاولة.'
+          : 'تعذر إرسال الإشعار. تحقق من الاتصال والصلاحيات.',
+    };
+  }
+
+  static String _campaignErrorCode(Object error) {
+    if (error is NotificationCampaignException) return error.code;
+    Object? current = error is FunctionException ? error.details : error;
+    if (current is String && current.trim().isNotEmpty) {
+      try {
+        current = jsonDecode(current);
+      } catch (_) {}
+    }
+    if (current is Map) {
+      final nested = current['error'];
+      final nestedCode =
+          nested is Map ? nested['code']?.toString().trim() ?? '' : '';
+      final rootCode = current['code']?.toString().trim() ?? '';
+      if (nestedCode.isNotEmpty) return nestedCode;
+      if (rootCode.isNotEmpty) return rootCode;
+    }
+    return '';
+  }
+
+  static bool _looksLikeBrowserCors(Object error) {
+    final text = error.toString().toLowerCase();
+    return text.contains('xmlhttprequest') ||
+        text.contains('failed to fetch') ||
+        text.contains('cors') ||
+        text.contains('origin_not_allowed');
+  }
 
   static String validateCampaignIdempotencyKey(String value) {
     final key = value.trim();

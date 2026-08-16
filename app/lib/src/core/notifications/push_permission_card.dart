@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../config/app_config.dart';
+import '../config/app_config_validation.dart';
 import '../theme/app_theme.dart';
+import 'browser_local_notifications.dart';
+import 'new_order_alert_sound.dart';
 import 'push_notifications.dart';
 
 class PushPermissionCard extends ConsumerStatefulWidget {
@@ -29,19 +33,40 @@ class _PushPermissionCardState extends ConsumerState<PushPermissionCard> {
   Future<void> _requestPermission() async {
     if (_requesting) return;
     setState(() => _requesting = true);
-    final enabled = await ref
+    await ref.read(newOrderAlertSoundProvider).prime();
+    final fcmEnabled = await ref
         .read(pushNotificationsCoordinatorProvider)
         .requestPermissionAndRegister();
+    final browser = ref.read(browserLocalNotificationsProvider);
+    var browserGranted = false;
+    if (browser.isSupported) {
+      browserGranted = await browser.requestPermission() ==
+          BrowserNotificationPermission.granted;
+    }
     if (!mounted) return;
     setState(() {
       _requesting = false;
       _refresh();
     });
+    final enabled = fcmEnabled || browserGranted;
+    if (browserGranted) {
+      await ref.read(browserLocalNotificationsProvider).show(
+            title: 'تم تفعيل الإشعارات',
+            body: 'ستظهر التنبيهات في شريط إشعارات الجهاز.',
+            tag: 'browser-permission-granted',
+          );
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           enabled
-              ? 'تم تفعيل الإشعارات الفورية لهذا الجهاز.'
+              ? (fcmEnabled
+                  ? 'تم تفعيل الإشعارات الفورية لهذا الجهاز.'
+                  : 'تم تفعيل تنبيهات شريط النظام. ${firebaseClosedAppRequirementAr(
+                      configured:
+                          AppConfig.hasFirebaseConfigurationForCurrentPlatform,
+                    )}')
               : 'لم يتم منح الإذن. يمكنك تغييره من إعدادات الهاتف أو المتصفح.',
         ),
       ),
@@ -57,11 +82,22 @@ class _PushPermissionCardState extends ConsumerState<PushPermissionCard> {
             !snapshot.hasData;
         final state =
             snapshot.data ?? PushNotificationPermissionState.unavailable;
-        final presentation = _presentationFor(state, loading: loading);
+        final presentation = _presentationFor(
+          state,
+          loading: loading,
+          browserPermission:
+              ref.read(browserLocalNotificationsProvider).permission(),
+        );
+        final browser = ref.read(browserLocalNotificationsProvider);
+        final browserPermission = browser.permission();
+        final browserCanRequest = browser.isSupported &&
+            browserPermission != BrowserNotificationPermission.granted &&
+            browserPermission != BrowserNotificationPermission.denied;
         final canRequest = !loading &&
-            state != PushNotificationPermissionState.unavailable &&
-            state != PushNotificationPermissionState.authorized &&
-            state != PushNotificationPermissionState.provisional;
+            ((state != PushNotificationPermissionState.unavailable &&
+                    state != PushNotificationPermissionState.authorized &&
+                    state != PushNotificationPermissionState.provisional) ||
+                browserCanRequest);
         return Card(
           key: const Key('push-permission-card'),
           color: presentation.color.withValues(alpha: .08),
@@ -122,6 +158,7 @@ class _PushPermissionCardState extends ConsumerState<PushPermissionCard> {
   _PushPermissionPresentation _presentationFor(
     PushNotificationPermissionState state, {
     required bool loading,
+    required BrowserNotificationPermission browserPermission,
   }) {
     if (loading) {
       return const _PushPermissionPresentation(
@@ -164,12 +201,26 @@ class _PushPermissionCardState extends ConsumerState<PushPermissionCard> {
           color: AppTheme.red,
         ),
       PushNotificationPermissionState.unavailable =>
-        const _PushPermissionPresentation(
-          title: 'الإشعارات الفورية غير مهيأة هنا',
-          message:
-              'في الوضع التجريبي تبقى الإشعارات داخل التطبيق متاحة، أما الإرسال الفوري فيحتاج إعداد Firebase للإنتاج.',
-          icon: Icons.science_outlined,
-          color: AppTheme.orange,
+        _PushPermissionPresentation(
+          title: browserPermission == BrowserNotificationPermission.granted
+              ? 'تنبيهات شريط النظام مفعلة'
+              : AppConfig.hasFirebaseConfigurationForCurrentPlatform
+                  ? 'فعّل تنبيهات الطلب'
+                  : 'فعّل تنبيهات شريط النظام',
+          message: browserPermission == BrowserNotificationPermission.granted
+              ? firebaseClosedAppRequirementAr(
+                  configured:
+                      AppConfig.hasFirebaseConfigurationForCurrentPlatform,
+                )
+              : AppConfig.hasFirebaseConfigurationForCurrentPlatform
+                  ? 'الإشعارات داخل التطبيق متاحة. فعّل إذن المتصفح ليظهر التنبيه في شريط النظام.'
+                  : firebaseClosedAppRequirementAr(configured: false),
+          icon: browserPermission == BrowserNotificationPermission.granted
+              ? Icons.notifications_active
+              : Icons.notifications_none,
+          color: browserPermission == BrowserNotificationPermission.granted
+              ? AppTheme.green
+              : AppTheme.orange,
         ),
     };
   }

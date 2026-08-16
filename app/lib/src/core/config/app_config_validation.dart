@@ -128,6 +128,14 @@ String? firebaseClientConfigurationIssueAr({
   return null;
 }
 
+String firebaseClosedAppRequirementAr({required bool configured}) {
+  const tray =
+      'بعد السماح، يظهر التنبيه في شريط إشعارات الهاتف أو الحاسوب طالما التطبيق أو تبويب المتصفح يعمل، حتى في الخلفية.';
+  const closed =
+      'لا نستخدم Firebase حالياً. إذا أُغلقت العملية بالكامل فلن يصل إشعار جديد.';
+  return '$tray $closed';
+}
+
 String? _legacySupabaseJwtRole(String key) {
   final parts = key.split('.');
   if (parts.length != 3) return null;

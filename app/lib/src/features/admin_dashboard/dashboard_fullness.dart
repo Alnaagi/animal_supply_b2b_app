@@ -1,10 +1,10 @@
-/// Local/demo fullness estimate for the admin dashboard.
-///
-/// This is never a live production database quota. There is no client-side
-/// quota API, and the Flutter app must not invent one with a service role.
+import '../../data/models/database_usage.dart';
+
+/// Fullness shown on the admin dashboard circular widget.
 enum DashboardFullnessKind {
   demoCatalog,
-  localCache,
+  localCacheFallback,
+  operationalDb,
 }
 
 class DashboardFullnessEstimate {
@@ -21,11 +21,14 @@ class DashboardFullnessEstimate {
   final String captionAr;
 
   bool get isDemoEstimate => kind == DashboardFullnessKind.demoCatalog;
-  bool get isOperationalDbQuota => false;
+  bool get isFallbackEstimate => kind == DashboardFullnessKind.localCacheFallback;
+  bool get isOperationalDbQuota => kind == DashboardFullnessKind.operationalDb;
 }
 
-/// Demo catalog+orders vs a labelled demo cap. Production uses the local
-/// catalog cache vs the offline snapshot limit — not database capacity.
+const databaseFullnessTitleAr = 'امتلاء قاعدة البيانات';
+
+/// Demo catalog+orders vs a labelled demo cap. Production uses live
+/// Postgres size from the admin Edge Function, or a labelled local fallback.
 DashboardFullnessEstimate estimateDashboardFullness({
   required bool demoOrOffline,
   required int productCount,
@@ -49,19 +52,43 @@ DashboardFullnessEstimate estimateDashboardFullness({
     return DashboardFullnessEstimate(
       percent: percent,
       kind: DashboardFullnessKind.demoCatalog,
-      titleAr: 'امتلاء البيانات',
+      titleAr: databaseFullnessTitleAr,
       captionAr:
           'تقدير تجريبي من الكتالوج والطلبات المحلية — غير تشغيلي',
     );
   }
 
+  return localCacheFallbackFullness(
+    productCount: safeProducts,
+    localCacheProductCap: localCacheProductCap,
+  );
+}
+
+DashboardFullnessEstimate localCacheFallbackFullness({
+  required int productCount,
+  int localCacheProductCap = 200,
+}) {
   final cap = localCacheProductCap <= 0 ? 1 : localCacheProductCap;
   final percent =
-      ((safeProducts / cap).clamp(0.0, 1.0) * 100).round().clamp(0, 100);
+      ((productCount.clamp(0, 1 << 30) / cap).clamp(0.0, 1.0) * 100)
+          .round()
+          .clamp(0, 100);
   return DashboardFullnessEstimate(
     percent: percent,
-    kind: DashboardFullnessKind.localCache,
-    titleAr: 'امتلاء الذاكرة المحلية',
-    captionAr: 'تقدير من ذاكرة الكتالوج على الجهاز — ليس سعة قاعدة البيانات',
+    kind: DashboardFullnessKind.localCacheFallback,
+    titleAr: databaseFullnessTitleAr,
+    captionAr:
+        'تعذر قراءة سعة قاعدة البيانات — تقدير محلي من ذاكرة الجهاز',
+  );
+}
+
+DashboardFullnessEstimate operationalDatabaseFullness(
+  DatabaseUsageSnapshot usage,
+) {
+  return DashboardFullnessEstimate(
+    percent: usage.percent.clamp(0, 100),
+    kind: DashboardFullnessKind.operationalDb,
+    titleAr: databaseFullnessTitleAr,
+    captionAr: 'نسبة الامتلاء الفعلية من قاعدة البيانات على الخادم',
   );
 }

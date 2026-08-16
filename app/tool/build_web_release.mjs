@@ -16,6 +16,7 @@ import {
   assertPublicBuildConfiguration,
   readDartDefines,
 } from './public_build_config.mjs';
+import { firebaseMessagingServiceWorkerPreamble } from './firebase_web_push.mjs';
 
 const toolDirectory = dirname(fileURLToPath(import.meta.url));
 const appDirectory = resolve(toolDirectory, '..');
@@ -66,7 +67,10 @@ await prepareWebRelease();
 async function prepareWebRelease() {
   await assertDirectory(buildDirectory);
   await removeOldGeneratedManifests();
-  if (buildDefines) await prepareFirebaseBootstrap(buildDefines);
+  if (buildDefines) {
+    await prepareFirebaseBootstrap(buildDefines);
+    await prepareFirebaseMessagingServiceWorker(buildDefines);
+  }
 
   const bootstrapPath = join(buildDirectory, 'flutter_bootstrap.js');
   const bootstrapSource = await readFile(bootstrapPath, 'utf8');
@@ -145,6 +149,19 @@ window.firebaseSdkReady = Promise.all([
   });
 `;
   await writeFile(join(buildDirectory, 'firebase_bootstrap.js'), source);
+}
+
+async function prepareFirebaseMessagingServiceWorker(defines) {
+  const preamble = firebaseMessagingServiceWorkerPreamble(
+    defines,
+    firebaseWebSdkVersion,
+  );
+  if (!preamble) return;
+
+  const swPath = join(buildDirectory, 'app_service_worker.js');
+  const existing = await readFile(swPath, 'utf8');
+  if (existing.includes('self.__ANIMAL_SUPPLY_FCM_READY = true')) return;
+  await writeFile(swPath, `${preamble}${existing}`);
 }
 
 async function removeOldGeneratedManifests() {

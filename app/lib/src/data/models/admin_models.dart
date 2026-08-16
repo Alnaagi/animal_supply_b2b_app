@@ -1,3 +1,4 @@
+import '../../core/config/app_config.dart';
 import '../../core/constants/order_status.dart';
 
 class BusinessCustomer {
@@ -16,6 +17,7 @@ class BusinessCustomer {
     this.accountStatus = 'active',
     this.creditLimit = 0,
     this.outstandingBalance = 0,
+    this.updatedAt,
   });
 
   final String id;
@@ -32,6 +34,7 @@ class BusinessCustomer {
   final String accountStatus;
   final double creditLimit;
   final double outstandingBalance;
+  final DateTime? updatedAt;
 
   bool get active => accountStatus == 'active';
 
@@ -50,6 +53,7 @@ class BusinessCustomer {
     String? accountStatus,
     double? creditLimit,
     double? outstandingBalance,
+    DateTime? updatedAt,
   }) {
     return BusinessCustomer(
       id: id ?? this.id,
@@ -66,6 +70,7 @@ class BusinessCustomer {
       accountStatus: accountStatus ?? this.accountStatus,
       creditLimit: creditLimit ?? this.creditLimit,
       outstandingBalance: outstandingBalance ?? this.outstandingBalance,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
@@ -89,6 +94,7 @@ class BusinessCustomer {
       accountStatus: (row['account_status'] ?? 'active').toString(),
       creditLimit: ((row['credit_limit'] ?? 0) as num).toDouble(),
       outstandingBalance: ((row['outstanding_balance'] ?? 0) as num).toDouble(),
+      updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? ''),
     );
   }
 }
@@ -381,7 +387,8 @@ List<Map<String, dynamic>> _adminRows(Object? value) {
 
 class AppSettingsData {
   const AppSettingsData({
-    this.shopName = 'متجر أعلاف ومستلزمات الحيوانات',
+    this.shopName = AppConfig.shopName,
+    this.shopLogoUrl = '',
     this.supportWhatsapp = '',
     this.downloadLink = '',
     this.apkLink = '',
@@ -391,9 +398,11 @@ class AppSettingsData {
     this.handlingFee = 0,
     this.currency = 'LYD',
     this.maintenanceMode = false,
+    this.updatedAt,
   });
 
   final String shopName;
+  final String shopLogoUrl;
   final String supportWhatsapp;
   final String downloadLink;
   final String apkLink;
@@ -403,9 +412,11 @@ class AppSettingsData {
   final double handlingFee;
   final String currency;
   final bool maintenanceMode;
+  final DateTime? updatedAt;
 
   Map<String, String> toKeyValues() => {
         'shop_name': shopName,
+        'shop_logo_url': shopLogoUrl,
         'support_whatsapp': supportWhatsapp,
         'download_link': downloadLink,
         'apk_link': apkLink,
@@ -417,9 +428,44 @@ class AppSettingsData {
         'maintenance_mode': maintenanceMode.toString(),
       };
 
-  factory AppSettingsData.fromKeyValues(Map<String, String> values) {
+  AppSettingsData copyWith({
+    String? shopName,
+    String? shopLogoUrl,
+    String? supportWhatsapp,
+    String? downloadLink,
+    String? apkLink,
+    String? deliveryPolicy,
+    double? minimumOrderAmount,
+    double? deliveryFee,
+    double? handlingFee,
+    String? currency,
+    bool? maintenanceMode,
+    DateTime? updatedAt,
+  }) {
     return AppSettingsData(
-      shopName: values['shop_name'] ?? 'متجر أعلاف ومستلزمات الحيوانات',
+      shopName: shopName ?? this.shopName,
+      shopLogoUrl: shopLogoUrl ?? this.shopLogoUrl,
+      supportWhatsapp: supportWhatsapp ?? this.supportWhatsapp,
+      downloadLink: downloadLink ?? this.downloadLink,
+      apkLink: apkLink ?? this.apkLink,
+      deliveryPolicy: deliveryPolicy ?? this.deliveryPolicy,
+      minimumOrderAmount: minimumOrderAmount ?? this.minimumOrderAmount,
+      deliveryFee: deliveryFee ?? this.deliveryFee,
+      handlingFee: handlingFee ?? this.handlingFee,
+      currency: currency ?? this.currency,
+      maintenanceMode: maintenanceMode ?? this.maintenanceMode,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  factory AppSettingsData.fromKeyValues(
+    Map<String, String> values, {
+    DateTime? updatedAt,
+  }) {
+    final parsedName = (values['shop_name'] ?? '').trim();
+    return AppSettingsData(
+      shopName: parsedName.isEmpty ? AppConfig.shopName : parsedName,
+      shopLogoUrl: (values['shop_logo_url'] ?? '').trim(),
       supportWhatsapp: values['support_whatsapp'] ?? '',
       downloadLink: values['download_link'] ?? '',
       apkLink: values['apk_link'] ?? '',
@@ -431,6 +477,7 @@ class AppSettingsData {
       handlingFee: double.tryParse(values['handling_fee'] ?? '') ?? 0,
       currency: values['currency'] ?? 'LYD',
       maintenanceMode: values['maintenance_mode'] == 'true',
+      updatedAt: updatedAt,
     );
   }
 }
@@ -452,6 +499,7 @@ class AppBanner {
     this.targetValue = '',
     this.sortOrder = 0,
     this.active = true,
+    this.updatedAt,
   });
 
   final String id;
@@ -463,6 +511,7 @@ class AppBanner {
   final String targetValue;
   final int sortOrder;
   final bool active;
+  final DateTime? updatedAt;
 
   AppBanner copyWith({
     String? id,
@@ -474,6 +523,7 @@ class AppBanner {
     String? targetValue,
     int? sortOrder,
     bool? active,
+    DateTime? updatedAt,
   }) {
     return AppBanner(
       id: id ?? this.id,
@@ -485,6 +535,7 @@ class AppBanner {
       targetValue: targetValue ?? this.targetValue,
       sortOrder: sortOrder ?? this.sortOrder,
       active: active ?? this.active,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
@@ -510,6 +561,7 @@ class AppBanner {
         targetValue: (row['target_value'] ?? '').toString(),
         sortOrder: (row['sort_order'] as num?)?.toInt() ?? 0,
         active: row['active'] != false,
+        updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? ''),
       );
 }
 
