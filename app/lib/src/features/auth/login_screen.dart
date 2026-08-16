@@ -164,7 +164,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           Center(
                             child: ShopBrandLogo(
                               logoUrl: branding.logoUrl,
-                              size: 74,
+                              size: 96,
                               backgroundColor: const Color(0xffe3f3eb),
                               fallbackIconColor: AppTheme.green,
                             ),

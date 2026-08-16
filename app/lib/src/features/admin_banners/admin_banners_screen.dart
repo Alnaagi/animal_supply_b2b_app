@@ -10,6 +10,8 @@ import '../../core/config/app_config.dart';
 import '../../core/config/shop_branding.dart';
 import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/banner_image_crop_dialog.dart';
+import '../../core/widgets/circular_upload_progress.dart';
 import '../../core/widgets/shop_loading.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/admin_models.dart';
@@ -442,6 +444,8 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
   String? saveError;
   String? uploadError;
   Uint8List? imagePreviewBytes;
+  double? uploadProgress;
+  Timer? uploadProgressTicker;
   bool saving = false;
   bool uploading = false;
   bool loadingLookups = true;
@@ -484,12 +488,31 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
   @override
   void dispose() {
     productSearchDebounce?.cancel();
+    uploadProgressTicker?.cancel();
     title.dispose();
     body.dispose();
     cta.dispose();
     imageUrl.dispose();
     productSearch.dispose();
     super.dispose();
+  }
+
+  void _stopUploadProgressTicker() {
+    uploadProgressTicker?.cancel();
+    uploadProgressTicker = null;
+  }
+
+  void _startUploadProgressTicker({double from = 0.12}) {
+    _stopUploadProgressTicker();
+    var current = from.clamp(0.0, 0.88);
+    uploadProgressTicker = Timer.periodic(const Duration(milliseconds: 140), (_) {
+      if (!mounted || !uploading) {
+        _stopUploadProgressTicker();
+        return;
+      }
+      current = (current + 0.035).clamp(0.0, 0.88);
+      setState(() => uploadProgress = current);
+    });
   }
 
   Future<void> _loadLookups() async {
@@ -554,7 +577,6 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
 
   Future<void> _uploadImage() async {
     setState(() {
-      uploading = true;
       uploadError = null;
       saveError = null;
     });
@@ -562,31 +584,64 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
       final images = ref.read(productImagesRepositoryProvider);
       final picked = await images.pick();
       if (!mounted) return;
-      if (picked == null) {
-        setState(() => uploading = false);
-        return;
-      }
-      setState(() => imagePreviewBytes = picked.bytes);
-      final result = await images.uploadPicked(
-        picked,
-        folder: ProductImagesRepository.bannersFolder,
+      if (picked == null) return;
+
+      final cropped = await showBannerImageCropDialog(
+        context,
+        imageBytes: picked.bytes,
+        sourceFileName: picked.fileName,
       );
       if (!mounted) return;
+      if (cropped == null) return;
+
+      setState(() {
+        imagePreviewBytes = cropped.bytes;
+        uploading = true;
+        uploadProgress = 0.05;
+      });
+      _startUploadProgressTicker(from: 0.12);
+
+      final result = await images.uploadPicked(
+        PickedProductImage(
+          fileName: cropped.fileName,
+          bytes: cropped.bytes,
+        ),
+        folder: ProductImagesRepository.bannersFolder,
+        onProgress: (fraction) {
+          if (!mounted) return;
+          if (fraction == null) return;
+          if (fraction >= 1) {
+            _stopUploadProgressTicker();
+            setState(() => uploadProgress = 1);
+            return;
+          }
+          setState(() {
+            uploadProgress = fraction.clamp(0.0, 0.95);
+          });
+        },
+      );
+      if (!mounted) return;
+      _stopUploadProgressTicker();
       setState(() {
         imageUrl.text = result.publicUrl;
         uploading = false;
+        uploadProgress = 1;
       });
       formKey.currentState?.validate();
     } on ProductImageUploadException catch (error) {
       if (!mounted) return;
+      _stopUploadProgressTicker();
       setState(() {
         uploading = false;
+        uploadProgress = null;
         uploadError = error.message;
       });
     } catch (error) {
       if (!mounted) return;
+      _stopUploadProgressTicker();
       setState(() {
         uploading = false;
+        uploadProgress = null;
         uploadError = mapProductImageUploadError(
           error,
           folder: ProductImagesRepository.bannersFolder,
@@ -679,6 +734,13 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
                   maxLength: 2000,
                   keyboardType: TextInputType.url,
                   textDirection: TextDirection.ltr,
+                  onChanged: (_) {
+                    if (imagePreviewBytes == null) {
+                      setState(() {});
+                      return;
+                    }
+                    setState(() => imagePreviewBytes = null);
+                  },
                   decoration: const InputDecoration(
                     labelText: 'رابط الصورة HTTPS',
                     hintText: 'https://cdn.example.com/banner.webp',
@@ -698,25 +760,49 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (imagePreviewBytes != null) ...[
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.memory(
-                          imagePreviewBytes!,
-                          key: const ValueKey('banner-image-preview'),
-                          width: 72,
-                          height: 72,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                              const SizedBox(
-                            width: 72,
-                            height: 72,
-                            child: Icon(Icons.image_outlined),
+                    SizedBox(
+                      width: 112,
+                      height: 44,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: imagePreviewBytes != null
+                                ? Image.memory(
+                                    imagePreviewBytes!,
+                                    key: const ValueKey(
+                                      'banner-image-preview',
+                                    ),
+                                    width: 112,
+                                    height: 44,
+                                    fit: BoxFit.cover,
+                                    gaplessPlayback: true,
+                                    errorBuilder:
+                                        (context, error, stackTrace) =>
+                                            const ColoredBox(
+                                      color: Color(0xFFE8EEEC),
+                                      child: Center(
+                                        child: Icon(Icons.image_outlined),
+                                      ),
+                                    ),
+                                  )
+                                : _BannerUrlThumbnail(url: imageUrl.text),
                           ),
-                        ),
+                          if (uploading)
+                            CircularUploadProgress(
+                              key: const ValueKey(
+                                'banner-image-upload-progress',
+                              ),
+                              progress: uploadProgress,
+                              size: 44,
+                              borderRadius: 12,
+                              strokeWidth: 2.5,
+                            ),
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                    ],
+                    ),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Align(
                         alignment: AlignmentDirectional.centerStart,
@@ -730,15 +816,12 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
                               ? null
                               : _uploadImage,
                           icon: uploading
-                              ? const SizedBox.square(
-                                  dimension: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
+                              ? const SizedBox.shrink()
                               : const Icon(Icons.upload_file_outlined),
                           label: Text(
-                            uploading ? 'جارٍ الرفع...' : 'اختيار ورفع صورة',
+                            uploading
+                                ? uploadProgressLabelAr(uploadProgress)
+                                : 'اختيار ورفع صورة',
                           ),
                         ),
                       ),
@@ -1109,15 +1192,26 @@ class _BannerListHeader extends StatelessWidget {
   }
 }
 
-class _ClientBannerPreview extends ConsumerWidget {
+enum _BannerPreviewMode { desktop, mobile }
+
+class _ClientBannerPreview extends ConsumerStatefulWidget {
   const _ClientBannerPreview({required this.banners});
 
   final List<AppBanner> banners;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final active = activeBannersInShowingOrder(banners);
+  ConsumerState<_ClientBannerPreview> createState() =>
+      _ClientBannerPreviewState();
+}
+
+class _ClientBannerPreviewState extends ConsumerState<_ClientBannerPreview> {
+  _BannerPreviewMode _mode = _BannerPreviewMode.desktop;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = activeBannersInShowingOrder(widget.banners);
     final slides = HomeBannerSlide.fromAdminBanners(active);
+    final desktop = _mode == _BannerPreviewMode.desktop;
     return DecoratedBox(
       key: const Key('admin-banner-client-preview'),
       decoration: BoxDecoration(
@@ -1137,17 +1231,49 @@ class _ClientBannerPreview extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'معاينة عرض العملاء',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              alignment: WrapAlignment.spaceBetween,
+              children: [
+                Text(
+                  'معاينة عرض العملاء',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                ),
+                SegmentedButton<_BannerPreviewMode>(
+                  key: const Key('admin-banner-preview-mode'),
+                  showSelectedIcon: false,
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
+                  segments: const [
+                    ButtonSegment(
+                      value: _BannerPreviewMode.desktop,
+                      label: Text('حاسوب'),
+                    ),
+                    ButtonSegment(
+                      value: _BannerPreviewMode.mobile,
+                      label: Text('جوال'),
+                    ),
+                  ],
+                  selected: {_mode},
+                  onSelectionChanged: (selection) {
+                    setState(() => _mode = selection.single);
+                  },
+                ),
+              ],
             ),
             const SizedBox(height: 2),
             Text(
               slides.isEmpty
                   ? 'لا توجد بانرات نشطة في ${ref.watch(shopBrandingProvider).shopName}.'
-                  : 'شريط العروض كما يظهر للعملاء على الجوال.',
+                  : desktop
+                      ? 'شريط العروض كما يظهر للعملاء على الحاسوب.'
+                      : 'شريط العروض كما يظهر للعملاء على الجوال.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppTheme.darkGreen.withValues(alpha: .78),
@@ -1156,10 +1282,12 @@ class _ClientBannerPreview extends ConsumerWidget {
             if (slides.isNotEmpty) ...[
               const SizedBox(height: 10),
               _CustomerBannerPreviewStage(
+                mobile: !desktop,
                 child: OfferBannerCarousel(
                   key: const Key('admin-banner-client-carousel'),
                   banners: slides,
                   preview: true,
+                  compact: !desktop,
                 ),
               ),
             ],
@@ -1170,40 +1298,75 @@ class _ClientBannerPreview extends ConsumerWidget {
   }
 }
 
-/// Phone-width card so the shared [OfferBannerCarousel] stays mobile-sized
-/// without a fake device bezel, thick black border, or home-indicator pill.
+/// Desktop uses nearly the full card width. Mobile is a centered phone-width
+/// stage with a hairline frame — not a thick black bezel.
 class _CustomerBannerPreviewStage extends StatelessWidget {
-  const _CustomerBannerPreviewStage({required this.child});
+  const _CustomerBannerPreviewStage({
+    required this.mobile,
+    required this.child,
+  });
 
+  final bool mobile;
   final Widget child;
 
-  static const double _previewWidth = 390;
+  static const double _mobileWidth = 360;
 
   @override
   Widget build(BuildContext context) {
+    final stage = DecoratedBox(
+      key: const Key('admin-banner-client-preview-stage'),
+      decoration: BoxDecoration(
+        color: AppTheme.sand,
+        borderRadius: BorderRadius.circular(mobile ? 20 : 18),
+        border: Border.all(
+          color: AppTheme.green.withValues(alpha: mobile ? .18 : .10),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.darkGreen.withValues(alpha: .06),
+            blurRadius: mobile ? 10 : 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(10, 10, 10, mobile ? 8 : 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            child,
+            if (mobile) ...[
+              const SizedBox(height: 8),
+              Center(
+                child: DecoratedBox(
+                  key: const Key('admin-banner-preview-home-indicator'),
+                  decoration: BoxDecoration(
+                    color: AppTheme.green.withValues(alpha: .42),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                  child: const SizedBox(width: 92, height: 4),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+
+    if (!mobile) {
+      return KeyedSubtree(
+        key: const Key('admin-banner-client-preview-desktop'),
+        child: stage,
+      );
+    }
+
     return Align(
       alignment: Alignment.center,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: _previewWidth),
-        child: DecoratedBox(
-          key: const Key('admin-banner-client-preview-stage'),
-          decoration: BoxDecoration(
-            color: AppTheme.sand,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: AppTheme.green.withValues(alpha: .16)),
-            boxShadow: [
-              BoxShadow(
-                color: AppTheme.darkGreen.withValues(alpha: .06),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
-            child: child,
-          ),
-        ),
+        key: const Key('admin-banner-client-preview-phone'),
+        constraints: const BoxConstraints(maxWidth: _mobileWidth),
+        child: stage,
       ),
     );
   }
@@ -1523,6 +1686,36 @@ class _DemoBannerNotice extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _BannerUrlThumbnail extends StatelessWidget {
+  const _BannerUrlThumbnail({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmed = url.trim();
+    if (!_isSafeHttpsUrl(trimmed)) {
+      return const ColoredBox(
+        key: ValueKey('banner-image-preview-empty'),
+        color: Color(0xFFE8EEEC),
+        child: Center(child: Icon(Icons.image_outlined)),
+      );
+    }
+    return Image.network(
+      trimmed,
+      key: const ValueKey('banner-image-preview'),
+      width: 112,
+      height: 44,
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+      errorBuilder: (context, error, stackTrace) => const ColoredBox(
+        color: Color(0xFFE8EEEC),
+        child: Center(child: Icon(Icons.broken_image_outlined)),
       ),
     );
   }

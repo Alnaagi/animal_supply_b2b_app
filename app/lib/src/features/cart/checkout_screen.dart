@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/refresh/screen_reload.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/shop_loading.dart';
 import '../../data/models/order.dart';
@@ -46,6 +47,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     final minimumOrderAmount = settings?.minimumOrderAmount ?? 0;
     final meetsMinimum = pricing.meetsMinimum(minimumOrderAmount);
     final maintenanceMode = settings?.maintenanceMode ?? false;
+    final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -67,22 +69,12 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
               ),
             )
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
               children: [
-                Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.storefront_outlined),
-                    title: Text(user.businessName ?? user.username),
-                    subtitle: const Text(
-                      'سيستخدم عنوان العميل التجاري المسجل إذا تركت العنوان الإضافي فارغاً.',
-                    ),
-                  ),
-                ),
                 if (settings == null) ...[
-                  const SizedBox(height: 10),
                   Card(
                     color: settingsAsync.hasError
-                        ? Theme.of(context).colorScheme.errorContainer
+                        ? scheme.errorContainer
                         : Colors.amber.shade50,
                     child: ListTile(
                       leading: settingsAsync.hasError
@@ -108,9 +100,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                           : null,
                     ),
                   ),
+                  const SizedBox(height: 12),
                 ],
                 if (maintenanceMode) ...[
-                  const SizedBox(height: 10),
                   Card(
                     key: const Key('checkout-maintenance-notice'),
                     color: Colors.amber.shade50,
@@ -122,21 +114,43 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12),
                 ],
+                const _CheckoutSectionHeader(
+                  icon: Icons.edit_location_alt_outlined,
+                  title: 'بيانات التسليم',
+                  subtitle: 'عبّئ العنوان والملاحظة قبل مراجعة الطلب.',
+                ),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: deliveryAddress,
+                _CheckoutEditableFieldsCard(
+                  deliveryAddress: deliveryAddress,
+                  note: note,
                   enabled: !submitting,
-                  minLines: 2,
-                  maxLines: 3,
-                  textInputAction: TextInputAction.next,
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.location_on_outlined),
-                    labelText: 'عنوان تسليم إضافي (اختياري)',
-                    hintText: 'مثال: طرابلس - حي الأندلس - اسم الشارع',
+                  onChanged: () => setState(() {}),
+                ),
+                const SizedBox(height: 20),
+                const _CheckoutSectionHeader(
+                  icon: Icons.receipt_long_outlined,
+                  title: 'مراجعة الطلب',
+                  subtitle: 'تأكد من المتجر والمنتجات والإجمالي قبل الإرسال.',
+                ),
+                const SizedBox(height: 10),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(
+                      Icons.storefront_outlined,
+                      color: AppTheme.green,
+                    ),
+                    title: Text(
+                      user.businessName ?? user.username,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: const Text(
+                      'سيستخدم عنوان العميل التجاري المسجل إذا تركت العنوان الإضافي فارغاً.',
+                    ),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 if (items.isEmpty)
                   Card(
                     color: Colors.amber.shade50,
@@ -148,81 +162,45 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                     ),
                   )
                 else
-                  for (final item in items)
-                    Card(
-                      child: ListTile(
-                        title: Text(item.productName),
-                        subtitle: Text(
-                          '${item.quantity} × ${lyd(item.unitPrice)}'
-                          '${item.unitsPerBox == null ? '' : ' • ${item.unitsPerBox} قطعة في الصندوق'}',
-                        ),
-                        trailing: Text(lyd(item.lineTotal)),
-                      ),
-                    ),
-                const SizedBox(height: 4),
-                TextField(
-                  controller: note,
-                  enabled: !submitting,
-                  minLines: 3,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.notes_outlined),
-                    labelText: 'ملاحظة العميل (اختيارية)',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (settings != null)
                   Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        children: [
-                          _CheckoutTotalRow(
-                            label: 'الإجمالي الفرعي التقديري',
-                            value: lyd(pricing.subtotal),
-                          ),
-                          if (pricing.deliveryFee > 0)
-                            _CheckoutTotalRow(
-                              label: 'توصيل تقديري',
-                              value: lyd(pricing.deliveryFee),
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < items.length; i++) ...[
+                          if (i > 0) const Divider(height: 1),
+                          ListTile(
+                            title: Text(
+                              items[i].productName,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
                             ),
-                          if (pricing.handlingFee > 0)
-                            _CheckoutTotalRow(
-                              label: 'مناولة تقديرية',
-                              value: lyd(pricing.handlingFee),
+                            subtitle: Text(
+                              '${items[i].quantity} × ${lyd(items[i].unitPrice)}'
+                              '${items[i].unitsPerBox == null ? '' : ' • ${items[i].unitsPerBox} قطعة في الصندوق'}',
                             ),
-                          const Divider(),
-                          _CheckoutTotalRow(
-                            label: 'الإجمالي التقديري',
-                            value: lyd(pricing.total),
-                            bold: true,
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'السعر والرسوم النهائية يعتمدها الخادم حسب حساب العميل والمخزون.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.grey, fontSize: 12),
-                          ),
-                          if (!meetsMinimum) ...[
-                            const SizedBox(height: 10),
-                            Text(
-                              'الحد الأدنى للطلب ${lyd(minimumOrderAmount)}. '
-                              'أضف منتجات بقيمة تقديرية ${lyd(pricing.amountNeededForMinimum(minimumOrderAmount))}.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.error,
+                            trailing: Text(
+                              lyd(items[i].lineTotal),
+                              style: const TextStyle(
                                 fontWeight: FontWeight.w800,
+                                color: AppTheme.darkGreen,
                               ),
                             ),
-                          ],
+                          ),
                         ],
-                      ),
+                      ],
                     ),
                   ),
+                if (settings != null) ...[
+                  const SizedBox(height: 10),
+                  _CheckoutTotalsCard(
+                    pricing: pricing,
+                    minimumOrderAmount: minimumOrderAmount,
+                    meetsMinimum: meetsMinimum,
+                  ),
+                ],
                 if (error case final message?) ...[
                   const SizedBox(height: 12),
                   Material(
-                    color: Theme.of(context).colorScheme.errorContainer,
+                    color: scheme.errorContainer,
                     borderRadius: BorderRadius.circular(12),
                     child: Padding(
                       padding: const EdgeInsets.all(12),
@@ -231,17 +209,14 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                         children: [
                           Icon(
                             Icons.error_outline,
-                            color:
-                                Theme.of(context).colorScheme.onErrorContainer,
+                            color: scheme.onErrorContainer,
                           ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
                               message,
                               style: TextStyle(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onErrorContainer,
+                                color: scheme.onErrorContainer,
                               ),
                             ),
                           ),
@@ -250,9 +225,20 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 FilledButton.icon(
                   key: const Key('checkout-submit-button'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(54),
+                    backgroundColor: AppTheme.green,
+                    foregroundColor: Colors.white,
+                    textStyle: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                    ),
+                    elevation: 2,
+                    shadowColor: AppTheme.green.withValues(alpha: 0.35),
+                  ),
                   onPressed: items.isEmpty ||
                           submitting ||
                           settings == null ||
@@ -263,7 +249,10 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                   icon: submitting
                       ? const SizedBox.square(
                           dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
                         )
                       : const Icon(Icons.send_outlined),
                   label:
@@ -392,27 +381,286 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   }
 }
 
+class _CheckoutSectionHeader extends StatelessWidget {
+  const _CheckoutSectionHeader({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: AppTheme.green.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: AppTheme.green, size: 20),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                  color: AppTheme.darkGreen,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  color: AppTheme.darkGreen.withValues(alpha: 0.7),
+                  fontSize: 12.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CheckoutEditableFieldsCard extends StatelessWidget {
+  const _CheckoutEditableFieldsCard({
+    required this.deliveryAddress,
+    required this.note,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final TextEditingController deliveryAddress;
+  final TextEditingController note;
+  final bool enabled;
+  final VoidCallback onChanged;
+
+  InputDecoration _fieldDecoration({
+    required String label,
+    required String hint,
+    required IconData icon,
+    required TextEditingController controller,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      alignLabelWithHint: true,
+      filled: true,
+      fillColor: Colors.white,
+      prefixIcon: Icon(icon, color: AppTheme.green),
+      suffixIcon: controller.text.trim().isEmpty
+          ? null
+          : IconButton(
+              tooltip: 'مسح',
+              onPressed: enabled
+                  ? () {
+                      controller.clear();
+                      onChanged();
+                    }
+                  : null,
+              icon: const Icon(Icons.clear, size: 20),
+            ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: AppTheme.green.withValues(alpha: 0.35)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: AppTheme.green.withValues(alpha: 0.35)),
+      ),
+      disabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: AppTheme.green, width: 2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      key: const Key('checkout-editable-fields'),
+      color: const Color(0xffeef6f1),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide(color: AppTheme.green.withValues(alpha: 0.22)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              key: const Key('checkout-delivery-address'),
+              controller: deliveryAddress,
+              enabled: enabled,
+              minLines: 2,
+              maxLines: 3,
+              textInputAction: TextInputAction.next,
+              onChanged: (_) => onChanged(),
+              decoration: _fieldDecoration(
+                label: 'عنوان تسليم إضافي (اختياري)',
+                hint: 'مثال: طرابلس - حي الأندلس - اسم الشارع',
+                icon: Icons.location_on_outlined,
+                controller: deliveryAddress,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'إذا تركته فارغاً يُستخدم عنوان المتجر المسجل تلقائياً.',
+              style: TextStyle(
+                color: AppTheme.darkGreen.withValues(alpha: 0.65),
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              key: const Key('checkout-customer-note'),
+              controller: note,
+              enabled: enabled,
+              minLines: 3,
+              maxLines: 4,
+              onChanged: (_) => onChanged(),
+              decoration: _fieldDecoration(
+                label: 'ملاحظة العميل (اختيارية)',
+                hint: 'مثال: وقت الاستلام المفضل أو تعليمات للمندوب',
+                icon: Icons.notes_outlined,
+                controller: note,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CheckoutTotalsCard extends StatelessWidget {
+  const _CheckoutTotalsCard({
+    required this.pricing,
+    required this.minimumOrderAmount,
+    required this.meetsMinimum,
+  });
+
+  final CartPricingSummary pricing;
+  final double minimumOrderAmount;
+  final bool meetsMinimum;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      key: const Key('checkout-totals-card'),
+      color: AppTheme.darkGreen,
+      elevation: 3,
+      shadowColor: AppTheme.darkGreen.withValues(alpha: 0.35),
+      borderRadius: BorderRadius.circular(22),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+        child: Column(
+          children: [
+            _CheckoutTotalRow(
+              label: 'الإجمالي الفرعي التقديري',
+              value: lyd(pricing.subtotal),
+              muted: true,
+            ),
+            if (pricing.deliveryFee > 0)
+              _CheckoutTotalRow(
+                label: 'توصيل تقديري',
+                value: lyd(pricing.deliveryFee),
+                muted: true,
+              ),
+            if (pricing.handlingFee > 0)
+              _CheckoutTotalRow(
+                label: 'مناولة تقديرية',
+                value: lyd(pricing.handlingFee),
+                muted: true,
+              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Divider(
+                height: 1,
+                color: Colors.white.withValues(alpha: 0.22),
+              ),
+            ),
+            _CheckoutTotalRow(
+              label: 'الإجمالي التقديري',
+              value: lyd(pricing.total),
+              emphasize: true,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'السعر والرسوم النهائية يعتمدها الخادم حسب حساب العميل والمخزون.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.78),
+                fontSize: 12,
+              ),
+            ),
+            if (!meetsMinimum) ...[
+              const SizedBox(height: 10),
+              Text(
+                'الحد الأدنى للطلب ${lyd(minimumOrderAmount)}. '
+                'أضف منتجات بقيمة تقديرية ${lyd(pricing.amountNeededForMinimum(minimumOrderAmount))}.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xffffd4a8),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CheckoutTotalRow extends StatelessWidget {
   const _CheckoutTotalRow({
     required this.label,
     required this.value,
-    this.bold = false,
+    this.muted = false,
+    this.emphasize = false,
   });
 
   final String label;
   final String value;
-  final bool bold;
+  final bool muted;
+  final bool emphasize;
 
   @override
   Widget build(BuildContext context) {
-    final style =
-        TextStyle(fontWeight: bold ? FontWeight.w900 : FontWeight.normal);
+    final style = TextStyle(
+      color: muted
+          ? Colors.white.withValues(alpha: 0.82)
+          : Colors.white,
+      fontWeight: emphasize ? FontWeight.w900 : FontWeight.w600,
+      fontSize: emphasize ? 18 : 14,
+      letterSpacing: emphasize ? 0.2 : 0,
+    );
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Text(label, style: style),
-          const Spacer(),
+          Expanded(child: Text(label, style: style)),
           Text(value, style: style),
         ],
       ),

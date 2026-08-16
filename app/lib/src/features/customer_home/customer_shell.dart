@@ -91,7 +91,7 @@ class CustomerShell extends ConsumerWidget {
           children: [
             ShopBrandLogo(
               logoUrl: branding.logoUrl,
-              size: 32,
+              size: 40,
             ),
             const SizedBox(width: 8),
             Flexible(

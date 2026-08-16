@@ -30,7 +30,7 @@ void main() {
     }
   });
 
-  test('hides disabled next steps without inventing a skip', () {
+  test('skips disabled forward steps to the next enabled status', () {
     expect(
       AdminOrderWorkflowStore.visibleNextStatuses(
         current: OrderStatus.pending,
@@ -43,10 +43,63 @@ void main() {
     );
     expect(
       AdminOrderWorkflowStore.visibleNextStatuses(
+        current: OrderStatus.pending,
+        enabledSteps: {
+          OrderStatus.preparing,
+          OrderStatus.ready,
+          OrderStatus.delivered,
+        },
+      ),
+      [OrderStatus.preparing],
+    );
+    expect(
+      AdminOrderWorkflowStore.visibleNextStatuses(
+        current: OrderStatus.confirmed,
+        enabledSteps: {
+          OrderStatus.ready,
+          OrderStatus.delivered,
+          OrderStatus.cancelled,
+        },
+      ),
+      [OrderStatus.ready, OrderStatus.cancelled],
+    );
+    expect(
+      AdminOrderWorkflowStore.visibleNextStatuses(
+        current: OrderStatus.confirmed,
+        enabledSteps: {
+          OrderStatus.delivered,
+          OrderStatus.cancelled,
+        },
+      ),
+      [OrderStatus.delivered, OrderStatus.cancelled],
+    );
+    expect(
+      AdminOrderWorkflowStore.visibleNextStatuses(
+        current: OrderStatus.preparing,
+        enabledSteps: {OrderStatus.delivered},
+      ),
+      [OrderStatus.delivered],
+    );
+  });
+
+  test('keeps cancel optional when forward steps are hidden', () {
+    expect(
+      AdminOrderWorkflowStore.visibleNextStatuses(
         current: OrderStatus.confirmed,
         enabledSteps: {OrderStatus.cancelled},
       ),
       [OrderStatus.cancelled],
+    );
+    expect(
+      AdminOrderWorkflowStore.visibleNextStatuses(
+        current: OrderStatus.ready,
+        enabledSteps: {
+          OrderStatus.confirmed,
+          OrderStatus.preparing,
+          OrderStatus.ready,
+        },
+      ),
+      isEmpty,
     );
   });
 

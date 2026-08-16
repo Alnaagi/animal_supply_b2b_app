@@ -545,7 +545,59 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
     );
     var statusValue = customer.accountStatus;
     var obscurePassword = true;
-    String? validationMessage;
+    var fieldErrors = <_CustomerFormField, String>{};
+
+    final businessFocus = FocusNode();
+    final contactFocus = FocusNode();
+    final phoneFocus = FocusNode();
+    final cityFocus = FocusNode();
+    final areaFocus = FocusNode();
+    final usernameFocus = FocusNode();
+    final passwordFocus = FocusNode();
+    final passwordConfirmFocus = FocusNode();
+    final discountFocus = FocusNode();
+
+    final businessKey = GlobalKey();
+    final contactKey = GlobalKey();
+    final phoneKey = GlobalKey();
+    final cityKey = GlobalKey();
+    final usernameKey = GlobalKey();
+    final passwordKey = GlobalKey();
+    final passwordConfirmKey = GlobalKey();
+    final discountKey = GlobalKey();
+
+    void clearFieldError(_CustomerFormField field) {
+      if (!fieldErrors.containsKey(field)) return;
+      fieldErrors = Map<_CustomerFormField, String>.from(fieldErrors)
+        ..remove(field);
+    }
+
+    void revealFirstInvalidField(Map<_CustomerFormField, String> errors) {
+      final first = _CustomerFormField.values.firstWhere(errors.containsKey);
+      final anchors = <_CustomerFormField, GlobalKey>{
+        _CustomerFormField.business: businessKey,
+        _CustomerFormField.contact: contactKey,
+        _CustomerFormField.phone: phoneKey,
+        _CustomerFormField.city: cityKey,
+        _CustomerFormField.username: usernameKey,
+        _CustomerFormField.password: passwordKey,
+        _CustomerFormField.passwordConfirm: passwordConfirmKey,
+        _CustomerFormField.discount: discountKey,
+      };
+      final focuses = <_CustomerFormField, FocusNode?>{
+        _CustomerFormField.business: businessFocus,
+        _CustomerFormField.contact: contactFocus,
+        _CustomerFormField.phone: phoneFocus,
+        _CustomerFormField.city: cityFocus,
+        _CustomerFormField.username: usernameFocus,
+        _CustomerFormField.password: passwordFocus,
+        _CustomerFormField.passwordConfirm: passwordConfirmFocus,
+        _CustomerFormField.discount: discountFocus,
+      };
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _revealInvalidCustomerFormField(anchors[first]!, focuses[first]);
+      });
+    }
 
     final saved = await showDialog<_CustomerFormResult>(
       context: context,
@@ -569,244 +621,356 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
                   child: SingleChildScrollView(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (AppConfig.isDemoMode) ...[
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: AppTheme.orange.withValues(alpha: .12),
-                            borderRadius: BorderRadius.circular(16),
+                      children: [
+                        if (AppConfig.isDemoMode) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: AppTheme.orange.withValues(alpha: .12),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: const Text(
+                              'وضع تجريبي محلي: لا يُنشأ حساب حقيقي في الخادم، '
+                              'ولا تُحفظ كلمة المرور على الجهاز.',
+                              style: TextStyle(fontWeight: FontWeight.w800),
+                            ),
                           ),
-                          child: const Text(
-                            'وضع تجريبي محلي: لا يُنشأ حساب حقيقي في الخادم، '
-                            'ولا تُحفظ كلمة المرور على الجهاز.',
-                            style: TextStyle(fontWeight: FontWeight.w800),
+                          const SizedBox(height: 14),
+                        ],
+                        _CustomerFormSection(
+                          key: const ValueKey(
+                            'admin-customer-section-identity',
                           ),
+                          title: 'الهوية',
+                          icon: Icons.storefront_outlined,
+                          children: [
+                            KeyedSubtree(
+                              key: businessKey,
+                              child: TextField(
+                                key: const ValueKey(
+                                  'admin-customer-business-field',
+                                ),
+                                controller: business,
+                                focusNode: businessFocus,
+                                textInputAction: TextInputAction.next,
+                                onChanged: (_) => setDialogState(
+                                  () => clearFieldError(
+                                    _CustomerFormField.business,
+                                  ),
+                                ),
+                                decoration: InputDecoration(
+                                  labelText: 'اسم المتجر',
+                                  helperText:
+                                      'الاسم الظاهر في الطلبات والدعوة',
+                                  prefixIcon:
+                                      const Icon(Icons.storefront_outlined),
+                                  errorText: fieldErrors[
+                                      _CustomerFormField.business],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            KeyedSubtree(
+                              key: contactKey,
+                              child: TextField(
+                                key: const ValueKey(
+                                  'admin-customer-contact-field',
+                                ),
+                                controller: contact,
+                                focusNode: contactFocus,
+                                textInputAction: TextInputAction.next,
+                                onChanged: (_) => setDialogState(
+                                  () => clearFieldError(
+                                    _CustomerFormField.contact,
+                                  ),
+                                ),
+                                decoration: InputDecoration(
+                                  labelText: 'الشخص المسؤول',
+                                  helperText: 'الاسم واللقب',
+                                  prefixIcon:
+                                      const Icon(Icons.person_outline),
+                                  errorText: fieldErrors[
+                                      _CustomerFormField.contact],
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 14),
-                      ],
-                      _CustomerFormSection(
-                        key: const ValueKey('admin-customer-section-identity'),
-                        title: 'الهوية',
-                        icon: Icons.storefront_outlined,
-                        children: [
-                          TextField(
-                            key: const ValueKey(
-                              'admin-customer-business-field',
-                            ),
-                            controller: business,
-                            textInputAction: TextInputAction.next,
-                            decoration: const InputDecoration(
-                              labelText: 'اسم المتجر',
-                              helperText: 'الاسم الظاهر في الطلبات والدعوة',
-                              prefixIcon: Icon(Icons.storefront_outlined),
-                            ),
+                        _CustomerFormSection(
+                          key: const ValueKey(
+                            'admin-customer-section-contact',
                           ),
-                          const SizedBox(height: 14),
-                          TextField(
-                            key: const ValueKey(
-                              'admin-customer-contact-field',
-                            ),
-                            controller: contact,
-                            textInputAction: TextInputAction.next,
-                            decoration: const InputDecoration(
-                              labelText: 'الشخص المسؤول',
-                              helperText: 'الاسم واللقب',
-                              prefixIcon: Icon(Icons.person_outline),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      _CustomerFormSection(
-                        key: const ValueKey('admin-customer-section-contact'),
-                        title: 'التواصل',
-                        icon: Icons.chat_outlined,
-                        children: [
-                          TextField(
-                            key: const ValueKey(
-                              'admin-customer-phone-field',
-                            ),
-                            controller: phone,
-                            keyboardType: TextInputType.phone,
-                            textDirection: TextDirection.ltr,
-                            textInputAction: TextInputAction.next,
-                            decoration: const InputDecoration(
-                              labelText: 'رقم الهاتف (واتساب)',
-                              helperText:
-                                  'يمكن استخدام الرقم كاسم مستخدم عند الإنشاء',
-                              helperMaxLines: 2,
-                              prefixIcon: Icon(Icons.chat_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: city,
-                                  textInputAction: TextInputAction.next,
-                                  decoration: const InputDecoration(
-                                    labelText: 'المدينة',
+                          title: 'التواصل',
+                          icon: Icons.chat_outlined,
+                          children: [
+                            KeyedSubtree(
+                              key: phoneKey,
+                              child: TextField(
+                                key: const ValueKey(
+                                  'admin-customer-phone-field',
+                                ),
+                                controller: phone,
+                                focusNode: phoneFocus,
+                                keyboardType: TextInputType.phone,
+                                textDirection: TextDirection.ltr,
+                                textInputAction: TextInputAction.next,
+                                onChanged: (_) => setDialogState(
+                                  () => clearFieldError(
+                                    _CustomerFormField.phone,
                                   ),
                                 ),
+                                decoration: InputDecoration(
+                                  labelText: 'رقم الهاتف (واتساب)',
+                                  helperText:
+                                      'يمكن استخدام الرقم كاسم مستخدم عند الإنشاء',
+                                  helperMaxLines: 2,
+                                  prefixIcon:
+                                      const Icon(Icons.chat_outlined),
+                                  errorText:
+                                      fieldErrors[_CustomerFormField.phone],
+                                ),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: TextField(
-                                  controller: area,
-                                  textInputAction: TextInputAction.next,
-                                  decoration: const InputDecoration(
-                                    labelText: 'المنطقة',
+                            ),
+                            const SizedBox(height: 14),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: KeyedSubtree(
+                                    key: cityKey,
+                                    child: TextField(
+                                      key: const ValueKey(
+                                        'admin-customer-city-field',
+                                      ),
+                                      controller: city,
+                                      focusNode: cityFocus,
+                                      textInputAction: TextInputAction.next,
+                                      onChanged: (_) => setDialogState(
+                                        () => clearFieldError(
+                                          _CustomerFormField.city,
+                                        ),
+                                      ),
+                                      decoration: InputDecoration(
+                                        labelText: 'المدينة',
+                                        errorText: fieldErrors[
+                                            _CustomerFormField.city],
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      _CustomerFormSection(
-                        key: const ValueKey('admin-customer-section-login'),
-                        title: 'بيانات الدخول',
-                        icon: Icons.lock_outline,
-                        children: [
-                          TextField(
-                            key: const ValueKey(
-                              'admin-customer-username-field',
-                            ),
-                            controller: username,
-                            enabled: isNew,
-                            textDirection: TextDirection.ltr,
-                            textInputAction: TextInputAction.next,
-                            decoration: InputDecoration(
-                              labelText: 'اسم المستخدم',
-                              helperText: isNew
-                                  ? 'اختياري. إن تُرك فارغاً تُستخدم أرقام الهاتف كاسم مستخدم. الدخول يقبل رقم الهاتف.'
-                                  : 'لا يمكن تغيير اسم المستخدم بعد الإنشاء',
-                              helperMaxLines: 3,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          TextField(
-                            key: const ValueKey(
-                              'admin-customer-password-field',
-                            ),
-                            controller: password,
-                            obscureText: obscurePassword,
-                            textDirection: TextDirection.ltr,
-                            textInputAction: TextInputAction.next,
-                            decoration: InputDecoration(
-                              labelText:
-                                  isNew ? 'كلمة المرور' : 'كلمة مرور جديدة',
-                              helperText: isNew
-                                  ? 'اختياري. إن تُركت فارغة يولّد الخادم كلمة مرور مؤقتة. لا تُوضع في الرابط.'
-                                  : 'اتركه فارغاً للإبقاء على كلمة المرور الحالية. تُحفظ في الخادم فقط، وليس في الرابط.',
-                              helperMaxLines: 3,
-                              prefixIcon: const Icon(Icons.lock_outline),
-                              suffixIcon: IconButton(
-                                onPressed: () => setDialogState(
-                                  () => obscurePassword = !obscurePassword,
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextField(
+                                    key: const ValueKey(
+                                      'admin-customer-area-field',
+                                    ),
+                                    controller: area,
+                                    focusNode: areaFocus,
+                                    textInputAction: TextInputAction.next,
+                                    decoration: const InputDecoration(
+                                      labelText: 'المنطقة',
+                                    ),
+                                  ),
                                 ),
-                                icon: Icon(
-                                  obscurePassword
-                                      ? Icons.visibility_outlined
-                                      : Icons.visibility_off_outlined,
-                                ),
-                              ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 14),
-                          TextField(
-                            key: const ValueKey(
-                              'admin-customer-password-confirm-field',
-                            ),
-                            controller: passwordConfirm,
-                            obscureText: obscurePassword,
-                            textDirection: TextDirection.ltr,
-                            decoration: const InputDecoration(
-                              labelText: 'تأكيد كلمة المرور',
-                              helperText: 'مطلوب فقط عند إدخال كلمة مرور.',
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      _CustomerFormSection(
-                        key: const ValueKey(
-                          'admin-customer-section-discount',
+                          ],
                         ),
-                        title: 'الخصم والحالة',
-                        icon: Icons.tune_outlined,
-                        children: [
-                          TextField(
-                            key: const ValueKey(
-                              'admin-customer-discount-field',
-                            ),
-                            controller: discount,
-                            keyboardType:
-                                const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            textDirection: TextDirection.ltr,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                RegExp(r'[0-9٠-٩۰-۹.,٫،]'),
+                        const SizedBox(height: 14),
+                        _CustomerFormSection(
+                          key: const ValueKey(
+                            'admin-customer-section-login',
+                          ),
+                          title: 'بيانات الدخول',
+                          icon: Icons.lock_outline,
+                          children: [
+                            KeyedSubtree(
+                              key: usernameKey,
+                              child: TextField(
+                                key: const ValueKey(
+                                  'admin-customer-username-field',
+                                ),
+                                controller: username,
+                                focusNode: usernameFocus,
+                                enabled: isNew,
+                                textDirection: TextDirection.ltr,
+                                textInputAction: TextInputAction.next,
+                                onChanged: (_) => setDialogState(
+                                  () => clearFieldError(
+                                    _CustomerFormField.username,
+                                  ),
+                                ),
+                                decoration: InputDecoration(
+                                  labelText: 'اسم المستخدم',
+                                  helperText: isNew
+                                      ? 'اختياري. إن تُرك فارغاً تُستخدم أرقام الهاتف كاسم مستخدم. الدخول يقبل رقم الهاتف.'
+                                      : 'لا يمكن تغيير اسم المستخدم بعد الإنشاء',
+                                  helperMaxLines: 3,
+                                  errorText: fieldErrors[
+                                      _CustomerFormField.username],
+                                ),
                               ),
-                            ],
-                            decoration: const InputDecoration(
-                              labelText: 'خصم العميل',
-                              helperText:
-                                  'يُطبّق تلقائياً على السعر الأساسي. اكتب 0 لعدم تطبيق خصم.',
-                              helperMaxLines: 2,
-                              suffixText: '%',
-                              prefixIcon: Icon(Icons.percent),
                             ),
-                          ),
-                          const SizedBox(height: 14),
-                          DropdownButtonFormField<String>(
-                            key: const ValueKey(
-                              'admin-customer-status-field',
+                            const SizedBox(height: 14),
+                            KeyedSubtree(
+                              key: passwordKey,
+                              child: TextField(
+                                key: const ValueKey(
+                                  'admin-customer-password-field',
+                                ),
+                                controller: password,
+                                focusNode: passwordFocus,
+                                obscureText: obscurePassword,
+                                textDirection: TextDirection.ltr,
+                                textInputAction: TextInputAction.next,
+                                onChanged: (_) => setDialogState(() {
+                                  clearFieldError(
+                                    _CustomerFormField.password,
+                                  );
+                                  clearFieldError(
+                                    _CustomerFormField.passwordConfirm,
+                                  );
+                                }),
+                                decoration: InputDecoration(
+                                  labelText: isNew
+                                      ? 'كلمة المرور'
+                                      : 'كلمة مرور جديدة',
+                                  helperText: isNew
+                                      ? 'اختياري. إن تُركت فارغة يولّد الخادم كلمة مرور مؤقتة. لا تُوضع في الرابط.'
+                                      : 'اتركه فارغاً للإبقاء على كلمة المرور الحالية. تُحفظ في الخادم فقط، وليس في الرابط.',
+                                  helperMaxLines: 3,
+                                  prefixIcon:
+                                      const Icon(Icons.lock_outline),
+                                  suffixIcon: IconButton(
+                                    onPressed: () => setDialogState(
+                                      () =>
+                                          obscurePassword = !obscurePassword,
+                                    ),
+                                    icon: Icon(
+                                      obscurePassword
+                                          ? Icons.visibility_outlined
+                                          : Icons.visibility_off_outlined,
+                                    ),
+                                  ),
+                                  errorText: fieldErrors[
+                                      _CustomerFormField.password],
+                                ),
+                              ),
                             ),
-                            initialValue: statusValue,
-                            decoration:
-                                const InputDecoration(labelText: 'الحالة'),
-                            items: const [
-                              DropdownMenuItem(
-                                  value: 'active', child: Text('نشط')),
-                              DropdownMenuItem(
-                                  value: 'suspended', child: Text('موقوف')),
-                              DropdownMenuItem(
-                                  value: 'archived', child: Text('مؤرشف')),
-                            ],
-                            onChanged: (value) => setDialogState(
-                              () => statusValue = value ?? 'active',
+                            const SizedBox(height: 14),
+                            KeyedSubtree(
+                              key: passwordConfirmKey,
+                              child: TextField(
+                                key: const ValueKey(
+                                  'admin-customer-password-confirm-field',
+                                ),
+                                controller: passwordConfirm,
+                                focusNode: passwordConfirmFocus,
+                                obscureText: obscurePassword,
+                                textDirection: TextDirection.ltr,
+                                onChanged: (_) => setDialogState(() {
+                                  clearFieldError(
+                                    _CustomerFormField.password,
+                                  );
+                                  clearFieldError(
+                                    _CustomerFormField.passwordConfirm,
+                                  );
+                                }),
+                                decoration: InputDecoration(
+                                  labelText: 'تأكيد كلمة المرور',
+                                  helperText:
+                                      'مطلوب فقط عند إدخال كلمة مرور.',
+                                  errorText: fieldErrors[
+                                      _CustomerFormField.passwordConfirm],
+                                ),
+                              ),
                             ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        _CustomerFormSection(
+                          key: const ValueKey(
+                            'admin-customer-section-discount',
                           ),
-                        ],
-                      ),
-                      if (validationMessage != null) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          validationMessage!,
-                          key: const ValueKey('admin-customer-form-validation'),
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                            fontWeight: FontWeight.w700,
-                          ),
+                          title: 'الخصم والحالة',
+                          icon: Icons.tune_outlined,
+                          children: [
+                            KeyedSubtree(
+                              key: discountKey,
+                              child: TextField(
+                                key: const ValueKey(
+                                  'admin-customer-discount-field',
+                                ),
+                                controller: discount,
+                                focusNode: discountFocus,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                textDirection: TextDirection.ltr,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                    RegExp(r'[0-9٠-٩۰-۹.,٫،]'),
+                                  ),
+                                ],
+                                onChanged: (_) => setDialogState(
+                                  () => clearFieldError(
+                                    _CustomerFormField.discount,
+                                  ),
+                                ),
+                                decoration: InputDecoration(
+                                  labelText: 'خصم العميل',
+                                  helperText:
+                                      'يُطبّق تلقائياً على السعر الأساسي. اكتب 0 لعدم تطبيق خصم.',
+                                  helperMaxLines: 2,
+                                  suffixText: '%',
+                                  prefixIcon: const Icon(Icons.percent),
+                                  errorText: fieldErrors[
+                                      _CustomerFormField.discount],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            DropdownButtonFormField<String>(
+                              key: const ValueKey(
+                                'admin-customer-status-field',
+                              ),
+                              initialValue: statusValue,
+                              decoration: const InputDecoration(
+                                labelText: 'الحالة',
+                              ),
+                              items: const [
+                                DropdownMenuItem(
+                                  value: 'active',
+                                  child: Text('نشط'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'suspended',
+                                  child: Text('موقوف'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'archived',
+                                  child: Text('مؤرشف'),
+                                ),
+                              ],
+                              onChanged: (value) => setDialogState(
+                                () => statusValue = value ?? 'active',
+                              ),
+                            ),
+                          ],
                         ),
                       ],
-                    ],
+                    ),
                   ),
                 ),
-                ),
               ),
-            actions: [
-              TextButton(
+              actions: [
+                TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('إلغاء')),
+                  child: const Text('إلغاء'),
+                ),
                 FilledButton(
                   key: const ValueKey('admin-customer-form-save'),
                   onPressed: () {
@@ -819,37 +983,31 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
                             phone: phone.text,
                           )
                         : customer.username.trim();
-                    if (parsedDiscount == null) {
-                      setDialogState(() {
-                        validationMessage =
-                            'نسبة الخصم يجب أن تكون بين 0 و99.99 وبحد أقصى منزلتين عشريتين.';
-                      });
-                      return;
+                    final errors = <_CustomerFormField, String>{};
+
+                    if (business.text.trim().isEmpty) {
+                      errors[_CustomerFormField.business] =
+                          'أدخل اسم المتجر.';
                     }
-                    if (contact.text.trim().isEmpty ||
-                        business.text.trim().isEmpty ||
-                        phone.text.trim().isEmpty ||
-                        city.text.trim().isEmpty) {
-                      setDialogState(() {
-                        validationMessage =
-                            'أدخل الشخص المسؤول واسم المتجر والهاتف والمدينة.';
-                      });
-                      return;
+                    if (contact.text.trim().isEmpty) {
+                      errors[_CustomerFormField.contact] =
+                          'أدخل اسم الشخص المسؤول.';
+                    }
+                    if (phone.text.trim().isEmpty) {
+                      errors[_CustomerFormField.phone] =
+                          'أدخل رقم الهاتف (واتساب).';
+                    }
+                    if (city.text.trim().isEmpty) {
+                      errors[_CustomerFormField.city] = 'أدخل المدينة.';
                     }
                     if (nextUsername.isEmpty) {
-                      setDialogState(() {
-                        validationMessage = isNew
-                            ? 'أدخل اسم مستخدم، أو اتركه فارغاً لاستخدام أرقام الهاتف.'
-                            : 'أدخل اسم المستخدم.';
-                      });
-                      return;
-                    }
-                    if (isNew && !isValidCustomerUsername(nextUsername)) {
-                      setDialogState(() {
-                        validationMessage =
-                            'اسم المستخدم 3-64 حرفاً لاتينياً أو رقماً، ويمكن استخدام . _ -';
-                      });
-                      return;
+                      errors[_CustomerFormField.username] = isNew
+                          ? 'أدخل اسم مستخدم، أو اتركه فارغاً لاستخدام أرقام الهاتف.'
+                          : 'أدخل اسم المستخدم.';
+                    } else if (isNew &&
+                        !isValidCustomerUsername(nextUsername)) {
+                      errors[_CustomerFormField.username] =
+                          'اسم المستخدم 3-64 حرفاً لاتينياً أو رقماً، ويمكن استخدام . _ -';
                     }
                     if (nextPassword.isNotEmpty ||
                         passwordConfirm.text.trim().isNotEmpty) {
@@ -858,10 +1016,26 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
                         passwordConfirm.text,
                       );
                       if (passwordError != null) {
-                        setDialogState(() => validationMessage = passwordError);
-                        return;
+                        if (passwordError.contains('غير متطابقتين')) {
+                          errors[_CustomerFormField.passwordConfirm] =
+                              passwordError;
+                        } else {
+                          errors[_CustomerFormField.password] =
+                              passwordError;
+                        }
                       }
                     }
+                    if (parsedDiscount == null) {
+                      errors[_CustomerFormField.discount] =
+                          'نسبة الخصم يجب أن تكون بين 0 و99.99 وبحد أقصى منزلتين عشريتين.';
+                    }
+
+                    if (errors.isNotEmpty) {
+                      setDialogState(() => fieldErrors = errors);
+                      revealFirstInvalidField(errors);
+                      return;
+                    }
+
                     Navigator.pop(
                       context,
                       _CustomerFormResult(
@@ -876,7 +1050,7 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
                           address: customer.address,
                           creditLimit: customer.creditLimit,
                           outstandingBalance: customer.outstandingBalance,
-                          discountPercent: parsedDiscount,
+                          discountPercent: parsedDiscount!,
                           accountStatus: statusValue,
                         ),
                         password: nextPassword,
@@ -1122,6 +1296,30 @@ class _CustomerFormResult {
 
   final BusinessCustomer customer;
   final String password;
+}
+
+enum _CustomerFormField {
+  business,
+  contact,
+  phone,
+  city,
+  username,
+  password,
+  passwordConfirm,
+  discount,
+}
+
+void _revealInvalidCustomerFormField(GlobalKey key, FocusNode? focus) {
+  final target = key.currentContext;
+  if (target != null && target.mounted) {
+    Scrollable.ensureVisible(
+      target,
+      alignment: 0.12,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeInOut,
+    );
+  }
+  focus?.requestFocus();
 }
 
 class _CustomerFormSection extends StatelessWidget {

@@ -150,7 +150,7 @@ class _AdminNav extends ConsumerWidget {
             child: Row(children: [
               ShopBrandLogo(
                 logoUrl: branding.logoUrl,
-                size: 40,
+                size: 52,
               ),
               const SizedBox(width: 10),
               Expanded(

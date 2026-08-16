@@ -138,10 +138,15 @@ class OfferBannerCarousel extends StatefulWidget {
     super.key,
     required this.banners,
     this.preview = false,
+    this.compact,
   });
 
   final List<HomeBannerSlide> banners;
   final bool preview;
+
+  /// When set, forces the phone or wide-web banner proportions used on
+  /// customer home. Otherwise the layout follows the available width.
+  final bool? compact;
 
   @override
   State<OfferBannerCarousel> createState() => _OfferBannerCarouselState();
@@ -223,11 +228,12 @@ class _OfferBannerCarouselState extends State<OfferBannerCarousel> {
       LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth;
-          final height = width >= 900
-              ? 280.0
-              : width >= 640
-                  ? 250.0
-                  : 240.0;
+          final compact = widget.compact ?? width < 640;
+          final height = compact
+              ? 240.0
+              : width >= 900
+                  ? 280.0
+                  : 250.0;
           return SizedBox(
             height: height,
             child: PageView.builder(
@@ -240,6 +246,7 @@ class _OfferBannerCarouselState extends State<OfferBannerCarousel> {
               itemBuilder: (context, index) => _OfferBannerCard(
                 banner: banners[index],
                 preview: widget.preview,
+                compact: compact,
               ),
             ),
           );
@@ -277,10 +284,12 @@ class _OfferBannerCard extends StatelessWidget {
   const _OfferBannerCard({
     required this.banner,
     required this.preview,
+    required this.compact,
   });
 
   final HomeBannerSlide banner;
   final bool preview;
+  final bool compact;
 
   Future<void> _openDestination(BuildContext context) async {
     if (preview) return;
@@ -383,11 +392,13 @@ class _OfferBannerCard extends StatelessWidget {
               Align(
                 alignment: AlignmentDirectional.centerStart,
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 430),
+                  constraints: BoxConstraints(maxWidth: compact ? 280 : 520),
                   child: Padding(
-                    padding: EdgeInsets.all(
-                        MediaQuery.sizeOf(context).width < 420 ? 16 : 22),
-                    child: Column(
+                    padding: EdgeInsets.all(compact ? 16 : 22),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -436,7 +447,9 @@ class _OfferBannerCard extends StatelessWidget {
                             icon: const Icon(Icons.arrow_back),
                             label: Text(banner.cta),
                           ),
-                        ]),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),

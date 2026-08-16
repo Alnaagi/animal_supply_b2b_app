@@ -769,7 +769,7 @@ void main() {
   );
 
   testWidgets(
-    'workflow settings hide a legal next-status button without inventing a skip',
+    'workflow settings hide cancel without removing the forward next button',
     (tester) async {
       const surfaceSize = Size(390, 844);
       await tester.binding.setSurfaceSize(surfaceSize);
@@ -789,6 +789,10 @@ void main() {
         find.byKey(const ValueKey('admin-orders-filter-settings')),
       );
       await tester.pumpAndSettle();
+      expect(
+        find.textContaining('إخفاء خطوة = تخطيها في زر الخطوة التالية'),
+        findsOneWidget,
+      );
       await tester.ensureVisible(
         find.byKey(const ValueKey('admin-orders-workflow-pref-cancelled')),
       );
@@ -821,6 +825,148 @@ void main() {
           const ValueKey('admin-order-next-status-invoice-order-delivered'),
         ),
         findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'hiding preparing shows the next enabled forward status from confirmed',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final orders = _MutableOrdersRepository([
+        _invoiceOrder(status: OrderStatus.confirmed),
+      ]);
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-filter-settings')),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('admin-orders-workflow-pref-preparing')),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-workflow-pref-preparing')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('حفظ الإعدادات'));
+      await tester.pumpAndSettle();
+
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-preparing'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-ready'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-cancelled'),
+        ),
+        findsOneWidget,
+      );
+
+      await _tapVisible(
+        tester,
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-ready'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(orders.lastTransition, OrderStatus.ready);
+    },
+  );
+
+  testWidgets(
+    'hiding multiple forward steps skips to the next enabled status',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final orders = _MutableOrdersRepository([
+        _invoiceOrder(status: OrderStatus.confirmed),
+      ]);
+      await _pumpOrdersScreen(
+        tester,
+        orders: orders,
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-filter-settings')),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('admin-orders-workflow-pref-preparing')),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-workflow-pref-preparing')),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('admin-orders-workflow-pref-ready')),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-workflow-pref-ready')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('حفظ الإعدادات'));
+      await tester.pumpAndSettle();
+
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-preparing'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-ready'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-delivered'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-next-status-invoice-order-cancelled'),
+        ),
+        findsOneWidget,
       );
     },
   );
@@ -946,6 +1092,21 @@ void main() {
       find.byKey(const ValueKey('admin-order-edit-pricing-invoice-order')),
     );
     await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('admin-order-pricing-products-section')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('admin-order-pricing-fees-section')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('admin-order-pricing-summary-section')),
+      findsOneWidget,
+    );
+    expect(find.text('المنتجات'), findsOneWidget);
+    expect(find.text('الرسوم والخصم'), findsOneWidget);
 
     await tester.enterText(
       find.byKey(const ValueKey('admin-order-price-field-invoice-order-0')),
@@ -1427,6 +1588,7 @@ Order _invoiceOrder({
   String adminNote = 'تمت مراجعة بيانات التسليم.',
   String deliveryAddress = 'طرابلس، طريق المطار',
   bool includeHistory = true,
+  OrderStatus status = OrderStatus.pending,
 }) {
   const currentProduct = Product(
     id: 'cat-001',
@@ -1460,7 +1622,7 @@ Order _invoiceOrder({
     businessName: 'متجر الاختبار',
     contactPerson: 'أحمد الفيتوري',
     contactPhone: '0912345678',
-    status: OrderStatus.pending,
+    status: status,
     items: [orderItem],
     createdAt: DateTime.utc(2026, 8, 14, 12),
     deliveryAddress: deliveryAddress,

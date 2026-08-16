@@ -40,17 +40,28 @@ class CategoryIconView extends StatelessWidget {
   Widget build(BuildContext context) {
     final url = iconUrl?.trim() ?? '';
     if (url.isNotEmpty) {
-      return ClipOval(
-        child: Image.network(
-          url,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => _glyph(),
+      return SizedBox(
+        width: size,
+        height: size,
+        child: ClipOval(
+          child: Image.network(
+            url,
+            width: size,
+            height: size,
+            fit: BoxFit.contain,
+            alignment: Alignment.center,
+            filterQuality: FilterQuality.medium,
+            webHtmlElementStrategy: WebHtmlElementStrategy.never,
+            errorBuilder: (context, error, stackTrace) => _glyph(),
+          ),
         ),
       );
     }
-    return _glyph();
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Center(child: _glyph()),
+    );
   }
 
   Widget _glyph() {

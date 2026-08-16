@@ -59,6 +59,10 @@ void main() {
     expect(find.text('أدوية'), findsOneWidget);
     expect(find.byType(CategoryIconView), findsWidgets);
     expect(find.byKey(const Key('customer-home-shop-logo')), findsOneWidget);
+    final logoSize =
+        tester.getSize(find.byKey(const Key('customer-home-shop-logo')));
+    expect(logoSize.width, greaterThanOrEqualTo(64));
+    expect(logoSize.height, greaterThanOrEqualTo(64));
     expect(find.text('علف دجاج جملة'), findsOneWidget);
     expect(find.text('25 كجم'), findsOneWidget);
     expect(find.text('عرض الكل'), findsNWidgets(2));
@@ -75,10 +79,10 @@ void main() {
     final feedTile = tester.getRect(
       find.byKey(const Key('customer-home-category-أعلاف')),
     );
-    expect(feedTile.width, greaterThanOrEqualTo(72));
-    expect(feedTile.width, lessThan(110));
-    expect(feedTile.height, greaterThanOrEqualTo(88));
-    expect(feedTile.height, lessThan(120));
+    expect(feedTile.width, greaterThanOrEqualTo(64));
+    expect(feedTile.width, lessThan(96));
+    expect(feedTile.height, greaterThanOrEqualTo(68));
+    expect(feedTile.height, lessThan(100));
 
     final nameStyle = tester.widget<Text>(find.text('علف دجاج جملة')).style;
     expect(nameStyle?.fontSize, greaterThanOrEqualTo(15));

@@ -259,30 +259,134 @@ void main() {
       find.byKey(const Key('admin-banner-client-preview-stage')),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('admin-banner-preview-mode')), findsOneWidget);
+    expect(find.text('حاسوب'), findsOneWidget);
+    expect(find.text('جوال'), findsOneWidget);
+    expect(
+      find.byKey(const Key('admin-banner-client-preview-desktop')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('admin-banner-client-preview-phone')), findsNothing);
+    expect(
+      find.byKey(const Key('admin-banner-preview-home-indicator')),
+      findsNothing,
+    );
     expect(find.text('معاينة عرض العملاء'), findsOneWidget);
-    expect(find.text('شريط العروض كما يظهر للعملاء على الجوال.'), findsOneWidget);
+    expect(
+      find.text('شريط العروض كما يظهر للعملاء على الحاسوب.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('شريط العروض كما يظهر للعملاء على الجوال.'),
+      findsNothing,
+    );
     expect(find.text('قائمة البانرات'), findsOneWidget);
     expect(
       find.textContaining('البانرات غير النشطة مستبعدة من هذا العرض'),
       findsNothing,
     );
+    final desktopStageSize = tester.getSize(
+      find.byKey(const Key('admin-banner-client-preview-stage')),
+    );
+    final previewCardWidth = tester
+        .getSize(find.byKey(const Key('admin-banner-client-preview')))
+        .width;
+    expect(desktopStageSize.width, greaterThan(500));
+    expect(desktopStageSize.width, closeTo(previewCardWidth - 28, 8));
+    final desktopCarouselSize = tester.getSize(
+      find.byKey(const Key('admin-banner-client-carousel')),
+    );
     expect(
       tester
-          .getSize(find.byKey(const Key('admin-banner-client-preview-stage')))
-          .width,
-      lessThanOrEqualTo(390),
+          .getSize(
+            find.descendant(
+              of: find.byKey(const Key('admin-banner-client-carousel')),
+              matching: find.byType(PageView),
+            ),
+          )
+          .height,
+      250,
     );
     final previewStage = tester.widget<DecoratedBox>(
       find.byKey(const Key('admin-banner-client-preview-stage')),
     );
     final stageDecoration = previewStage.decoration as BoxDecoration;
     expect(stageDecoration.color, AppTheme.sand);
-    expect(stageDecoration.borderRadius, BorderRadius.circular(22));
+    expect(stageDecoration.borderRadius, BorderRadius.circular(18));
     expect(stageDecoration.border, isNotNull);
+    expect((stageDecoration.border as Border).top.width, 1);
     expect(
       (stageDecoration.border as Border).top.color,
       isNot(const Color(0xff1c1c1e)),
+    );
+
+    await tester.tap(find.text('جوال'));
+    await tester.pump();
+    expect(
+      find.byKey(const Key('admin-banner-client-preview-phone')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('admin-banner-client-preview-desktop')),
+      findsNothing,
+    );
+    expect(
+      find.text('شريط العروض كما يظهر للعملاء على الجوال.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('شريط العروض كما يظهر للعملاء على الحاسوب.'),
+      findsNothing,
+    );
+    expect(find.text('معاينة عرض العملاء'), findsOneWidget);
+    expect(
+      find.byKey(const Key('admin-banner-preview-home-indicator')),
+      findsOneWidget,
+    );
+    final mobileStageSize = tester.getSize(
+      find.byKey(const Key('admin-banner-client-preview-stage')),
+    );
+    expect(mobileStageSize.width, lessThanOrEqualTo(360));
+    expect(mobileStageSize.width, lessThan(desktopStageSize.width));
+    final mobileCarouselSize = tester.getSize(
+      find.byKey(const Key('admin-banner-client-carousel')),
+    );
+    expect(mobileCarouselSize.width, lessThan(desktopCarouselSize.width));
+    expect(
+      tester
+          .getSize(
+            find.descendant(
+              of: find.byKey(const Key('admin-banner-client-carousel')),
+              matching: find.byType(PageView),
+            ),
+          )
+          .height,
+      240,
+    );
+    final mobileStage = tester.widget<DecoratedBox>(
+      find.byKey(const Key('admin-banner-client-preview-stage')),
+    );
+    final mobileDecoration = mobileStage.decoration as BoxDecoration;
+    expect(mobileDecoration.borderRadius, BorderRadius.circular(20));
+    expect((mobileDecoration.border as Border).top.width, 1);
+    expect(
+      (mobileDecoration.border as Border).top.color,
+      isNot(const Color(0xff1c1c1e)),
+    );
+    expect(
+      (mobileDecoration.border as Border).top.color,
+      isNot(Colors.black),
+    );
+
+    await tester.tap(find.text('حاسوب'));
+    await tester.pump();
+    expect(
+      find.byKey(const Key('admin-banner-client-preview-desktop')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('شريط العروض كما يظهر للعملاء على الحاسوب.'),
+      findsOneWidget,
     );
 
     await tester.tap(
@@ -355,6 +459,14 @@ void main() {
     expect(find.text('رابط الصورة HTTPS'), findsOneWidget);
     expect(find.text('أدخل رابطاً آمناً أو ارفع صورة'), findsOneWidget);
     expect(find.text('اختيار ورفع صورة'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('banner-image-upload-progress')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('banner-image-preview-empty')),
+      findsOneWidget,
+    );
     expect(
       find.textContaining('رفع الصور غير متاح في الوضع التجريبي'),
       findsOneWidget,

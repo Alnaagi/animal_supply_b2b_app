@@ -399,10 +399,19 @@ void main() {
       expect(confirmed.statusHistory.last.fromStatus, OrderStatus.pending);
       expect(confirmed.statusHistory.last.toStatus, OrderStatus.confirmed);
 
+      final skipped = await repository.transitionOrderStatus(
+        confirmed.id,
+        OrderStatus.ready,
+        adminNote: 'تخطي التجهيز',
+      );
+      expect(skipped.status, OrderStatus.ready);
+      expect(skipped.statusHistory.last.fromStatus, OrderStatus.confirmed);
+      expect(skipped.statusHistory.last.toStatus, OrderStatus.ready);
+
       expect(
         () => repository.transitionOrderStatus(
-          placed.id,
-          OrderStatus.delivered,
+          skipped.id,
+          OrderStatus.preparing,
         ),
         throwsA(
           isA<OrdersRepositoryException>().having(

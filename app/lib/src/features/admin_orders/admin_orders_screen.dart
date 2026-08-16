@@ -407,7 +407,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                       ),
                       const SizedBox(height: 4),
                       const Text(
-                        'فعّل أو أخفِ أزرار الخطوة التالية في بطاقة الطلب. لا يمكن إضافة حالة جديدة هنا؛ أي خطوة إضافية تحتاج تغييراً في الخادم.',
+                        'فعّل أو أخفِ خطوات الحالة في بطاقة الطلب. إخفاء خطوة = تخطيها في زر الخطوة التالية، وليس إخفاء الزر تماماً. لا يمكن إضافة حالة جديدة هنا؛ أي خطوة إضافية تحتاج تغييراً في الخادم.',
                         style: TextStyle(fontSize: 13, height: 1.45),
                       ),
                       const SizedBox(height: 8),

@@ -501,26 +501,36 @@ class CartPricingSummary {
   }
 }
 
-List<OrderStatus> allowedOrderTransitions(OrderStatus current) {
+/// Forward happy-path statuses after [current], excluding cancel.
+///
+/// Staff workflow prefs may skip intermediate steps; the server accepts the
+/// same forward jumps (plus cancel from any non-terminal status).
+List<OrderStatus> forwardOrderStatuses(OrderStatus current) {
   return switch (current) {
     OrderStatus.pending => const [
         OrderStatus.confirmed,
-        OrderStatus.cancelled,
+        OrderStatus.preparing,
+        OrderStatus.ready,
+        OrderStatus.delivered,
       ],
     OrderStatus.confirmed => const [
         OrderStatus.preparing,
-        OrderStatus.cancelled,
+        OrderStatus.ready,
+        OrderStatus.delivered,
       ],
     OrderStatus.preparing => const [
         OrderStatus.ready,
-        OrderStatus.cancelled,
-      ],
-    OrderStatus.ready => const [
         OrderStatus.delivered,
-        OrderStatus.cancelled,
       ],
+    OrderStatus.ready => const [OrderStatus.delivered],
     OrderStatus.delivered || OrderStatus.cancelled => const [],
   };
+}
+
+List<OrderStatus> allowedOrderTransitions(OrderStatus current) {
+  final forward = forwardOrderStatuses(current);
+  if (forward.isEmpty) return const [];
+  return [...forward, OrderStatus.cancelled];
 }
 
 Map<String, dynamic>? _mapOrNull(Object? value) {

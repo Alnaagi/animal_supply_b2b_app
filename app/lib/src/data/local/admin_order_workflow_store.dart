@@ -11,7 +11,8 @@ final adminOrderWorkflowStoreProvider =
 
 /// Local staff preference for which legal next-status buttons appear.
 ///
-/// This never invents statuses. Buttons are still intersected with
+/// Hiding a step skips it in the next-step button (walks forward to the next
+/// enabled status). Cancel stays optional. Targets are still intersected with
 /// [allowedOrderTransitions] before any Edge Function call.
 class AdminOrderWorkflowStore {
   AdminOrderWorkflowStore({
@@ -40,14 +41,28 @@ class AdminOrderWorkflowStore {
           if (enabled.contains(status) && allSteps.contains(status)) status,
       ];
 
+  /// Next enabled forward status (skipping unchecked steps), plus cancel when
+  /// enabled. Never invents statuses outside [allowedOrderTransitions].
   static List<OrderStatus> visibleNextStatuses({
     required OrderStatus current,
     required Set<OrderStatus> enabledSteps,
   }) {
-    return [
-      for (final status in allowedOrderTransitions(current))
-        if (enabledSteps.contains(status)) status,
-    ];
+    final legal = allowedOrderTransitions(current).toSet();
+    final result = <OrderStatus>[];
+
+    for (final status in forwardOrderStatuses(current)) {
+      if (!legal.contains(status)) continue;
+      if (!enabledSteps.contains(status)) continue;
+      result.add(status);
+      break;
+    }
+
+    if (legal.contains(OrderStatus.cancelled) &&
+        enabledSteps.contains(OrderStatus.cancelled)) {
+      result.add(OrderStatus.cancelled);
+    }
+
+    return result;
   }
 
   Future<SharedPreferences?> _store() async {

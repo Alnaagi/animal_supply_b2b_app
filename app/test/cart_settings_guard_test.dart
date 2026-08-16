@@ -167,6 +167,70 @@ void main() {
     );
     expect(submitButton.onPressed, isNull);
   });
+
+  testWidgets('checkout groups editable fields above order review',
+      (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (ref) => _CustomerAuthController(),
+          ),
+          cartControllerProvider.overrideWith(
+            (ref) => CartController(
+              ref,
+              ownerProfileId: 'profile-1',
+              initialItems: const [item],
+            ),
+          ),
+          appSettingsProvider.overrideWith(
+            (ref) async => const AppSettingsData(),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: CheckoutScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('بيانات التسليم'), findsOneWidget);
+    expect(find.text('مراجعة الطلب'), findsOneWidget);
+    expect(find.byKey(const Key('checkout-editable-fields')), findsOneWidget);
+    expect(find.byKey(const Key('checkout-delivery-address')), findsOneWidget);
+    expect(find.byKey(const Key('checkout-customer-note')), findsOneWidget);
+    expect(find.text('علف اختبار'), findsOneWidget);
+
+    final editableY = tester
+        .getTopLeft(find.byKey(const Key('checkout-editable-fields')))
+        .dy;
+    final addressY = tester
+        .getTopLeft(find.byKey(const Key('checkout-delivery-address')))
+        .dy;
+    final noteY =
+        tester.getTopLeft(find.byKey(const Key('checkout-customer-note'))).dy;
+    final productY = tester.getTopLeft(find.text('علف اختبار')).dy;
+
+    expect(editableY, lessThan(productY));
+    expect(addressY, lessThan(noteY));
+    expect(noteY, lessThan(productY));
+
+    await tester.drag(find.byType(ListView), const Offset(0, -1200));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('checkout-totals-card')), findsOneWidget);
+    expect(find.text('الإجمالي التقديري'), findsOneWidget);
+    expect(find.text('إرسال الطلب'), findsOneWidget);
+
+    final totalsY =
+        tester.getTopLeft(find.byKey(const Key('checkout-totals-card'))).dy;
+    final submitY =
+        tester.getTopLeft(find.byKey(const Key('checkout-submit-button'))).dy;
+    expect(totalsY, lessThan(submitY));
+  });
 }
 
 class _CustomerAuthController extends AuthController {

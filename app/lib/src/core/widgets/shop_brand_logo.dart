@@ -25,43 +25,38 @@ class ShopBrandLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final url = logoUrl?.trim() ?? '';
-    final fallback = Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: backgroundColor,
-      ),
-      child: Icon(
-        Icons.pets,
-        color: fallbackIconColor,
-        size: size * 0.56,
-      ),
+    final inset = (size * 0.12).clamp(4.0, 10.0);
+    final fallback = Icon(
+      Icons.pets,
+      color: fallbackIconColor,
+      size: size * 0.56,
     );
     final bytes = logoBytes;
-    final Widget image;
+    final Widget mark;
     if (bytes != null && bytes.isNotEmpty) {
-      image = ClipOval(
-        child: Image.memory(
+      mark = _fittedImage(
+        Image.memory(
           bytes,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
+          fit: BoxFit.contain,
+          alignment: Alignment.center,
+          filterQuality: FilterQuality.medium,
           excludeFromSemantics: true,
           errorBuilder: (context, error, stackTrace) => fallback,
         ),
       );
     } else if (url.isEmpty) {
-      image = fallback;
+      mark = fallback;
     } else {
-      image = ClipOval(
-        child: Image.network(
+      mark = _fittedImage(
+        Image.network(
           url,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
+          fit: BoxFit.contain,
+          alignment: Alignment.center,
+          filterQuality: FilterQuality.medium,
           excludeFromSemantics: true,
-          webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+          // Canvas paint keeps width/height; HTML <img> can collapse to the
+          // file's intrinsic size (a 16px scribble inside a grey chip).
+          webHtmlElementStrategy: WebHtmlElementStrategy.never,
           loadingBuilder: (context, child, loadingProgress) =>
               loadingProgress == null ? child : fallback,
           errorBuilder: (context, error, stackTrace) => fallback,
@@ -71,7 +66,36 @@ class ShopBrandLogo extends StatelessWidget {
     return Semantics(
       image: true,
       label: semanticLabel,
-      child: ExcludeSemantics(child: image),
+      child: ExcludeSemantics(
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: backgroundColor,
+            ),
+            child: ClipOval(
+              child: Padding(
+                padding: EdgeInsets.all(inset),
+                child: FittedBox(
+                  fit: BoxFit.contain,
+                  alignment: Alignment.center,
+                  child: mark,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _fittedImage(Image image) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: image,
     );
   }
 }

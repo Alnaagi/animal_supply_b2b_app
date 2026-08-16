@@ -147,11 +147,147 @@ void main() {
 
     expect(find.text('تعديل عميل'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('admin-customer-form-validation')),
-      findsOneWidget,
+      tester
+          .widget<TextField>(
+            find.byKey(
+              const ValueKey('admin-customer-password-confirm-field'),
+            ),
+          )
+          .decoration
+          ?.errorText,
+      contains('غير متطابقتين'),
     );
-    expect(find.textContaining('غير متطابقتين'), findsOneWidget);
   });
+
+  testWidgets(
+    'invalid username shows error on the field and keeps the create dialog open',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(720, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            adminRepositoryProvider.overrideWithValue(
+              AdminRepository(demoCustomers: const []),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Directionality(
+              textDirection: TextDirection.rtl,
+              child: AdminCustomersScreen(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'إنشاء عميل'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-customer-business-field')),
+        'متجر محمد',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-customer-contact-field')),
+        'محمد علي',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-customer-phone-field')),
+        '+218910000088',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-customer-username-field')),
+        'محمد',
+      );
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('admin-customer-form-save')),
+      );
+      await tester.tap(find.byKey(const ValueKey('admin-customer-form-save')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('إنشاء عميل'), findsWidgets);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('admin-customer-username-field')),
+            )
+            .decoration
+            ?.errorText,
+        contains('لاتينياً'),
+      );
+      expect(
+        find.byKey(const ValueKey('admin-customer-form-validation')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'empty required fields show errors under each box',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(720, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            adminRepositoryProvider.overrideWithValue(
+              AdminRepository(demoCustomers: const []),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Directionality(
+              textDirection: TextDirection.rtl,
+              child: AdminCustomersScreen(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'إنشاء عميل'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-customer-city-field')),
+        '',
+      );
+      await tester.tap(find.byKey(const ValueKey('admin-customer-form-save')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('إنشاء عميل'), findsWidgets);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('admin-customer-business-field')),
+            )
+            .decoration
+            ?.errorText,
+        'أدخل اسم المتجر.',
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('admin-customer-contact-field')),
+            )
+            .decoration
+            ?.errorText,
+        'أدخل اسم الشخص المسؤول.',
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('admin-customer-phone-field')),
+            )
+            .decoration
+            ?.errorText,
+        'أدخل رقم الهاتف (واتساب).',
+      );
+    },
+  );
 
   testWidgets('short matching password test is accepted on edit', (tester) async {
     await tester.binding.setSurfaceSize(const Size(720, 1100));

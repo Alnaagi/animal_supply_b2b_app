@@ -170,10 +170,25 @@ void main() {
     });
   });
 
-  test('allowed status transitions match the server workflow', () {
+  test('allowed status transitions allow forward skips and cancel', () {
     expect(
       allowedOrderTransitions(OrderStatus.pending),
-      [OrderStatus.confirmed, OrderStatus.cancelled],
+      [
+        OrderStatus.confirmed,
+        OrderStatus.preparing,
+        OrderStatus.ready,
+        OrderStatus.delivered,
+        OrderStatus.cancelled,
+      ],
+    );
+    expect(
+      allowedOrderTransitions(OrderStatus.confirmed),
+      [
+        OrderStatus.preparing,
+        OrderStatus.ready,
+        OrderStatus.delivered,
+        OrderStatus.cancelled,
+      ],
     );
     expect(
       allowedOrderTransitions(OrderStatus.ready),
@@ -181,6 +196,10 @@ void main() {
     );
     expect(allowedOrderTransitions(OrderStatus.delivered), isEmpty);
     expect(allowedOrderTransitions(OrderStatus.cancelled), isEmpty);
+    expect(
+      forwardOrderStatuses(OrderStatus.preparing),
+      [OrderStatus.ready, OrderStatus.delivered],
+    );
   });
 }
 

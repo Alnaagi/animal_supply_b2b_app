@@ -276,15 +276,15 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
         count: categories.length,
         onTap: () => context.go('/catalog'),
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: 6),
       SizedBox(
-        height: 108,
+        height: 88,
         child: ListView.separated(
           key: const Key('customer-home-categories'),
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsetsDirectional.only(end: 36),
           itemCount: categories.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
           itemBuilder: (context, index) {
             final category = categories[index];
             return _HomeCategoryTile(
@@ -296,7 +296,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
           },
         ),
       ),
-      const SizedBox(height: 18),
+      const SizedBox(height: 14),
       _SectionHeader(
         title: 'أحدث المنتجات',
         count: latest.length,
@@ -489,7 +489,7 @@ class _HomeGreetingHeader extends ConsumerWidget {
         ShopBrandLogo(
           key: const Key('customer-home-shop-logo'),
           logoUrl: branding.logoUrl,
-          size: 48,
+          size: 64,
           backgroundColor: const Color(0xffe3f3eb),
           fallbackIconColor: AppTheme.green,
         ),
@@ -666,29 +666,29 @@ class _HomeCategoryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = _palettes[category.name.hashCode.abs() % _palettes.length];
     return SizedBox(
-      width: 84,
+      width: 70,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           key: Key('customer-home-category-${category.name}'),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
           onTap: onTap,
           child: Column(
             children: [
               Container(
-                width: 76,
-                height: 68,
+                width: 62,
+                height: 54,
                 decoration: BoxDecoration(
                   color: palette.$1,
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(
                     color: AppTheme.green.withValues(alpha: .10),
                   ),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withValues(alpha: .05),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
                     ),
                   ],
                 ),
@@ -701,7 +701,7 @@ class _HomeCategoryTile extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text(
                 category.name,
                 maxLines: 1,
@@ -709,7 +709,8 @@ class _HomeCategoryTile extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontWeight: FontWeight.w800,
-                  fontSize: 12,
+                  fontSize: 11,
+                  height: 1.15,
                   color: AppTheme.darkGreen,
                 ),
               ),

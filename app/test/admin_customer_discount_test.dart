@@ -73,10 +73,9 @@ void main() {
       await tester.pump();
 
       expect(
-        find.byKey(const ValueKey('admin-customer-form-validation')),
-        findsOneWidget,
+        tester.widget<TextField>(discountField).decoration?.errorText,
+        contains('0 و99.99'),
       );
-      expect(find.textContaining('0 و99.99'), findsOneWidget);
       expect(find.text('تعديل عميل'), findsOneWidget);
 
       await tester.enterText(discountField, '١٢٫٥');

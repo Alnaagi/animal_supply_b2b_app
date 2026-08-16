@@ -8,10 +8,10 @@ the app shell, while missing static files return `404` instead of HTML.
 ## Current web deployment
 
 - URL: `https://animal-supply-b2b.alnaagi-ai.workers.dev`
-- Cloudflare version: `2fbc1bf4-68d2-4460-9179-49f4615ab856`
+- Cloudflare version: `e630c843-2e68-49fc-8c0a-14ceda0a6f1b`
 - Flutter version: `1.0.4+5`
 - Offline shell version:
-  `web_shell_manifest.2d99c7aa89ce4b49.json`
+  `web_shell_manifest.250ab11d409d27d8.json`
 - Runtime mode: `APP_ENV=production` against the linked Supabase project
 - Firebase/web push: not configured (OS tray uses Service Worker `showNotification` while the tab/PWA can run; no Firebase keys were added)
 - Search indexing: blocked intentionally with
@@ -26,11 +26,11 @@ Firebase public keys remain empty, so push delivery stays labelled
 client-approved catalog are accepted. Record the new version ID after every
 release.
 
-The August 16, 2026 Worker version `2fbc1bf4-68d2-4460-9179-49f4615ab856`
-ships browser/OS tray alerts via `registration.showNotification` (no Firebase
-keys), admin settings without the browser-alerts and app-version cards, and
-smoother pull-to-refresh. The hashed offline shell is
-`web_shell_manifest.2d99c7aa89ce4b49.json`.
+The August 16, 2026 Worker version `e630c843-2e68-49fc-8c0a-14ceda0a6f1b`
+improves checkout confirm-order hierarchy (grouped bordered text fields,
+separated order review, darker estimated-total card, stronger green CTA)
+and ships the hashed offline shell
+`web_shell_manifest.250ab11d409d27d8.json`.
 
 The earlier August 16, 2026 deployment was verified against the exact local
 `main.dart.js`, contains a 76-resource content-hashed offline shell, and
