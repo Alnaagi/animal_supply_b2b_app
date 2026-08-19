@@ -8,10 +8,11 @@ the app shell, while missing static files return `404` instead of HTML.
 ## Current web deployment
 
 - URL: `https://animal-supply-b2b.alnaagi-ai.workers.dev`
-- Cloudflare version: `5429e4ef-fc78-47ef-8543-46dee3774d5b`
+- Cloudflare version: `6e4198f0-8979-4577-8011-45c5408be2e1`
+- Git SHA: `69d81129937672cc3e62763146adde16d3c495b4` (`release/production-readiness-2026-08`)
 - Flutter version: `1.0.4+5`
 - Offline shell version:
-  `web_shell_manifest.5487e61226f81784.json`
+  `web_shell_manifest.4018ff43cc4d6d6e.json`
 - Runtime mode: `APP_ENV=production` against the linked Supabase project
 - Firebase/web push: not configured (OS tray uses Service Worker `showNotification` while the tab/PWA can run; no Firebase keys were added)
 - Search indexing: blocked intentionally with
@@ -248,3 +249,5 @@ The 2026-08-19 18:39 EET (+0200) Worker version `10f828fb-212f-47e0-a718-07c53d5
 The 2026-08-19 19:16 EET (+0200) Worker version `34c006ae-ac57-4843-9606-7125cc7ebe61` deploys public-order-reference hardening: server-side random `AS-XXXXXXX` order references (with collision retry and secure backfill) plus admin reference normalization support (`AS-...`, lowercase, or prefix-less).
 
 The 2026-08-19 20:07 EET (+0200) Worker version `ec5ad2fc-7c26-4d53-8c86-cc60a08dc6fa` deploys the focused Admin Banners UX redesign: compact management toolbar, modal store preview with mobile/desktop toggle, reorder-first compact cards with human-readable destinations, optimistic active toggle with rollback/undo, duplicate-banner flow, and live editor preview.
+
+The 2026-08-19 21:45 EET (+0200) Worker version `6e4198f0-8979-4577-8011-45c5408be2e1` on branch `release/production-readiness-2026-08` (`69d8112`) ships production-readiness reconciliation: Supabase migrations for product discount constraints, customer device binding via `device_tokens.installation_id_hash`, random `AS-XXXXXXX` order references with legacy `AS-YYYYMMDD-NNNNNN` lookup preserved, admin password policy enforcement in Edge Functions, and offline shell `web_shell_manifest.4018ff43cc4d6d6e.json`.

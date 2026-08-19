@@ -1,9 +1,11 @@
 -- Add NOT NULL constraint and check to products.discount_percent (column already exists as integer nullable).
 -- Existing rows default to 0; new rows default to 0; range 0–100.
 
+set session_replication_role = replica;
 update public.products
   set discount_percent = 0
   where discount_percent is null;
+set session_replication_role = default;
 
 alter table public.products
   alter column discount_percent set default 0,
