@@ -252,9 +252,11 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(find.text('إدارة البانرات'), findsOneWidget);
-    expect(find.byKey(const Key('admin-banner-client-preview')), findsOneWidget);
+    expect(
+        find.byKey(const Key('admin-banner-client-preview')), findsOneWidget);
     expect(find.byType(OfferBannerCarousel), findsOneWidget);
-    expect(find.byKey(const Key('admin-banner-client-carousel')), findsOneWidget);
+    expect(
+        find.byKey(const Key('admin-banner-client-carousel')), findsOneWidget);
     expect(
       find.byKey(const Key('admin-banner-client-preview-stage')),
       findsOneWidget,
@@ -266,7 +268,8 @@ void main() {
       find.byKey(const Key('admin-banner-client-preview-desktop')),
       findsOneWidget,
     );
-    expect(find.byKey(const Key('admin-banner-client-preview-phone')), findsNothing);
+    expect(find.byKey(const Key('admin-banner-client-preview-phone')),
+        findsNothing);
     expect(
       find.byKey(const Key('admin-banner-preview-home-indicator')),
       findsNothing,
@@ -407,7 +410,8 @@ void main() {
     expect(find.text('تسوق الآن'), findsWidgets);
     expect(find.text('الترتيب'), findsOneWidget);
     expect(find.text('الترتيب 1'), findsNothing);
-    expect(find.byKey(const ValueKey('banner-sort-order-banner-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('banner-sort-order-banner-1')),
+        findsOneWidget);
     expect(find.byKey(const Key('banner-move-up-banner-1')), findsOneWidget);
     expect(find.text('تعديل'), findsOneWidget);
     expect(find.text('إيقاف'), findsOneWidget);

@@ -9,6 +9,7 @@ import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/category_icon_view.dart';
 import '../../core/widgets/empty_state.dart';
+import '../../core/utils/formatters.dart';
 import '../../core/widgets/price_text.dart';
 import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/product_info_chip.dart';
@@ -270,6 +271,14 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
       categories.add(fallback);
     }
     final latest = products.take(12).toList(growable: false);
+    final featured =
+        products.where((p) => p.isFeatured).take(12).toList(growable: false);
+    final discounted = products
+        .where((p) => (p.discountPercent ?? 0) > 0)
+        .take(12)
+        .toList(growable: false);
+    final topSelling =
+        products.where((p) => p.isTopSelling).take(12).toList(growable: false);
     return [
       _SectionHeader(
         title: 'التصنيفات',
@@ -297,24 +306,69 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
         ),
       ),
       const SizedBox(height: 14),
+      if (featured.isNotEmpty) ...[
+        _SectionHeader(
+          title: '⭐ منتجات مميزة',
+          count: featured.length,
+          onTap: () => context.go('/catalog'),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 350,
+          child: ListView.separated(
+            key: const Key('customer-home-featured'),
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsetsDirectional.only(end: 28),
+            itemCount: featured.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (context, index) =>
+                _HomeProductCard(product: featured[index]),
+          ),
+        ),
+        const SizedBox(height: 14),
+      ],
       _SectionHeader(
-        title: 'أحدث المنتجات',
-        count: latest.length,
+        title: topSelling.isEmpty ? 'الأكثر طلباً' : 'الأكثر طلباً',
+        count: topSelling.isEmpty ? latest.length : topSelling.length,
         onTap: () => context.go('/catalog'),
       ),
       const SizedBox(height: 8),
       SizedBox(
-        height: 338,
+        height: 350,
         child: ListView.separated(
           key: const Key('customer-home-products'),
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsetsDirectional.only(end: 28),
-          itemCount: latest.length,
+          itemCount: topSelling.isEmpty ? latest.length : topSelling.length,
           separatorBuilder: (_, __) => const SizedBox(width: 12),
-          itemBuilder: (context, index) =>
-              _HomeProductCard(product: latest[index]),
+          itemBuilder: (context, index) => _HomeProductCard(
+            product: (topSelling.isEmpty ? latest : topSelling)[index],
+          ),
         ),
       ),
+      if (discounted.isNotEmpty) ...[
+        const SizedBox(height: 14),
+        _SectionHeader(
+          title: '🔥 العروض',
+          count: discounted.length,
+          onTap: () => context.go('/offers'),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 350,
+          child: ListView.separated(
+            key: const Key('customer-home-discounted'),
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsetsDirectional.only(end: 28),
+            itemCount: discounted.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (context, index) => _HomeProductCard(
+              product: discounted[index],
+              showDiscountBadge: true,
+            ),
+          ),
+        ),
+      ],
     ];
   }
 
@@ -723,8 +777,10 @@ class _HomeCategoryTile extends StatelessWidget {
 }
 
 class _HomeProductCard extends ConsumerWidget {
-  const _HomeProductCard({required this.product});
+  const _HomeProductCard(
+      {required this.product, this.showDiscountBadge = false});
   final Product product;
+  final bool showDiscountBadge;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -750,14 +806,40 @@ class _HomeProductCard extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              height: 148,
+              height: 142,
               width: double.infinity,
-              child: ProductImagePlaceholder(
-                category: product.category,
-                productId: product.id,
-                imageUrl: product.imageUrl,
-                expand: true,
-                borderRadius: BorderRadius.zero,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ProductImagePlaceholder(
+                    category: product.category,
+                    productId: product.id,
+                    imageUrl: product.imageUrl,
+                    expand: true,
+                    borderRadius: BorderRadius.zero,
+                  ),
+                  if (showDiscountBadge && (product.discountPercent ?? 0) > 0)
+                    PositionedDirectional(
+                      top: 8,
+                      start: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xff00897b),
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                        child: Text(
+                          'خصم ${product.discountPercent}٪',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             Expanded(
@@ -813,7 +895,17 @@ class _HomeProductCard extends ConsumerWidget {
                       ),
                     ),
                     PriceText(price: product.price),
-                    if (product.retailUnitPrice != null)
+                    if (product.hasProductDiscount)
+                      Text(
+                        lyd(product.effectivePrice ?? product.basePrice),
+                        style: TextStyle(
+                          decoration: TextDecoration.lineThrough,
+                          color: muted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                    else if (product.retailUnitPrice != null)
                       Text(
                         'بيع الوحدة: '
                         '${product.retailUnitPrice!.toStringAsFixed(2)} د.ل',
@@ -823,7 +915,7 @@ class _HomeProductCard extends ConsumerWidget {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 2),
                     Row(
                       children: [
                         Expanded(
