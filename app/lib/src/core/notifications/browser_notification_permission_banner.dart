@@ -75,9 +75,8 @@ class _BrowserNotificationPermissionBannerState
     setState(() => _busy = true);
     try {
       await ref.read(newOrderAlertSoundProvider).prime();
-      final permission = await ref
-          .read(browserLocalNotificationsProvider)
-          .requestPermission();
+      final permission =
+          await ref.read(browserLocalNotificationsProvider).requestPermission();
       if (permission == BrowserNotificationPermission.denied) {
         await ref.read(browserNotificationPromptStoreProvider).dismiss();
       }
@@ -164,7 +163,8 @@ class _BrowserNotificationPermissionBannerState
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.notifications_active_outlined),
-                    label: Text(_loaded ? 'السماح بالإشعارات' : 'السماح بالإشعارات'),
+                    label: Text(
+                        _loaded ? 'السماح بالإشعارات' : 'السماح بالإشعارات'),
                   ),
                 TextButton(
                   onPressed: _busy ? null : _later,

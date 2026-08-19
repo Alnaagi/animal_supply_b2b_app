@@ -18,6 +18,7 @@ class BusinessCustomer {
     this.creditLimit = 0,
     this.outstandingBalance = 0,
     this.updatedAt,
+    this.lastActiveAt,
   });
 
   final String id;
@@ -35,6 +36,7 @@ class BusinessCustomer {
   final double creditLimit;
   final double outstandingBalance;
   final DateTime? updatedAt;
+  final DateTime? lastActiveAt;
 
   bool get active => accountStatus == 'active';
 
@@ -54,6 +56,7 @@ class BusinessCustomer {
     double? creditLimit,
     double? outstandingBalance,
     DateTime? updatedAt,
+    DateTime? lastActiveAt,
   }) {
     return BusinessCustomer(
       id: id ?? this.id,
@@ -71,6 +74,7 @@ class BusinessCustomer {
       creditLimit: creditLimit ?? this.creditLimit,
       outstandingBalance: outstandingBalance ?? this.outstandingBalance,
       updatedAt: updatedAt ?? this.updatedAt,
+      lastActiveAt: lastActiveAt ?? this.lastActiveAt,
     );
   }
 
@@ -95,8 +99,28 @@ class BusinessCustomer {
       creditLimit: ((row['credit_limit'] ?? 0) as num).toDouble(),
       outstandingBalance: ((row['outstanding_balance'] ?? 0) as num).toDouble(),
       updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? ''),
+      lastActiveAt: _customerLastActiveAt(row),
     );
   }
+}
+
+DateTime? _customerLastActiveAt(Map<String, dynamic> row) {
+  final profile = row['profiles'];
+  final candidates = <Object?>[
+    if (profile is Map) ...[
+      profile['last_active_at'],
+      profile['customer_last_active_at'],
+      profile['last_seen_at'],
+      profile['last_login_at'],
+    ],
+    row['last_active_at'],
+    row['last_seen_at'],
+  ];
+  for (final value in candidates) {
+    final parsed = DateTime.tryParse(value?.toString() ?? '');
+    if (parsed != null) return parsed;
+  }
+  return null;
 }
 
 double validatedCustomerDiscountPercent(Object? value) {

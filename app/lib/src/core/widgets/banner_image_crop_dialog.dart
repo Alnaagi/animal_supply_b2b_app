@@ -175,8 +175,7 @@ class _BannerImageCropDialogState extends State<BannerImageCropDialog> {
                             if (_viewportSize != next) {
                               _viewportSize = next;
                               WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted &&
-                                    _transform.value.isIdentity()) {
+                                if (mounted && _transform.value.isIdentity()) {
                                   _fitCover();
                                 }
                               });

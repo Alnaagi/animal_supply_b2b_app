@@ -13,12 +13,14 @@ class ApplicationDataResetResult {
   final int customerProfilesDeleted;
   final int customerAuthUsersDeleted;
 
-  factory ApplicationDataResetResult.fromFunctionResponse(Object? responseData) {
+  factory ApplicationDataResetResult.fromFunctionResponse(
+      Object? responseData) {
     final root = _stringKeyedMap(responseData);
     final nested = _stringKeyedMap(root['data']);
     final payload = nested.isNotEmpty ? nested : root;
     if (root['ok'] == false || payload['reset'] != true) {
-      throw const FormatException('Application reset response was not accepted.');
+      throw const FormatException(
+          'Application reset response was not accepted.');
     }
     return ApplicationDataResetResult(
       reset: true,

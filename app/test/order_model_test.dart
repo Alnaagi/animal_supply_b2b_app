@@ -8,7 +8,7 @@ void main() {
     test('uses immutable line snapshots and authoritative totals', () {
       final order = Order.fromMap({
         'id': 'order-1',
-        'order_number': 'ORD-2026-0001',
+        'order_number': 'AS-K7M4Q2P',
         'client_request_id': 'request-1',
         'customer_id': 'customer-1',
         'customer_profile_id': 'profile-1',
@@ -62,7 +62,7 @@ void main() {
         ],
       });
 
-      expect(order.displayNumber, 'ORD-2026-0001');
+      expect(order.displayNumber, 'AS-K7M4Q2P');
       expect(order.businessName, 'متجر طرابلس للحيوانات');
       expect(order.subtotal, 85);
       expect(order.deliveryFee, 5);
@@ -126,7 +126,8 @@ void main() {
       expect(order.customerProfileId, 'profile-2');
       expect(order.deliveryAddress, '');
       expect(order.customerDefaultAddress, 'طرابلس - السراج - الطريق الرئيسي');
-      expect(order.effectiveDeliveryAddress, 'طرابلس - السراج - الطريق الرئيسي');
+      expect(
+          order.effectiveDeliveryAddress, 'طرابلس - السراج - الطريق الرئيسي');
       expect(order.usesCustomDeliveryAddress, isFalse);
       expect(order.items.single.productName, 'منتج تاريخي');
       expect(order.items.single.productSku, 'OLD-1');
@@ -168,6 +169,18 @@ void main() {
       expect(summary.meetsMinimum(70), isTrue);
       expect(summary.amountNeededForMinimum(70), 0);
     });
+  });
+
+  test('public order references stay short and non-sequential', () {
+    const refs = ['AS-K7M4Q2P', 'AS-8H2LMNP', 'AS-Z4R7T9W'];
+    final format = RegExp(r'^AS-[A-HJ-NP-Z2-9]{7}$');
+    final sequentialLeak = RegExp(r'\d{4,}|20\d\d');
+    for (final ref in refs) {
+      expect(format.hasMatch(ref), isTrue);
+      expect(sequentialLeak.hasMatch(ref), isFalse);
+      expect(ref.length, 10);
+    }
+    expect(refs.toSet().length, refs.length);
   });
 
   test('allowed status transitions allow forward skips and cancel', () {

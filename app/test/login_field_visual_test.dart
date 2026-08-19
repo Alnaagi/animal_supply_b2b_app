@@ -64,7 +64,8 @@ void main() {
     expect(find.text('اسم المستخدم أو البريد'), findsNothing);
     expect(
       tester.getTopLeft(find.byKey(const Key('login-username-field'))).dy,
-      lessThan(tester.getTopLeft(find.byKey(const Key('login-password-field'))).dy),
+      lessThan(
+          tester.getTopLeft(find.byKey(const Key('login-password-field'))).dy),
     );
     expect(
       Directionality.of(

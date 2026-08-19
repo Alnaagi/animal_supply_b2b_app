@@ -8,10 +8,10 @@ the app shell, while missing static files return `404` instead of HTML.
 ## Current web deployment
 
 - URL: `https://animal-supply-b2b.alnaagi-ai.workers.dev`
-- Cloudflare version: `e630c843-2e68-49fc-8c0a-14ceda0a6f1b`
+- Cloudflare version: `5429e4ef-fc78-47ef-8543-46dee3774d5b`
 - Flutter version: `1.0.4+5`
 - Offline shell version:
-  `web_shell_manifest.250ab11d409d27d8.json`
+  `web_shell_manifest.5487e61226f81784.json`
 - Runtime mode: `APP_ENV=production` against the linked Supabase project
 - Firebase/web push: not configured (OS tray uses Service Worker `showNotification` while the tab/PWA can run; no Firebase keys were added)
 - Search indexing: blocked intentionally with
@@ -25,6 +25,73 @@ Firebase public keys remain empty, so push delivery stays labelled
 “not configured.” Keep `*.workers.dev` `noindex` until a custom domain and
 client-approved catalog are accepted. Record the new version ID after every
 release.
+
+The August 19, 2026 Worker version `5429e4ef-fc78-47ef-8543-46dee3774d5b`
+replaces the pull-to-refresh arrow morph with a frosted-glass HUD and ring
+spinner, fixes an admin category refresh regression test, and ships offline shell
+`web_shell_manifest.5487e61226f81784.json`.
+
+The August 19, 2026 Worker version `24d2e03a-81ad-4c7f-b0eb-71ded6c71512`
+redesigns admin إدارة المنتجات for routine ops without the full editor:
+operational product cards with quick price/discount/stock sheets, featured and
+visibility toggles with undo snackbars, filter shortcuts (العروض/المميزة/المخزون),
+multi-select bulk discount and price adjustments, and preserved search/filter/sort/
+pagination/full editor/archive flows; ships offline shell
+`web_shell_manifest.8189797522ebfce6.json`.
+
+The August 19, 2026 Worker version `687cf063-e633-4816-beaf-b89bc05e26a9`
+adds a persisted 3-mode catalog view toggle on the customer المنتجات screen
+(comfortable list, compact list, responsive grid), keeps RTL-safe controls near
+search/filter, and ships the hashed offline shell
+`web_shell_manifest.2e34f235359e1bd5.json`.
+
+The August 19, 2026 Worker version `0cf9be73-ab8c-4948-9178-0a5a4bbe964c`
+polishes the customer shell and home: a teal-gradient app bar with a white
+logo disc and translucent circular WhatsApp/logout buttons, a typographic
+greeting block with a full-width search pill, white category chips with
+pastel icon discs, product cards with a gradient للسلة button and stronger
+سعر الجملة hierarchy, and softer teal-tinted banner shadows, and ships the
+hashed offline shell `web_shell_manifest.cfc8f9652024d426.json`.
+
+The August 19, 2026 Worker version `78732df4-5eaa-4b7d-acdc-90c84ec5906e`
+redesigns the cart screen: white line-item cards with `BoxFit.contain`
+thumbnails, a grouped quantity stepper / line-total band, a dark-green
+ملخص الطلب summary card, and a prominent sticky متابعة تأكيد الطلب bar,
+and ships the hashed offline shell
+`web_shell_manifest.9e8f5ac0a33a5541.json`.
+
+The August 19, 2026 Worker version `5b086d04-12d0-4bb5-ae3d-3f29a61ac63c`
+redesigns product details with a larger `BoxFit.contain` hero, grouped info
+and wholesale-price cards (سعر الجملة in black), a sticky quantity / add-to-cart
+/ WhatsApp bar, and ships the hashed offline shell
+`web_shell_manifest.15357f8fa5633e6f.json`.
+
+The August 19, 2026 Worker version `35a03363-80ea-4087-b6ae-d18cd94e38e7`
+fits the customer-home first screen on a typical phone without vertical
+scroll, uses a peeking PageView for banners and أحدث المنتجات with
+`BoxFit.contain` photos, shows the product thumbnail in the add-to-cart
+quantity sheet, paints سعر الجملة in near-black, and ships the hashed
+offline shell `web_shell_manifest.15357f8fa5633e6f.json`.
+
+The August 18, 2026 Worker version `c739a279-b457-4170-aa47-aefac3ee4e57`
+labels the teal wholesale amount on customer-home and catalog product cards
+as سعر الجملة, keeps بيع الوحدة / بيع الوحدة المقترح under it, and ships
+the hashed offline shell `web_shell_manifest.4bfae53f8de847ef.json`.
+
+The August 18, 2026 Worker version `0472d2c2-4517-43a4-a654-b58ca9470c9c`
+enriches customer-home and catalog product cards with brand, pack size,
+availability, wholesale price, and suggested unit price, and ships the hashed
+offline shell `web_shell_manifest.deafb7277446f9a1.json`.
+
+The August 18, 2026 Worker version `9c706d6b-7592-4e52-b906-a8eef495fffd`
+redesigns customer-home latest-product cards (white bordered tiles, square
+cover photos, two-line Arabic titles, inset add button) and ships the hashed
+offline shell `web_shell_manifest.6a9de4233f925241.json`.
+
+The August 18, 2026 Worker version `6047f6c2-58f4-4dc5-9dd7-0a963171d179`
+stretches catalog list-card images to the full card height (RTL start
+edge, clipped to the card corners) and ships the hashed offline shell
+`web_shell_manifest.b7d0bec5a58a2408.json`.
 
 The August 16, 2026 Worker version `e630c843-2e68-49fc-8c0a-14ceda0a6f1b`
 improves checkout confirm-order hierarchy (grouped bordered text fields,
@@ -173,3 +240,11 @@ tied to the exact web origin.
 For iPhone/iPad distribution, the Cloudflare PWA can be shared immediately,
 but a native `.ipa` cannot be installed by arbitrary customers from this
 Worker or Google Drive. Follow `DEPLOYMENT_IOS.md`.
+
+The 2026-08-19 17:30:49 EET (+0200) Worker version `0376346c-b843-487a-a649-baf3400979f0` is a final explicit deploy after stabilization.
+
+The 2026-08-19 18:39 EET (+0200) Worker version `10f828fb-212f-47e0-a718-07c53d5c74be` deploys the focused order-completion integration: legacy `/order-success` URLs now redirect safely into `/orders`, checkout success navigates to `/orders?order=<id>&success=1` inside `CustomerShell`, and admin/customer invoice print + download now share a single canonical Arabic RTL PDF byte generator (`OrderInvoicePdf`) using `assets/fonts/NotoSansArabic-Variable.ttf`.
+
+The 2026-08-19 19:16 EET (+0200) Worker version `34c006ae-ac57-4843-9606-7125cc7ebe61` deploys public-order-reference hardening: server-side random `AS-XXXXXXX` order references (with collision retry and secure backfill) plus admin reference normalization support (`AS-...`, lowercase, or prefix-less).
+
+The 2026-08-19 20:07 EET (+0200) Worker version `ec5ad2fc-7c26-4d53-8c86-cc60a08dc6fa` deploys the focused Admin Banners UX redesign: compact management toolbar, modal store preview with mobile/desktop toggle, reorder-first compact cards with human-readable destinations, optimistic active toggle with rollback/undo, duplicate-banner flow, and live editor preview.

@@ -78,8 +78,8 @@ class _WhatsAppInviteDialogState extends State<WhatsAppInviteDialog> {
   }
 
   String _loginUrlFromMessage(String message) {
-    final match = RegExp(r'https?://[^\s]+', caseSensitive: false)
-        .firstMatch(message);
+    final match =
+        RegExp(r'https?://[^\s]+', caseSensitive: false).firstMatch(message);
     return match?.group(0) ?? '';
   }
 
@@ -201,7 +201,8 @@ class _WhatsAppInviteDialogState extends State<WhatsAppInviteDialog> {
   @override
   Widget build(BuildContext context) {
     final isDemo = _isDemo;
-    final normalizedPhone = _normalizeLibyanWhatsapp(widget.result.customerPhone);
+    final normalizedPhone =
+        _normalizeLibyanWhatsapp(widget.result.customerPhone);
     return Directionality(
       textDirection: TextDirection.rtl,
       child: AlertDialog(
@@ -215,9 +216,8 @@ class _WhatsAppInviteDialogState extends State<WhatsAppInviteDialog> {
             IconButton(
               key: const Key('admin-invite-edit-pen'),
               tooltip: 'تعديل',
-              onPressed: _busy
-                  ? null
-                  : () => setState(() => _editing = !_editing),
+              onPressed:
+                  _busy ? null : () => setState(() => _editing = !_editing),
               icon: Icon(_editing ? Icons.check : Icons.edit_outlined),
             ),
           ],
@@ -332,9 +332,7 @@ class _WhatsAppInviteDialogState extends State<WhatsAppInviteDialog> {
               style: OutlinedButton.styleFrom(
                 foregroundColor: const Color(0xff25d366),
               ),
-              onPressed: _busy
-                  ? null
-                  : () => _openWhatsapp(normalizedPhone),
+              onPressed: _busy ? null : () => _openWhatsapp(normalizedPhone),
               icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 18),
               label: Text(
                 normalizedPhone == null ? 'إرسال عبر واتساب' : 'فتح واتساب',

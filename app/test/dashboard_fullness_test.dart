@@ -30,7 +30,8 @@ void main() {
     expect(estimate.isDemoEstimate, isTrue);
   });
 
-  test('failed remote usage is a labelled local fallback, not a live quota', () {
+  test('failed remote usage is a labelled local fallback, not a live quota',
+      () {
     final estimate = estimateDashboardFullness(
       demoOrOffline: false,
       productCount: 50,

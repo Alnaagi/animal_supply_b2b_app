@@ -1,5 +1,8 @@
 import 'package:animal_supply_b2b/src/core/theme/app_theme.dart';
+import 'package:animal_supply_b2b/src/core/widgets/product_image_placeholder.dart';
+import 'package:animal_supply_b2b/src/core/widgets/quantity_selector.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
+import 'package:animal_supply_b2b/src/data/models/order.dart';
 import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:animal_supply_b2b/src/features/auth/auth_controller.dart';
 import 'package:animal_supply_b2b/src/features/cart/added_to_cart_prompt.dart';
@@ -18,24 +21,99 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('add to cart shows continue and checkout actions', (tester) async {
+  testWidgets('add to cart asks for quantity before adding', (tester) async {
     await _pumpCatalogCard(tester, product: _orderableProduct);
 
-    await tester.tap(find.byTooltip('إضافة ${_orderableProduct.name} إلى السلة'));
+    await tester
+        .tap(find.byTooltip('إضافة ${_orderableProduct.name} إلى السلة'));
     await tester.pumpAndSettle();
 
+    expect(find.byType(AddedToCartPromptSheet), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(AddedToCartPromptSheet),
+        matching: find.text(_orderableProduct.name),
+      ),
+      findsOneWidget,
+    );
     expect(find.text(AddedToCartPromptCopy.title), findsOneWidget);
+    expect(find.text(AddedToCartPromptCopy.body), findsOneWidget);
+    expect(find.text(AddedToCartPromptCopy.quantityLabel), findsOneWidget);
+    expect(
+      find.text(AddedToCartPromptCopy.minOrderHint(1)),
+      findsWidgets,
+    );
+    expect(find.byKey(const Key('add-to-cart-quantity')), findsOneWidget);
+    expect(
+        find.byKey(const Key('added-to-cart-product-image')), findsOneWidget);
+    final sheetImage = tester.widget<ProductImagePlaceholder>(
+      find.byKey(const Key('added-to-cart-product-image')),
+    );
+    expect(sheetImage.fit, BoxFit.contain);
+    expect(sheetImage.category, _orderableProduct.category);
+    final imageRect = tester.getRect(
+      find.byKey(const Key('added-to-cart-product-image')),
+    );
+    final nameRect = tester.getRect(
+      find.descendant(
+        of: find.byType(AddedToCartPromptSheet),
+        matching: find.text(_orderableProduct.name),
+      ),
+    );
+    expect(imageRect.left, greaterThan(nameRect.left));
+    expect(find.bySemanticsLabel('الكمية الحالية: 1'), findsOneWidget);
     expect(find.text(AddedToCartPromptCopy.continueShopping), findsOneWidget);
     expect(find.text(AddedToCartPromptCopy.checkout), findsOneWidget);
     expect(find.byKey(const Key('added-to-cart-continue')), findsOneWidget);
     expect(find.byKey(const Key('added-to-cart-checkout')), findsOneWidget);
+    expect(_cartOf(tester), isEmpty);
   });
 
-  testWidgets('continue shopping dismisses the prompt and stays on catalog',
+  testWidgets('quantity stepper starts at min order and respects stock',
+      (tester) async {
+    const product = Product(
+      id: 'product-bulk',
+      nameAr: 'رمل قطط',
+      sku: 'LITTER-1',
+      category: 'رمل',
+      animalType: 'قطط',
+      brand: 'كييف',
+      unitSize: 'كيس',
+      basePrice: 75,
+      stockQuantity: 5,
+      minOrderQty: 2,
+    );
+    await _pumpCatalogCard(tester, product: product);
+
+    await tester.tap(find.byTooltip('إضافة ${product.name} إلى السلة'));
+    await tester.pumpAndSettle();
+
+    expect(find.bySemanticsLabel('الكمية الحالية: 2'), findsOneWidget);
+    expect(_sheetQtyButton(tester, Icons.remove).onPressed, isNull);
+
+    await tester.tap(find.byTooltip('زيادة الكمية'));
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel('الكمية الحالية: 3'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('زيادة الكمية'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('زيادة الكمية'));
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel('الكمية الحالية: 5'), findsOneWidget);
+    expect(_sheetQtyButton(tester, Icons.add).onPressed, isNull);
+    expect(_cartOf(tester), isEmpty);
+  });
+
+  testWidgets('continue shopping adds the chosen quantity and stays on catalog',
       (tester) async {
     final router = await _pumpCatalogCard(tester, product: _orderableProduct);
 
-    await tester.tap(find.byTooltip('إضافة ${_orderableProduct.name} إلى السلة'));
+    await tester
+        .tap(find.byTooltip('إضافة ${_orderableProduct.name} إلى السلة'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('زيادة الكمية'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('زيادة الكمية'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('added-to-cart-continue')));
     await tester.pumpAndSettle();
@@ -43,18 +121,43 @@ void main() {
     expect(find.text(AddedToCartPromptCopy.title), findsNothing);
     expect(find.byType(ProductListCard), findsOneWidget);
     expect(router.routeInformationProvider.value.uri.path, '/catalog');
+    final items = _cartOf(tester);
+    expect(items, hasLength(1));
+    expect(items.single.product.id, _orderableProduct.id);
+    expect(items.single.quantity, 3);
   });
 
-  testWidgets('checkout from the prompt opens the cart route', (tester) async {
+  testWidgets('checkout adds the chosen quantity and opens the cart route',
+      (tester) async {
     final router = await _pumpCatalogCard(tester, product: _orderableProduct);
 
     await tester.tap(find.byTooltip(AddedToCartPromptCopy.orderActionTooltip));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('زيادة الكمية'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('added-to-cart-checkout')));
     await tester.pumpAndSettle();
 
     expect(find.text('شاشة السلة'), findsOneWidget);
     expect(router.routeInformationProvider.value.uri.path, '/cart');
+    final items = _cartOf(tester);
+    expect(items, hasLength(1));
+    expect(items.single.quantity, 2);
+  });
+
+  testWidgets('dismissing the sheet does not add to the cart', (tester) async {
+    await _pumpCatalogCard(tester, product: _orderableProduct);
+
+    await tester
+        .tap(find.byTooltip('إضافة ${_orderableProduct.name} إلى السلة'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('زيادة الكمية'));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AddedToCartPromptSheet), findsNothing);
+    expect(_cartOf(tester), isEmpty);
   });
 
   testWidgets('unavailable product does not show the added-to-cart prompt',
@@ -63,17 +166,36 @@ void main() {
 
     expect(
       tester
-          .widget<IconButton>(
-            find.widgetWithIcon(IconButton, Icons.add),
+          .widget<InkWell>(
+            find.descendant(
+              of: find.byTooltip('المنتج غير متوفر'),
+              matching: find.byType(InkWell),
+            ),
           )
-          .onPressed,
+          .onTap,
       isNull,
     );
     await tester.tap(find.text('غير متوفر حالياً'));
     await tester.pumpAndSettle();
 
     expect(find.text(AddedToCartPromptCopy.title), findsNothing);
+    expect(find.byType(QuantitySelector), findsNothing);
+    expect(_cartOf(tester), isEmpty);
   });
+}
+
+List<CartItem> _cartOf(WidgetTester tester) {
+  final element = tester.element(find.byType(MaterialApp));
+  return ProviderScope.containerOf(element).read(cartControllerProvider);
+}
+
+IconButton _sheetQtyButton(WidgetTester tester, IconData icon) {
+  return tester.widget<IconButton>(
+    find.descendant(
+      of: find.byKey(const Key('add-to-cart-quantity')),
+      matching: find.widgetWithIcon(IconButton, icon),
+    ),
+  );
 }
 
 Future<GoRouter> _pumpCatalogCard(

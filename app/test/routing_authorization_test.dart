@@ -95,6 +95,38 @@ void main() {
     expect(find.textContaining('/admin/not-a-real-page'), findsOneWidget);
   });
 
+  testWidgets('legacy order success routes redirect to orders safely',
+      (tester) async {
+    final harness = await _pumpRouter(
+      tester,
+      AuthState(user: _user(role: 'customer')),
+    );
+    addTearDown(harness.dispose);
+
+    harness.router.go('/order-success');
+    await _pumpNavigation(tester);
+    expect(harness.router.routeInformationProvider.value.uri.path, '/orders');
+
+    harness.router.go('/order-success/');
+    await _pumpNavigation(tester);
+    expect(harness.router.routeInformationProvider.value.uri.path, '/orders');
+  });
+
+  testWidgets('orders success query remains in customer shell with bottom nav',
+      (tester) async {
+    final harness = await _pumpRouter(
+      tester,
+      AuthState(user: _user(role: 'customer')),
+    );
+    addTearDown(harness.dispose);
+
+    harness.router.go('/orders?order=ord_1&success=1');
+    await _pumpNavigation(tester);
+
+    expect(harness.router.routeInformationProvider.value.uri.path, '/orders');
+    expect(find.text('الطلبات'), findsOneWidget);
+  });
+
   testWidgets('preserved destinations remove unsupported query parameters',
       (tester) async {
     final harness = await _pumpRouter(tester, const AuthState());

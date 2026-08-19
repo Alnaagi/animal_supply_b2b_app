@@ -615,6 +615,12 @@ with expected_security_functions(
       'public.admin_update_order_pricing_transaction(uuid,uuid,jsonb,numeric,numeric)',
       false,
       true
+    ),
+    ('public.touch_own_last_seen()', true, false),
+    (
+      'public.customer_last_active_at(profiles)',
+      true,
+      false
     )
 )
 select
@@ -653,7 +659,8 @@ with expected_security_triggers(table_name, trigger_name) as (
     ('business_customers', 'deactivate_customer_tokens_on_lock'),
     ('products', 'protect_product_stock_tracking_toggle'),
     ('orders', 'enforce_order_reservation_integrity'),
-    ('products', 'enforce_reserved_stock_floor')
+    ('products', 'enforce_reserved_stock_floor'),
+    ('device_tokens', 'sync_profile_last_seen_from_device_token')
 )
 select
   expected.table_name,

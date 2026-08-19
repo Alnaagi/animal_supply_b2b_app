@@ -240,13 +240,11 @@ class _NotificationCenterSheetState
                         padding: const EdgeInsets.fromLTRB(4, 8, 4, 2),
                         child: Text(
                           entry,
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleSmall
-                              ?.copyWith(
-                                color: AppTheme.darkGreen,
-                                fontWeight: FontWeight.w900,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.titleSmall?.copyWith(
+                                    color: AppTheme.darkGreen,
+                                    fontWeight: FontWeight.w900,
+                                  ),
                         ),
                       );
                     }
@@ -293,7 +291,9 @@ class _NotificationCenterSheetState
   }
 
   IconData _iconFor(String type) => switch (type) {
-        'new_order' || 'order_status' || 'order_status_changed' =>
+        'new_order' ||
+        'order_status' ||
+        'order_status_changed' =>
           Icons.receipt_long_outlined,
         'product_campaign' || 'promotion' => Icons.local_offer_outlined,
         'account' => Icons.manage_accounts_outlined,
@@ -301,7 +301,9 @@ class _NotificationCenterSheetState
       };
 
   Color _colorFor(String type) => switch (type) {
-        'new_order' || 'order_status' || 'order_status_changed' =>
+        'new_order' ||
+        'order_status' ||
+        'order_status_changed' =>
           AppTheme.green,
         'product_campaign' || 'promotion' => AppTheme.orange,
         'account' => AppTheme.brown,

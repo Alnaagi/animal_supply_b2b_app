@@ -38,7 +38,8 @@ class _NetworkStatusHeaderState extends ConsumerState<NetworkStatusHeader> {
     _slowTimer = Timer(_slowDelay, () {
       if (!mounted) return;
       final stillBusy = ref.read(remoteActivityProvider) > 0;
-      final stillOnline = isOnlineFromConnectivity(ref.read(connectivityProvider));
+      final stillOnline =
+          isOnlineFromConnectivity(ref.read(connectivityProvider));
       setState(() => _showSlow = stillBusy && stillOnline);
     });
   }

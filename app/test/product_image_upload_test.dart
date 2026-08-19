@@ -530,7 +530,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('banner-image-upload-button')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('banner-image-crop-dialog')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('banner-image-crop-dialog')), findsOneWidget);
     expect(find.text('قص الصورة'), findsOneWidget);
     expect(find.byKey(const ValueKey('banner-crop-fit')), findsOneWidget);
     expect(find.byKey(const ValueKey('banner-crop-save')), findsOneWidget);

@@ -146,157 +146,160 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       body: Stack(
         children: [
           SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(22),
-                  child: Theme(
-                    key: const Key('login-input-theme'),
-                    data: loginTheme,
-                    child: AutofillGroup(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Center(
-                            child: ShopBrandLogo(
-                              logoUrl: branding.logoUrl,
-                              size: 96,
-                              backgroundColor: const Color(0xffe3f3eb),
-                              fallbackIconColor: AppTheme.green,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          Text(
-                            branding.shopName,
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.w900),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'مرحباً بك في منصة طلبات الجملة لدى ${branding.shopName}',
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 14),
-                          _EnvironmentBanner(
-                            message: auth.notice ??
-                                (configurationBlocked
-                                    ? AppConfig.configurationMessageAr
-                                    : null),
-                            isError: configurationBlocked,
-                          ),
-                          const SizedBox(height: 14),
-                          TextField(
-                            key: const Key('login-username-field'),
-                            controller: username,
-                            enabled: !auth.loading,
-                            autofillHints: const [AutofillHints.username],
-                            keyboardType: TextInputType.text,
-                            textInputAction: TextInputAction.next,
-                            decoration: const InputDecoration(
-                              labelText: 'اسم المستخدم أو رقم الهاتف',
-                              prefixIcon: Icon(Icons.person_outline),
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          TextField(
-                            key: const Key('login-password-field'),
-                            controller: password,
-                            enabled: !auth.loading,
-                            obscureText: true,
-                            enableSuggestions: false,
-                            autocorrect: false,
-                            autofillHints: const [AutofillHints.password],
-                            textInputAction: TextInputAction.done,
-                            onSubmitted: auth.loading || configurationBlocked
-                                ? null
-                                : (_) => _submit(authController),
-                            decoration: const InputDecoration(
-                              labelText: 'كلمة المرور',
-                              prefixIcon: Icon(Icons.lock_outline),
-                            ),
-                          ),
-                          if (hasInviteFromLink) ...[
-                            const SizedBox(height: 14),
-                            const _InviteReceivedCard(),
-                          ],
-                          if (auth.error != null) ...[
-                            const SizedBox(height: 12),
-                            _AuthMessage(
-                              message: auth.error!,
-                              isError: true,
-                            ),
-                          ],
-                          const SizedBox(height: 16),
-                          FilledButton(
-                            onPressed: auth.loading || configurationBlocked
-                                ? null
-                                : () => _submit(authController),
-                            child: Text(
-                              auth.loading ? 'جار التحقق...' : 'دخول',
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          const Text(
-                            'ليس لديك حساب؟ تواصل مع المتجر لإنشاء حساب أعمال خاص بك.',
-                            textAlign: TextAlign.center,
-                          ),
-                          if (AppConfig.allowsDemoCredentials) ...[
-                            const Divider(height: 28),
-                            Text(
-                              'تجربة سريعة — بيانات غير حقيقية',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              alignment: WrapAlignment.center,
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                _DemoLoginButton(
-                                  label: 'مدير',
-                                  icon: Icons.admin_panel_settings_outlined,
-                                  onPressed: auth.loading
-                                      ? null
-                                      : () => authController.login(
-                                            'admin',
-                                            demoAdminPassword,
-                                          ),
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 440),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(22),
+                      child: Theme(
+                        key: const Key('login-input-theme'),
+                        data: loginTheme,
+                        child: AutofillGroup(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Center(
+                                child: ShopBrandLogo(
+                                  logoUrl: branding.logoUrl,
+                                  size: 96,
+                                  backgroundColor: const Color(0xffe3f3eb),
+                                  fallbackIconColor: AppTheme.green,
                                 ),
-                                _DemoLoginButton(
-                                  label: 'موظف',
-                                  icon: Icons.badge_outlined,
-                                  onPressed: auth.loading
-                                      ? null
-                                      : () => authController.login(
-                                            'staff',
-                                            demoStaffPassword,
-                                          ),
+                              ),
+                              const SizedBox(height: 14),
+                              Text(
+                                branding.shopName,
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineSmall
+                                    ?.copyWith(fontWeight: FontWeight.w900),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'مرحباً بك في منصة طلبات الجملة لدى ${branding.shopName}',
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 14),
+                              _EnvironmentBanner(
+                                message: auth.notice ??
+                                    (configurationBlocked
+                                        ? AppConfig.configurationMessageAr
+                                        : null),
+                                isError: configurationBlocked,
+                              ),
+                              const SizedBox(height: 14),
+                              TextField(
+                                key: const Key('login-username-field'),
+                                controller: username,
+                                enabled: !auth.loading,
+                                autofillHints: const [AutofillHints.username],
+                                keyboardType: TextInputType.text,
+                                textInputAction: TextInputAction.next,
+                                decoration: const InputDecoration(
+                                  labelText: 'اسم المستخدم أو رقم الهاتف',
+                                  prefixIcon: Icon(Icons.person_outline),
                                 ),
-                                _DemoLoginButton(
-                                  label: 'عميل',
-                                  icon: Icons.storefront_outlined,
-                                  onPressed: auth.loading
-                                      ? null
-                                      : () => authController.login(
-                                            'tripoli-pets',
-                                            demoCustomerPassword,
-                                          ),
+                              ),
+                              const SizedBox(height: 14),
+                              TextField(
+                                key: const Key('login-password-field'),
+                                controller: password,
+                                enabled: !auth.loading,
+                                obscureText: true,
+                                enableSuggestions: false,
+                                autocorrect: false,
+                                autofillHints: const [AutofillHints.password],
+                                textInputAction: TextInputAction.done,
+                                onSubmitted:
+                                    auth.loading || configurationBlocked
+                                        ? null
+                                        : (_) => _submit(authController),
+                                decoration: const InputDecoration(
+                                  labelText: 'كلمة المرور',
+                                  prefixIcon: Icon(Icons.lock_outline),
+                                ),
+                              ),
+                              if (hasInviteFromLink) ...[
+                                const SizedBox(height: 14),
+                                const _InviteReceivedCard(),
+                              ],
+                              if (auth.error != null) ...[
+                                const SizedBox(height: 12),
+                                _AuthMessage(
+                                  message: auth.error!,
+                                  isError: true,
                                 ),
                               ],
-                            ),
-                          ],
-                        ],
+                              const SizedBox(height: 16),
+                              FilledButton(
+                                onPressed: auth.loading || configurationBlocked
+                                    ? null
+                                    : () => _submit(authController),
+                                child: Text(
+                                  auth.loading ? 'جار التحقق...' : 'دخول',
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'ليس لديك حساب؟ تواصل مع المتجر لإنشاء حساب أعمال خاص بك.',
+                                textAlign: TextAlign.center,
+                              ),
+                              if (AppConfig.allowsDemoCredentials) ...[
+                                const Divider(height: 28),
+                                Text(
+                                  'تجربة سريعة — بيانات غير حقيقية',
+                                  textAlign: TextAlign.center,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.bold),
+                                ),
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  alignment: WrapAlignment.center,
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    _DemoLoginButton(
+                                      label: 'مدير',
+                                      icon: Icons.admin_panel_settings_outlined,
+                                      onPressed: auth.loading
+                                          ? null
+                                          : () => authController.login(
+                                                'admin',
+                                                demoAdminPassword,
+                                              ),
+                                    ),
+                                    _DemoLoginButton(
+                                      label: 'موظف',
+                                      icon: Icons.badge_outlined,
+                                      onPressed: auth.loading
+                                          ? null
+                                          : () => authController.login(
+                                                'staff',
+                                                demoStaffPassword,
+                                              ),
+                                    ),
+                                    _DemoLoginButton(
+                                      label: 'عميل',
+                                      icon: Icons.storefront_outlined,
+                                      onPressed: auth.loading
+                                          ? null
+                                          : () => authController.login(
+                                                'tripoli-pets',
+                                                demoCustomerPassword,
+                                              ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -304,8 +307,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
             ),
           ),
-        ),
-      ),
           if (auth.loading || auth.bootstrapping)
             BrandedAuthLoading(
               asOverlay: true,

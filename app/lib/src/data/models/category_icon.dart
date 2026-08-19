@@ -172,11 +172,15 @@ class CategoryIconCatalog {
       return 'livestock';
     }
     if (name.contains('علف') || name.contains('أعلاف')) return 'feed';
-    if (name.contains('حبوب') || name.contains('شعير') || name.contains('ذرة')) {
+    if (name.contains('حبوب') ||
+        name.contains('شعير') ||
+        name.contains('ذرة')) {
       return 'grain';
     }
     if (name.contains('تبن') || name.contains('برسيم')) return 'hay';
-    if (name.contains('دواء') || name.contains('أدوية') || name.contains('بيطر')) {
+    if (name.contains('دواء') ||
+        name.contains('أدوية') ||
+        name.contains('بيطر')) {
       return 'medicine';
     }
     if (name.contains('مكمل')) return 'supplements';

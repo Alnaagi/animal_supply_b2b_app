@@ -204,9 +204,8 @@ void main() {
     expect(find.byKey(const Key('checkout-customer-note')), findsOneWidget);
     expect(find.text('علف اختبار'), findsOneWidget);
 
-    final editableY = tester
-        .getTopLeft(find.byKey(const Key('checkout-editable-fields')))
-        .dy;
+    final editableY =
+        tester.getTopLeft(find.byKey(const Key('checkout-editable-fields'))).dy;
     final addressY = tester
         .getTopLeft(find.byKey(const Key('checkout-delivery-address')))
         .dy;

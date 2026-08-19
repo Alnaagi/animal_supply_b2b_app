@@ -289,7 +289,8 @@ void main() {
     },
   );
 
-  testWidgets('short matching password test is accepted on edit', (tester) async {
+  testWidgets('short matching password test is accepted on edit',
+      (tester) async {
     await tester.binding.setSurfaceSize(const Size(720, 1100));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 

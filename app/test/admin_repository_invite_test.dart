@@ -175,7 +175,8 @@ void main() {
   });
 
   group('AdminRepository.setCustomerPassword', () {
-    test('sends the chosen password to the reset function without invite fields',
+    test(
+        'sends the chosen password to the reset function without invite fields',
         () async {
       String? invokedFunction;
       Map<String, dynamic>? invokedBody;

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/config/shop_branding.dart';
@@ -63,14 +64,29 @@ class ProfileScreen extends ConsumerWidget {
             Card(child: ListTile(title: Text(e.key), subtitle: Text(e.value)))),
         OutlinedButton.icon(
           onPressed: AppConfig.remoteBackendEnabled
-              ? () => ref
-                  .read(authControllerProvider.notifier)
-                  .retrySessionCheck()
+              ? () =>
+                  ref.read(authControllerProvider.notifier).retrySessionCheck()
               : null,
           icon: const Icon(Icons.refresh),
           label: const Text('تحديث بيانات الحساب والأسعار'),
         ),
         const PushPermissionCard(),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.local_offer_outlined),
+            title: const Text('العروض'),
+            subtitle: const Text('تصفح كل المنتجات المخفضة'),
+            onTap: () => context.push('/offers'),
+          ),
+        ),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.support_agent_outlined),
+            title: const Text('المساعدة والدعم'),
+            subtitle: const Text('الأسئلة الشائعة والتواصل عبر واتساب'),
+            onTap: () => context.push('/support'),
+          ),
+        ),
         OutlinedButton.icon(
             onPressed: WhatsAppSupport.isConfiguredFor(supportPhone)
                 ? () async {
@@ -92,6 +108,12 @@ class ProfileScreen extends ConsumerWidget {
             label: Text(WhatsAppSupport.isConfiguredFor(supportPhone)
                 ? 'الدعم عبر واتساب ${WhatsAppSupport.displayPhoneFor(supportPhone)}'
                 : 'واتساب الدعم غير مهيأ')),
+        const SizedBox(height: 4),
+        const Text(
+          'للخصوصية والأحكام، راجع سياسة شركتك المعتمدة.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey),
+        ),
         FilledButton.icon(
             onPressed: () => ref
                 .read(pushNotificationsCoordinatorProvider)

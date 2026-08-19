@@ -40,7 +40,8 @@ void main() {
     expect(find.text(ArabicCopy.screenLoading), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(
-      Directionality.of(tester.element(find.byKey(const Key('shop-loading-page')))),
+      Directionality.of(
+          tester.element(find.byKey(const Key('shop-loading-page')))),
       TextDirection.rtl,
     );
   });
@@ -173,7 +174,8 @@ void main() {
       ),
     );
     await tester.pump();
-    final gesture = await tester.startGesture(tester.getCenter(find.text('محتوى')));
+    final gesture =
+        await tester.startGesture(tester.getCenter(find.text('محتوى')));
     await gesture.moveBy(const Offset(0, 90));
     await tester.pump();
     expect(find.byKey(const Key('shop-refresh-indicator')), findsOneWidget);

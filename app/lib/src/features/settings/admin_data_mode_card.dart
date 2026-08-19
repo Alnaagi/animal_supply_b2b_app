@@ -214,12 +214,11 @@ class AdminDataModeCard extends ConsumerWidget {
     );
     if (confirmed != true || !context.mounted) return;
 
-    final result = await ref
-        .read(appRuntimeModeProvider.notifier)
-        .setPreferLocalDemo(
-          enableDemo,
-          productionBackendAvailable: canUseProduction,
-        );
+    final result =
+        await ref.read(appRuntimeModeProvider.notifier).setPreferLocalDemo(
+              enableDemo,
+              productionBackendAvailable: canUseProduction,
+            );
     if (!result.applied) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -303,7 +302,8 @@ class AdminDataModeCard extends ConsumerWidget {
     return switch (target) {
       AdminResetTarget.productionRemote =>
         'تعذر مسح قاعدة البيانات الحقيقية. تحقق من صلاحيات المدير والاتصال.',
-      AdminResetTarget.demoLocal || AdminResetTarget.localCache =>
+      AdminResetTarget.demoLocal ||
+      AdminResetTarget.localCache =>
         'تعذر مسح البيانات المحلية. حاول مرة أخرى.',
     };
   }

@@ -33,7 +33,8 @@ typedef AdminEdgeFunctionInvoker = Future<Object?> Function(
 
 const adminCustomersDefaultPageSize = 50;
 const adminCustomersMaximumPageSize = 100;
-const _customerSelect = '*, profiles(username)';
+const _customerSelect =
+    '*, profiles(username, last_seen_at, last_login_at, last_active_at:customer_last_active_at)';
 const _supportedCustomerStatuses = <String>{
   'active',
   'suspended',
@@ -73,19 +74,18 @@ class AdminRemoteErrorInfo {
   AdminRemoteException asException() {
     final resolvedCode =
         code.trim().isEmpty ? 'CUSTOMER_UPDATE_FAILED' : code.trim();
-    final resolvedMessage =
-        resolvedCode == 'STALE_WRITE' ||
-                resolvedCode == 'CUSTOMER_UPDATE_CONFLICT' ||
-                resolvedCode == 'RESET_IN_PROGRESS'
-            ? mutationFailureMessageAr(
-                AdminRemoteException(
-                  code: resolvedCode,
-                  message: '',
-                  status: status,
-                ),
-                fallback: ArabicCopy.staleWrite,
-              )
-            : message.trim();
+    final resolvedMessage = resolvedCode == 'STALE_WRITE' ||
+            resolvedCode == 'CUSTOMER_UPDATE_CONFLICT' ||
+            resolvedCode == 'RESET_IN_PROGRESS'
+        ? mutationFailureMessageAr(
+            AdminRemoteException(
+              code: resolvedCode,
+              message: '',
+              status: status,
+            ),
+            fallback: ArabicCopy.staleWrite,
+          )
+        : message.trim();
     return AdminRemoteException(
       code: resolvedCode,
       message: resolvedMessage,
@@ -625,7 +625,7 @@ class AdminRepository {
   final AdminEdgeFunctionInvoker? _edgeFunctionInvoker;
 
   final List<BusinessCustomer> _customers = [
-    const BusinessCustomer(
+    BusinessCustomer(
       id: 'customer-1',
       profileId: 'customer-user-1',
       businessName: 'شركة طرابلس للحيوانات الأليفة',
@@ -638,8 +638,9 @@ class AdminRepository {
       discountPercent: 12.5,
       creditLimit: 2500,
       outstandingBalance: 420,
+      lastActiveAt: DateTime.now().subtract(const Duration(hours: 3)),
     ),
-    const BusinessCustomer(
+    BusinessCustomer(
       id: 'customer-2',
       businessName: 'شركة بنغازي للتوريدات',
       username: 'benghazi-supplies',
@@ -647,6 +648,7 @@ class AdminRepository {
       phone: '+218920000002',
       city: 'بنغازي',
       area: 'الهواري',
+      lastActiveAt: DateTime.now().subtract(const Duration(days: 1, hours: 2)),
     ),
     const BusinessCustomer(
       id: 'customer-3',
@@ -1041,9 +1043,7 @@ class AdminRepository {
       );
       _customers[index] = normalized.copyWith(updatedAt: DateTime.now());
     }
-    return index == -1
-        ? normalized
-        : _customers[index];
+    return index == -1 ? normalized : _customers[index];
   }
 
   static Map<String, dynamic> customerUpdatePayload(
@@ -1061,9 +1061,8 @@ class AdminRepository {
       'address': customer.address,
       'discount_percent':
           validatedCustomerDiscountPercent(customer.discountPercent),
-      'account_status':
-          _validatedCustomerStatus(customer.accountStatus) ??
-              customer.accountStatus,
+      'account_status': _validatedCustomerStatus(customer.accountStatus) ??
+          customer.accountStatus,
       'credit_limit': _accountAmount(customer.creditLimit),
       'outstanding_balance': _accountAmount(customer.outstandingBalance),
       if (expected != null) 'expected_updated_at': expected,
@@ -1160,8 +1159,9 @@ class AdminRepository {
     final id = customer.id == 'new' ? const Uuid().v4() : customer.id;
     final saved = customer.copyWith(id: id, accountStatus: 'active');
     await saveCustomer(saved);
-    final temporaryPassword =
-        (password?.trim().isNotEmpty ?? false) ? password!.trim() : 'Temp-92841!';
+    final temporaryPassword = (password?.trim().isNotEmpty ?? false)
+        ? password!.trim()
+        : 'Temp-92841!';
     final token = 'inv_${const Uuid().v4().substring(0, 8)}';
     final inviteLink =
         'animalsupplyb2b://invite?token=$token&client=${Uri.encodeComponent(saved.username)}';
@@ -1198,7 +1198,8 @@ class AdminRepository {
     };
   }
 
-  Future<Object?> _invokeCustomerPasswordReset(Map<String, dynamic> body) async {
+  Future<Object?> _invokeCustomerPasswordReset(
+      Map<String, dynamic> body) async {
     final client = supabaseClient;
     if (_edgeFunctionInvoker != null) {
       return _edgeFunctionInvoker(
@@ -1231,8 +1232,8 @@ class AdminRepository {
     }
     final root = _stringKeyedMap(responseData);
     final nested = _stringKeyedMap(root['data']);
-    final updated = root['password_updated'] == true ||
-        nested['password_updated'] == true;
+    final updated =
+        root['password_updated'] == true || nested['password_updated'] == true;
     if (!updated) {
       throw StateError('The customer password was not updated on the server.');
     }
@@ -1429,7 +1430,8 @@ class AdminRepository {
             throw const StaleWriteException();
           }
           throwIfStaleWrite(
-            current: DateTime.tryParse(existing['updated_at']?.toString() ?? ''),
+            current:
+                DateTime.tryParse(existing['updated_at']?.toString() ?? ''),
             expected: normalized.updatedAt,
           );
           saved = await client

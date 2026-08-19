@@ -1,4 +1,3 @@
-import 'package:animal_supply_b2b/src/core/theme/app_theme.dart';
 import 'package:animal_supply_b2b/src/data/models/admin_models.dart';
 import 'package:animal_supply_b2b/src/data/repositories/admin_repository.dart';
 import 'package:animal_supply_b2b/src/features/admin_banners/admin_banners_screen.dart';
@@ -221,11 +220,12 @@ void main() {
     expect(payload['active'], isTrue);
   });
 
-  testWidgets('admin banner screen renders its Arabic RTL workflow',
-      (tester) async {
-    await tester.binding.setSurfaceSize(const Size(934, 858));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
+  Future<void> pumpAdminBanners(
+    WidgetTester tester, {
+    AdminRepository? repository,
+    Size size = const Size(390, 844),
+  }) async {
+    await tester.binding.setSurfaceSize(size);
     final router = GoRouter(
       initialLocation: '/admin/banners',
       routes: [
@@ -236,9 +236,13 @@ void main() {
       ],
     );
     addTearDown(router.dispose);
-
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [
+          if (repository != null)
+            adminRepositoryProvider.overrideWithValue(repository),
+        ],
         child: MaterialApp.router(
           routerConfig: router,
           builder: (context, child) => Directionality(
@@ -248,271 +252,85 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+  }
 
-    expect(find.text('إدارة البانرات'), findsOneWidget);
-    expect(
-        find.byKey(const Key('admin-banner-client-preview')), findsOneWidget);
+  testWidgets('toolbar filter and preview modal work in RTL', (tester) async {
+    await pumpAdminBanners(tester);
+    expect(find.text('1 بانرات'), findsOneWidget);
+    expect(find.text('1 نشطة'), findsOneWidget);
+    expect(find.byKey(const ValueKey('preview-store-button')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('preview-store-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('معاينة المتجر'), findsWidgets);
     expect(find.byType(OfferBannerCarousel), findsOneWidget);
-    expect(
-        find.byKey(const Key('admin-banner-client-carousel')), findsOneWidget);
-    expect(
-      find.byKey(const Key('admin-banner-client-preview-stage')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('admin-banner-preview-mode')), findsOneWidget);
-    expect(find.text('حاسوب'), findsOneWidget);
-    expect(find.text('جوال'), findsOneWidget);
-    expect(
-      find.byKey(const Key('admin-banner-client-preview-desktop')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('admin-banner-client-preview-phone')),
-        findsNothing);
-    expect(
-      find.byKey(const Key('admin-banner-preview-home-indicator')),
-      findsNothing,
-    );
-    expect(find.text('معاينة عرض العملاء'), findsOneWidget);
-    expect(
-      find.text('شريط العروض كما يظهر للعملاء على الحاسوب.'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('شريط العروض كما يظهر للعملاء على الجوال.'),
-      findsNothing,
-    );
-    expect(find.text('قائمة البانرات'), findsOneWidget);
-    expect(
-      find.textContaining('البانرات غير النشطة مستبعدة من هذا العرض'),
-      findsNothing,
-    );
-    final desktopStageSize = tester.getSize(
-      find.byKey(const Key('admin-banner-client-preview-stage')),
-    );
-    final previewCardWidth = tester
-        .getSize(find.byKey(const Key('admin-banner-client-preview')))
-        .width;
-    expect(desktopStageSize.width, greaterThan(500));
-    expect(desktopStageSize.width, closeTo(previewCardWidth - 28, 8));
-    final desktopCarouselSize = tester.getSize(
-      find.byKey(const Key('admin-banner-client-carousel')),
-    );
-    expect(
-      tester
-          .getSize(
-            find.descendant(
-              of: find.byKey(const Key('admin-banner-client-carousel')),
-              matching: find.byType(PageView),
-            ),
-          )
-          .height,
-      250,
-    );
-    final previewStage = tester.widget<DecoratedBox>(
-      find.byKey(const Key('admin-banner-client-preview-stage')),
-    );
-    final stageDecoration = previewStage.decoration as BoxDecoration;
-    expect(stageDecoration.color, AppTheme.sand);
-    expect(stageDecoration.borderRadius, BorderRadius.circular(18));
-    expect(stageDecoration.border, isNotNull);
-    expect((stageDecoration.border as Border).top.width, 1);
-    expect(
-      (stageDecoration.border as Border).top.color,
-      isNot(const Color(0xff1c1c1e)),
-    );
-
-    await tester.tap(find.text('جوال'));
-    await tester.pump();
-    expect(
-      find.byKey(const Key('admin-banner-client-preview-phone')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key('admin-banner-client-preview-desktop')),
-      findsNothing,
-    );
-    expect(
-      find.text('شريط العروض كما يظهر للعملاء على الجوال.'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('شريط العروض كما يظهر للعملاء على الحاسوب.'),
-      findsNothing,
-    );
-    expect(find.text('معاينة عرض العملاء'), findsOneWidget);
-    expect(
-      find.byKey(const Key('admin-banner-preview-home-indicator')),
-      findsOneWidget,
-    );
-    final mobileStageSize = tester.getSize(
-      find.byKey(const Key('admin-banner-client-preview-stage')),
-    );
-    expect(mobileStageSize.width, lessThanOrEqualTo(360));
-    expect(mobileStageSize.width, lessThan(desktopStageSize.width));
-    final mobileCarouselSize = tester.getSize(
-      find.byKey(const Key('admin-banner-client-carousel')),
-    );
-    expect(mobileCarouselSize.width, lessThan(desktopCarouselSize.width));
-    expect(
-      tester
-          .getSize(
-            find.descendant(
-              of: find.byKey(const Key('admin-banner-client-carousel')),
-              matching: find.byType(PageView),
-            ),
-          )
-          .height,
-      240,
-    );
-    final mobileStage = tester.widget<DecoratedBox>(
-      find.byKey(const Key('admin-banner-client-preview-stage')),
-    );
-    final mobileDecoration = mobileStage.decoration as BoxDecoration;
-    expect(mobileDecoration.borderRadius, BorderRadius.circular(20));
-    expect((mobileDecoration.border as Border).top.width, 1);
-    expect(
-      (mobileDecoration.border as Border).top.color,
-      isNot(const Color(0xff1c1c1e)),
-    );
-    expect(
-      (mobileDecoration.border as Border).top.color,
-      isNot(Colors.black),
-    );
-
-    await tester.tap(find.text('حاسوب'));
-    await tester.pump();
-    expect(
-      find.byKey(const Key('admin-banner-client-preview-desktop')),
-      findsOneWidget,
-    );
-    expect(
-      find.text('شريط العروض كما يظهر للعملاء على الحاسوب.'),
-      findsOneWidget,
-    );
-
-    await tester.tap(
-      find.descendant(
-        of: find.byType(OfferBannerCarousel),
-        matching: find.widgetWithText(FilledButton, 'تسوق الآن'),
-      ),
-    );
-    await tester.pump();
-    expect(router.routeInformationProvider.value.uri.path, '/admin/banners');
-    expect(find.text('إدارة البانرات'), findsOneWidget);
-    expect(find.text('الكل'), findsOneWidget);
-    expect(find.text('النشطة'), findsOneWidget);
-    expect(find.text('غير النشطة'), findsOneWidget);
-    expect(find.byKey(const Key('admin-demo-mode-notice')), findsOneWidget);
-    expect(find.textContaining('وضع تجريبي'), findsWidgets);
-    expect(find.text('عروض خاصة لتجار مستلزمات الحيوانات'), findsWidgets);
-    expect(find.text('تسوق الآن'), findsWidgets);
-    expect(find.text('الترتيب'), findsOneWidget);
-    expect(find.text('الترتيب 1'), findsNothing);
-    expect(find.byKey(const ValueKey('banner-sort-order-banner-1')),
-        findsOneWidget);
-    expect(find.byKey(const Key('banner-move-up-banner-1')), findsOneWidget);
-    expect(find.text('تعديل'), findsOneWidget);
-    expect(find.text('إيقاف'), findsOneWidget);
-
-    await tester.ensureVisible(find.text('تعديل'));
-    await tester.pump();
-    expect(tester.getRect(find.text('تعديل')).bottom, lessThan(858));
-    expect(tester.getRect(find.text('إيقاف')).bottom, lessThan(858));
-    expect(
-      tester.getRect(find.byKey(const ValueKey('banner-actions-banner-1'))).top,
-      greaterThan(
-        tester.getRect(find.text('زر الإجراء: تسوق الآن')).bottom,
-      ),
-    );
-
-    await tester.binding.setSurfaceSize(const Size(650, 1100));
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-    expect(find.text('تعديل'), findsOneWidget);
-    expect(find.text('إيقاف'), findsOneWidget);
-    expect(
-      tester.getRect(find.text('إيقاف')).bottom,
-      greaterThanOrEqualTo(tester.getRect(find.text('تعديل')).top),
-    );
-
-    await tester.enterText(
-      find.byKey(const ValueKey('banner-sort-order-banner-1')),
-      '9',
-    );
-    await tester.pump(const Duration(milliseconds: 500));
-    await tester.pump();
-    expect(
-      tester
-          .widget<TextField>(
-            find.byKey(const ValueKey('banner-sort-order-banner-1')),
-          )
-          .controller
-          ?.text,
-      '9',
-    );
-    expect(
-      Directionality.of(tester.element(find.text('إدارة البانرات'))),
-      TextDirection.rtl,
-    );
-
-    await tester.tap(find.byTooltip('بانر جديد'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('رابط الصورة HTTPS'), findsOneWidget);
-    expect(find.text('أدخل رابطاً آمناً أو ارفع صورة'), findsOneWidget);
-    expect(find.text('اختيار ورفع صورة'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('banner-image-upload-progress')),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const ValueKey('banner-image-preview-empty')),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('رفع الصور غير متاح في الوضع التجريبي'),
-      findsOneWidget,
-    );
-    expect(find.text('وجهة البانر'), findsOneWidget);
-    expect(find.text('مخصص'), findsOneWidget);
-    expect(find.text('تسوق الآن'), findsWidgets);
-    expect(find.text('رقم الترتيب'), findsNothing);
-    expect(find.text('رابط HTTPS خارجي'), findsNothing);
-    expect(find.textContaining('معرّف المنتج'), findsNothing);
-    expect(find.text('نشط ويظهر للعملاء'), findsOneWidget);
-
-    await tester.tap(find.text('حفظ'));
-    await tester.pumpAndSettle();
-    expect(find.text('أضف رابط صورة أو ارفع صورة'), findsOneWidget);
-
-    await tester.enterText(
-      find.byKey(const ValueKey('banner-image-url-field')),
-      'https://cdn.example.com/new-banner.webp',
-    );
-
-    await tester.tap(find.byKey(const ValueKey('banner-target-type-field')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('فئة محددة').last);
-    await tester.pumpAndSettle();
-    expect(find.textContaining('اختر فئة'), findsWidgets);
-
-    await tester.tap(find.byKey(const ValueKey('banner-target-type-field')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('منتج محدد').last);
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('banner-product-search-field')),
-      findsOneWidget,
-    );
-    expect(find.text('ابحث عن منتج'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('banner-cta-custom-chip')));
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('banner-cta-custom-field')),
-      findsOneWidget,
-    );
+    expect(find.text('جوال'), findsWidgets);
+    expect(find.text('حاسوب'), findsWidgets);
   });
+
+  testWidgets('reorder disabled hint appears when filtered', (tester) async {
+    await pumpAdminBanners(tester);
+    await tester.tap(find.text('النشطة'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('إعادة الترتيب متاحة فقط'), findsOneWidget);
+  });
+
+  testWidgets('card destination avoids raw product UUID display',
+      (tester) async {
+    final repository = AdminRepository();
+    await repository.saveBanner(
+      draft(
+        title: 'بانر منتج',
+        targetType: 'product',
+        targetValue: 'product-very-long-uuid-like-value',
+        sortOrder: 2,
+      ),
+    );
+    await pumpAdminBanners(tester, repository: repository);
+    expect(
+        find.textContaining('product-very-long-uuid-like-value'), findsNothing);
+    expect(find.textContaining('🎯 منتج'), findsOneWidget);
+  });
+
+  testWidgets('duplicate banner opens editor as inactive', (tester) async {
+    await pumpAdminBanners(tester);
+    await tester.ensureVisible(find.byType(PopupMenuButton<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('نسخ البانر').last);
+    await tester.pumpAndSettle();
+    expect(find.text('تعديل البانر'), findsOneWidget);
+    final dialogSwitchFinder = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(Switch),
+    );
+    expect(dialogSwitchFinder, findsOneWidget);
+    expect(tester.widget<Switch>(dialogSwitchFinder).value, isFalse);
+  });
+
+  testWidgets('failed toggle rolls back banner visibility switch',
+      (tester) async {
+    final repository = _FailToggleRepository();
+    await pumpAdminBanners(tester, repository: repository);
+    final switchFinder = find.byType(Switch).first;
+    await tester.ensureVisible(switchFinder);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(switchFinder).value, isTrue);
+    await tester.tap(switchFinder);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(switchFinder).value, isTrue);
+    expect(find.textContaining('تم التراجع عن التعديل'), findsOneWidget);
+  });
+}
+
+class _FailToggleRepository extends AdminRepository {
+  @override
+  Future<AppBanner> setBannerActive(
+    AppBanner banner, {
+    required bool active,
+  }) {
+    throw StateError('toggle failed');
+  }
 }

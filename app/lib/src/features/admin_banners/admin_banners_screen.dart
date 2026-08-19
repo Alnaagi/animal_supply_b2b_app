@@ -82,8 +82,10 @@ class AdminBannersScreen extends ConsumerStatefulWidget {
 }
 
 class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
-  late Future<List<AppBanner>> _bannersFuture;
+  late Future<void> _loadFuture;
+  List<AppBanner> _allBanners = const [];
   final Set<String> _busyBannerIds = {};
+  final Map<String, String> _resolvedProductNames = {};
   _BannerFilter _filter = _BannerFilter.all;
 
   static const ctaPresets = <String>[
@@ -97,20 +99,46 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
   @override
   void initState() {
     super.initState();
-    _bannersFuture = _loadBanners();
+    _loadFuture = _reloadData();
   }
 
   Future<List<AppBanner>> _loadBanners() {
     return ref.read(adminRepositoryProvider).allBanners();
   }
 
+  Future<void> _reloadData() async {
+    final banners = await _loadBanners();
+    final catalog = ref.read(catalogRepositoryProvider);
+    final productIds = banners
+        .where((item) =>
+            item.targetType == 'product' && item.targetValue.isNotEmpty)
+        .map((item) => item.targetValue)
+        .toSet();
+    final names = <String, String>{};
+    for (final productId in productIds) {
+      try {
+        final product = await catalog.productById(productId);
+        if (product != null) {
+          names[productId] = product.nameAr;
+        }
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    setState(() {
+      _allBanners = bannersInShowingOrder(banners);
+      _resolvedProductNames
+        ..clear()
+        ..addAll(names);
+    });
+  }
+
   Future<void> _reload() async {
-    final future = _loadBanners();
-    setState(() => _bannersFuture = future);
+    final future = _reloadData();
+    setState(() => _loadFuture = future);
     try {
       await future;
     } catch (_) {
-      // FutureBuilder shows the load error.
+      // FutureBuilder shows load error.
     }
   }
 
@@ -131,8 +159,8 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
           tooltip: 'بانر جديد',
         ),
       ],
-      child: FutureBuilder<List<AppBanner>>(
-        future: _bannersFuture,
+      child: FutureBuilder<void>(
+        future: _loadFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const ShopLoading.page();
@@ -140,17 +168,10 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
           if (snapshot.hasError) {
             return _BannerLoadError(onRetry: _reload);
           }
-
-          final allBanners = snapshot.data ?? const <AppBanner>[];
-          final banners = bannersInShowingOrder(
-            allBanners.where(
-              (banner) => switch (_filter) {
-                _BannerFilter.all => true,
-                _BannerFilter.active => banner.active,
-                _BannerFilter.inactive => !banner.active,
-              },
-            ),
-          );
+          final allBanners = _allBanners;
+          final banners = _filteredBanners();
+          final activeCount = allBanners.where((item) => item.active).length;
+          final canReorder = _filter == _BannerFilter.all;
 
           return ShopRefreshIndicator(
             onRefresh: _reload,
@@ -166,74 +187,62 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
                 key: const Key('admin-banners-scroll'),
                 primary: true,
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 40),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                 children: [
                   if (AppConfig.isDemoMode) ...[
                     const _DemoBannerNotice(),
                     const SizedBox(height: 12),
                   ],
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    alignment: WrapAlignment.start,
-                    children: [
-                      FilledButton.icon(
-                        onPressed: () => _showBannerForm(),
-                        icon: const Icon(Icons.add),
-                        label: const Text('بانر جديد'),
-                      ),
-                      SegmentedButton<_BannerFilter>(
-                        showSelectedIcon: false,
-                        segments: const [
-                          ButtonSegment(
-                            value: _BannerFilter.all,
-                            label: Text('الكل'),
-                          ),
-                          ButtonSegment(
-                            value: _BannerFilter.active,
-                            label: Text('النشطة'),
-                          ),
-                          ButtonSegment(
-                            value: _BannerFilter.inactive,
-                            label: Text('غير النشطة'),
-                          ),
-                        ],
-                        selected: {_filter},
-                        onSelectionChanged: (selection) {
-                          setState(() => _filter = selection.single);
-                        },
-                      ),
-                    ],
+                  _AdminBannersToolbar(
+                    totalCount: allBanners.length,
+                    activeCount: activeCount,
+                    filter: _filter,
+                    onFilterChanged: (filter) =>
+                        setState(() => _filter = filter),
+                    onNewBanner: () => _showBannerForm(),
+                    onPreviewStore: () => _openStorePreview(),
                   ),
-                  const SizedBox(height: 16),
-                  PrimaryScrollController.none(
-                    child: _ClientBannerPreview(banners: allBanners),
-                  ),
-                  const SizedBox(height: 20),
-                  _BannerListHeader(count: banners.length),
+                  const SizedBox(height: 12),
+                  if (!canReorder) _ReorderDisabledHint(filter: _filter),
                   const SizedBox(height: 10),
                   if (banners.isEmpty)
                     const _EmptyBanners()
                   else
-                    for (var index = 0; index < banners.length; index++) ...[
-                      if (index > 0) const SizedBox(height: 8),
-                      _BannerCard(
-                        banner: banners[index],
-                        busy: _busyBannerIds.contains(banners[index].id),
-                        canMoveUp: index > 0,
-                        canMoveDown: index < banners.length - 1,
-                        onEdit: () => _showBannerForm(banners[index]),
-                        onToggleActive: () => _confirmToggle(banners[index]),
-                        onMoveUp: () =>
-                            unawaited(_moveBanner(banners[index], -1)),
-                        onMoveDown: () =>
-                            unawaited(_moveBanner(banners[index], 1)),
-                        onSortOrderChanged: (sortOrder) => unawaited(
-                          _setBannerSortOrder(banners[index], sortOrder),
-                        ),
+                    ReorderableListView.builder(
+                      key: const ValueKey('admin-banners-reorder-list'),
+                      buildDefaultDragHandles: false,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: banners.length,
+                      proxyDecorator: (child, index, animation) => Material(
+                        elevation: 8,
+                        color: Colors.transparent,
+                        child: child,
                       ),
-                    ],
+                      onReorder: canReorder ? _onReorder : (_, __) {},
+                      itemBuilder: (context, index) {
+                        final banner = banners[index];
+                        return Padding(
+                          key: ValueKey('banner-card-${banner.id}'),
+                          padding: EdgeInsets.only(
+                              bottom: index == banners.length - 1 ? 0 : 8),
+                          child: _BannerCard(
+                            banner: banner,
+                            itemIndex: index,
+                            busy: _busyBannerIds.contains(banner.id),
+                            reorderEnabled: canReorder,
+                            destinationLabel: _resolvedDestinationLabel(banner),
+                            onQuickPreview: () =>
+                                _openStorePreview(focusBanner: banner),
+                            onEdit: () => _showBannerForm(banner),
+                            onToggleActive: (value) =>
+                                _toggleActive(banner, value),
+                            onDuplicate: () => _duplicateBanner(banner),
+                            onDelete: null,
+                          ),
+                        );
+                      },
+                    ),
                 ],
               ),
             ),
@@ -243,8 +252,65 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
     );
   }
 
+  List<AppBanner> _filteredBanners() {
+    return _allBanners.where((banner) {
+      return switch (_filter) {
+        _BannerFilter.all => true,
+        _BannerFilter.active => banner.active,
+        _BannerFilter.inactive => !banner.active,
+      };
+    }).toList(growable: false);
+  }
+
+  String _resolvedDestinationLabel(AppBanner banner) {
+    switch (banner.targetType) {
+      case 'product':
+        final productName = _resolvedProductNames[banner.targetValue];
+        if (productName != null && productName.isNotEmpty) return productName;
+        return 'منتج محدد';
+      case 'category':
+        return banner.targetValue.isEmpty ? 'تصنيف' : banner.targetValue;
+      default:
+        return 'الكتالوج';
+    }
+  }
+
+  Future<void> _onReorder(int oldIndex, int newIndex) async {
+    if (_filter != _BannerFilter.all) return;
+    HapticFeedback.mediumImpact();
+    if (newIndex > oldIndex) {
+      newIndex -= 1;
+    }
+    final current = List<AppBanner>.from(_allBanners);
+    final moved = current.removeAt(oldIndex);
+    current.insert(newIndex, moved);
+    final reordered = [
+      for (var i = 0; i < current.length; i++)
+        current[i].copyWith(sortOrder: i + 1),
+    ];
+    setState(() {
+      _allBanners = reordered;
+    });
+    try {
+      final repo = ref.read(adminRepositoryProvider);
+      for (final next in reordered) {
+        final previous = _allBanners.firstWhere((item) => item.id == next.id);
+        if (previous.sortOrder != next.sortOrder) {
+          await repo.saveBanner(next);
+        }
+      }
+    } catch (_) {
+      if (!mounted) return;
+      await _reload();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر حفظ الترتيب الجديد.')),
+      );
+    }
+  }
+
   Future<void> _showBannerForm([AppBanner? banner]) async {
-    final existing = await _loadBanners();
+    final existing = _allBanners;
     if (!mounted) return;
 
     final nextSortOrder = nextBannerSortOrder(existing);
@@ -260,7 +326,7 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
     );
 
     if (saved == null || !mounted) return;
-    await reloadAfterMutation(this, _reload);
+    await reloadAfterMutation(this, _reloadData);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -273,66 +339,50 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
     );
   }
 
-  Future<void> _confirmToggle(AppBanner banner) async {
-    final activate = !banner.active;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(activate ? 'تفعيل البانر؟' : 'إيقاف البانر؟'),
-        content: Text(
-          activate
-              ? 'سيظهر «${banner.title}» للعملاء حسب ترتيب ظهوره.'
-              : 'سيتوقف «${banner.title}» عن الظهور للعملاء من دون حذف بياناته.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(activate ? 'تفعيل' : 'إيقاف'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
+  Future<void> _toggleActive(
+    AppBanner banner,
+    bool nextActive, {
+    bool showUndo = true,
+  }) async {
     if (_busyBannerIds.contains(banner.id)) return;
-
+    final before = banner;
+    final after = banner.copyWith(active: nextActive);
     setState(() => _busyBannerIds.add(banner.id));
+    _replaceBannerLocally(after);
     try {
       await ref
           .read(adminRepositoryProvider)
-          .setBannerActive(banner, active: activate);
+          .setBannerActive(banner, active: nextActive);
       if (!mounted) return;
-      await reloadAfterMutation(this, _reload);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            AppConfig.isDemoMode
-                ? 'تم التعديل تجريبياً لهذه الجلسة فقط.'
-                : activate
-                    ? 'تم تفعيل البانر.'
-                    : 'تم إيقاف البانر.',
+      if (showUndo) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(nextActive
+                ? 'تم إظهار البانر للعملاء.'
+                : 'تم إيقاف البانر للعملاء.'),
+            action: SnackBarAction(
+              label: 'تراجع',
+              onPressed: () =>
+                  unawaited(_toggleActive(after, !nextActive, showUndo: false)),
+            ),
           ),
-        ),
-      );
+        );
+      }
     } catch (error) {
+      _replaceBannerLocally(before);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             mutationFailureMessageAr(
               error,
-              fallback:
-                  'تعذر تغيير حالة البانر. تحقق من الصلاحيات والاتصال ثم أعد المحاولة.',
+              fallback: 'تعذر تغيير حالة البانر. تم التراجع عن التعديل.',
             ),
           ),
         ),
       );
       if (error is StaleWriteException) {
-        await reloadAfterMutation(this, _reload);
+        await reloadAfterMutation(this, _reloadData);
       }
     } finally {
       if (mounted) {
@@ -341,72 +391,73 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
     }
   }
 
-  Future<void> _setBannerSortOrder(AppBanner banner, int sortOrder) async {
-    if (banner.sortOrder == sortOrder || _busyBannerIds.contains(banner.id)) {
-      return;
-    }
-    setState(() => _busyBannerIds.add(banner.id));
-    try {
-      await ref.read(adminRepositoryProvider).saveBanner(
-            banner.copyWith(sortOrder: sortOrder),
-          );
-      if (!mounted) return;
-      await reloadAfterMutation(this, _reload);
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            mutationFailureMessageAr(
-              error,
-              fallback: 'تعذر حفظ رقم الترتيب. تحقق من الاتصال ثم أعد المحاولة.',
-            ),
-          ),
-        ),
-      );
-      if (error is StaleWriteException) {
-        await reloadAfterMutation(this, _reload);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busyBannerIds.remove(banner.id));
-      }
-    }
+  void _replaceBannerLocally(AppBanner next) {
+    setState(() {
+      _allBanners = [
+        for (final item in _allBanners)
+          if (item.id == next.id) next else item,
+      ]..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    });
   }
 
-  Future<void> _moveBanner(AppBanner banner, int direction) async {
+  Future<void> _duplicateBanner(AppBanner banner) async {
     if (_busyBannerIds.contains(banner.id)) return;
     setState(() => _busyBannerIds.add(banner.id));
     try {
-      final current = await _loadBanners();
-      final reordered = moveBannerInShowingOrder(
-        current,
-        bannerId: banner.id,
-        direction: direction,
-      );
-      final repo = ref.read(adminRepositoryProvider);
-      for (final next in reordered) {
-        final previous = current.firstWhere((item) => item.id == next.id);
-        if (previous.sortOrder != next.sortOrder) {
-          await repo.saveBanner(next);
-        }
-      }
+      final copy = await ref.read(adminRepositoryProvider).saveBanner(
+            banner.copyWith(
+              id: 'new',
+              title: 'نسخة من ${banner.title}',
+              active: false,
+              sortOrder: nextBannerSortOrder(_allBanners),
+            ),
+          );
       if (!mounted) return;
-      await reloadAfterMutation(this, _reload);
-    } catch (_) {
+      await _reloadData();
+      if (!mounted) return;
+      await _showBannerForm(copy);
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'تعذر تغيير ترتيب الظهور. تحقق من الاتصال ثم أعد المحاولة.',
+            mutationFailureMessageAr(
+              error,
+              fallback: 'تعذر نسخ البانر حالياً.',
+            ),
           ),
         ),
       );
     } finally {
-      if (mounted) {
-        setState(() => _busyBannerIds.remove(banner.id));
-      }
+      if (mounted) setState(() => _busyBannerIds.remove(banner.id));
     }
+  }
+
+  Future<void> _openStorePreview({AppBanner? focusBanner}) async {
+    final isMobile = MediaQuery.sizeOf(context).width < 800;
+    final child = _StorePreviewPanel(
+      banners: _allBanners,
+      focusBanner: focusBanner,
+    );
+    if (isMobile) {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (context) => FractionallySizedBox(
+          heightFactor: 0.95,
+          child: child,
+        ),
+      );
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        child: SizedBox(width: 980, height: 640, child: child),
+      ),
+    );
   }
 }
 
@@ -452,6 +503,8 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
   List<String> categories = const [];
   List<Product> productResults = const [];
   Timer? productSearchDebounce;
+  _BannerPreviewMode _previewMode = _BannerPreviewMode.mobile;
+  bool _showAdvancedImageUrl = true;
 
   bool get editing => widget.banner != null;
 
@@ -505,7 +558,8 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
   void _startUploadProgressTicker({double from = 0.12}) {
     _stopUploadProgressTicker();
     var current = from.clamp(0.0, 0.88);
-    uploadProgressTicker = Timer.periodic(const Duration(milliseconds: 140), (_) {
+    uploadProgressTicker =
+        Timer.periodic(const Duration(milliseconds: 140), (_) {
       if (!mounted || !uploading) {
         _stopUploadProgressTicker();
         return;
@@ -690,455 +744,31 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final targetHelp = switch (targetType) {
-      'category' => 'اختر فئة من الكتالوج الحالي',
-      'product' => 'ابحث عن منتج ثم اختره من القائمة',
-      _ => 'يفتح الكتالوج العام ولا يحتاج قيمة إضافية.',
-    };
-
+    final isDesktop = MediaQuery.sizeOf(context).width >= 1000;
     return AlertDialog(
       title: Text(editing ? 'تعديل البانر' : 'بانر جديد'),
       content: SizedBox(
-        width: 720,
+        width: isDesktop ? 980 : 760,
         child: Form(
           key: formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (AppConfig.isDemoMode) ...[
-                  const _DialogDemoNotice(),
-                  const SizedBox(height: 12),
-                ],
-                TextFormField(
-                  controller: title,
-                  enabled: !saving,
-                  maxLength: 120,
-                  textInputAction: TextInputAction.next,
-                  decoration: const InputDecoration(labelText: 'العنوان *'),
-                  validator: (value) => value == null || value.trim().isEmpty
-                      ? 'اكتب عنوان البانر'
-                      : null,
-                ),
-                TextFormField(
-                  controller: body,
-                  enabled: !saving,
-                  maxLength: 500,
-                  maxLines: 3,
-                  decoration: const InputDecoration(labelText: 'الوصف المختصر'),
-                ),
-                TextFormField(
-                  key: const ValueKey('banner-image-url-field'),
-                  controller: imageUrl,
-                  enabled: !saving && !uploading,
-                  maxLength: 2000,
-                  keyboardType: TextInputType.url,
-                  textDirection: TextDirection.ltr,
-                  onChanged: (_) {
-                    if (imagePreviewBytes == null) {
-                      setState(() {});
-                      return;
-                    }
-                    setState(() => imagePreviewBytes = null);
-                  },
-                  decoration: const InputDecoration(
-                    labelText: 'رابط الصورة HTTPS',
-                    hintText: 'https://cdn.example.com/banner.webp',
-                    helperText: 'أدخل رابطاً آمناً أو ارفع صورة',
-                  ),
-                  validator: (value) {
-                    final trimmed = value?.trim() ?? '';
-                    if (trimmed.isEmpty) {
-                      return 'أضف رابط صورة أو ارفع صورة';
-                    }
-                    return _isSafeHttpsUrl(trimmed)
-                        ? null
-                        : 'استخدم رابط صورة HTTPS صالحاً ومن دون بيانات دخول';
-                  },
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          child: isDesktop
+              ? Row(
                   children: [
-                    SizedBox(
-                      width: 112,
-                      height: 44,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: imagePreviewBytes != null
-                                ? Image.memory(
-                                    imagePreviewBytes!,
-                                    key: const ValueKey(
-                                      'banner-image-preview',
-                                    ),
-                                    width: 112,
-                                    height: 44,
-                                    fit: BoxFit.cover,
-                                    gaplessPlayback: true,
-                                    errorBuilder:
-                                        (context, error, stackTrace) =>
-                                            const ColoredBox(
-                                      color: Color(0xFFE8EEEC),
-                                      child: Center(
-                                        child: Icon(Icons.image_outlined),
-                                      ),
-                                    ),
-                                  )
-                                : _BannerUrlThumbnail(url: imageUrl.text),
-                          ),
-                          if (uploading)
-                            CircularUploadProgress(
-                              key: const ValueKey(
-                                'banner-image-upload-progress',
-                              ),
-                              progress: uploadProgress,
-                              size: 44,
-                              borderRadius: 12,
-                              strokeWidth: 2.5,
-                            ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Align(
-                        alignment: AlignmentDirectional.centerStart,
-                        child: OutlinedButton.icon(
-                          key: const ValueKey('banner-image-upload-button'),
-                          onPressed: saving ||
-                                  uploading ||
-                                  !ref
-                                      .read(productImagesRepositoryProvider)
-                                      .canUpload
-                              ? null
-                              : _uploadImage,
-                          icon: uploading
-                              ? const SizedBox.shrink()
-                              : const Icon(Icons.upload_file_outlined),
-                          label: Text(
-                            uploading
-                                ? uploadProgressLabelAr(uploadProgress)
-                                : 'اختيار ورفع صورة',
-                          ),
-                        ),
-                      ),
-                    ),
+                    Expanded(child: _editorForm()),
+                    const SizedBox(width: 16),
+                    Expanded(child: _editorPreviewCard()),
                   ],
-                ),
-                if (AppConfig.isDemoMode ||
-                    !ref.read(productImagesRepositoryProvider).canUpload) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    AppConfig.isDemoMode
-                        ? 'رفع الصور غير متاح في الوضع التجريبي. استخدم رابط HTTPS آمناً.'
-                        : 'رفع الصور يحتاج ربط Supabase الإنتاجي وتسجيل دخول إداري. استخدم رابط HTTPS يدوياً حالياً.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                ],
-                if (uploadError != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    uploadError!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                Text(
-                  'نص زر الإجراء *',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final preset in widget.ctaPresets)
-                      ChoiceChip(
-                        label: Text(preset),
-                        selected: !customCta && cta.text.trim() == preset,
-                        onSelected: saving
-                            ? null
-                            : (_) {
-                                setState(() {
-                                  customCta = false;
-                                  cta.text = preset;
-                                  saveError = null;
-                                });
-                              },
-                      ),
-                    ChoiceChip(
-                      key: const ValueKey('banner-cta-custom-chip'),
-                      label: const Text('مخصص'),
-                      selected: customCta,
-                      onSelected: saving
-                          ? null
-                          : (_) {
-                              setState(() {
-                                customCta = true;
-                                saveError = null;
-                              });
-                            },
-                    ),
-                  ],
-                ),
-                if (customCta) ...[
-                  const SizedBox(height: 8),
-                  TextFormField(
-                    key: const ValueKey('banner-cta-custom-field'),
-                    controller: cta,
-                    enabled: !saving,
-                    maxLength: 40,
-                    decoration: const InputDecoration(
-                      labelText: 'نص الزر المخصص *',
-                    ),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? 'اكتب نص زر الإجراء'
-                        : null,
-                  ),
-                ] else
-                  FormField<String>(
-                    initialValue: cta.text,
-                    validator: (_) =>
-                        cta.text.trim().isEmpty ? 'اكتب نص زر الإجراء' : null,
-                    builder: (state) => state.hasError
-                        ? Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Text(
-                              state.errorText!,
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.error,
-                                fontSize: 12,
-                              ),
-                            ),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                DropdownButtonFormField<String>(
-                  key: const ValueKey('banner-target-type-field'),
-                  initialValue: targetType,
-                  decoration: const InputDecoration(labelText: 'وجهة البانر'),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'catalog',
-                      child: Text('الكتالوج العام'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'category',
-                      child: Text('فئة محددة'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'product',
-                      child: Text('منتج محدد'),
-                    ),
-                  ],
-                  onChanged: saving
-                      ? null
-                      : (value) {
-                          setState(() {
-                            targetType = value ?? 'catalog';
-                            saveError = null;
-                            if (targetType == 'catalog') {
-                              selectedCategory = null;
-                              selectedProductId = null;
-                              selectedProductLabel = null;
-                              productSearch.clear();
-                              productResults = const [];
-                            }
-                            if (targetType == 'category') {
-                              selectedProductId = null;
-                              selectedProductLabel = null;
-                              productSearch.clear();
-                              productResults = const [];
-                            }
-                            if (targetType == 'product') {
-                              selectedCategory = null;
-                            }
-                          });
-                        },
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  targetHelp,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                if (targetType == 'category') ...[
-                  const SizedBox(height: 8),
-                  if (loadingLookups)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: ShopLoading.section(
-                        message: 'جارٍ تحميل الفئات...',
-                        height: 72,
-                      ),
-                    )
-                  else if (categories.isEmpty)
-                    FormField<String>(
-                      validator: (_) => 'لا توجد فئات متاحة حالياً',
-                      builder: (state) => Text(
-                        state.errorText ?? 'لا توجد فئات متاحة حالياً',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    )
-                  else
-                    DropdownButtonFormField<String>(
-                      key: ValueKey(
-                        'banner-category-field-${categories.join('|')}-$selectedCategory',
-                      ),
-                      initialValue: selectedCategory != null &&
-                              categories.contains(selectedCategory)
-                          ? selectedCategory
-                          : null,
-                      decoration: const InputDecoration(
-                        labelText: 'اسم الفئة *',
-                        helperText: 'اختر فئة من الكتالوج الحالي',
-                      ),
-                      items: [
-                        for (final category in categories)
-                          DropdownMenuItem(
-                            value: category,
-                            child: Text(category),
-                          ),
-                      ],
-                      onChanged: saving
-                          ? null
-                          : (value) => setState(() => selectedCategory = value),
-                      validator: (value) {
-                        final resolved = value ?? selectedCategory;
-                        return resolved == null || resolved.trim().isEmpty
-                            ? 'اختر فئة من القائمة'
-                            : null;
-                      },
-                    ),
-                ],
-                if (targetType == 'product') ...[
-                  const SizedBox(height: 8),
-                  if (selectedProductId != null &&
-                      selectedProductId!.isNotEmpty)
-                    InputDecorator(
-                      decoration: const InputDecoration(
-                        labelText: 'المنتج المختار *',
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'تم اختيار: ${selectedProductLabel ?? selectedProductId}',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'تغيير المنتج',
-                            onPressed: saving
-                                ? null
-                                : () {
-                                    setState(() {
-                                      selectedProductId = null;
-                                      selectedProductLabel = null;
-                                      productSearch.clear();
-                                      productResults = const [];
-                                    });
-                                  },
-                            icon: const Icon(Icons.close),
-                          ),
-                        ],
-                      ),
-                    )
-                  else ...[
-                    TextFormField(
-                      key: const ValueKey('banner-product-search-field'),
-                      controller: productSearch,
-                      enabled: !saving,
-                      decoration: const InputDecoration(
-                        labelText: 'ابحث عن منتج',
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                      onChanged: _scheduleProductSearch,
-                      validator: (_) => selectedProductId == null ||
-                              selectedProductId!.trim().isEmpty
-                          ? 'اختر منتجاً من القائمة'
-                          : null,
-                    ),
-                    if (productResults.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 220),
-                        child: Material(
-                          type: MaterialType.transparency,
-                          child: ListView.separated(
-                            shrinkWrap: true,
-                            itemCount: productResults.length,
-                            separatorBuilder: (_, __) =>
-                                const Divider(height: 1),
-                            itemBuilder: (context, index) {
-                              final product = productResults[index];
-                              return ListTile(
-                                dense: true,
-                                title: Text(product.nameAr),
-                                subtitle: Text(
-                                  '${product.brand} · ${product.id}',
-                                  textDirection: TextDirection.ltr,
-                                ),
-                                onTap: saving
-                                    ? null
-                                    : () {
-                                        setState(() {
-                                          selectedProductId = product.id;
-                                          selectedProductLabel = product.nameAr;
-                                          productSearch.clear();
-                                          productResults = const [];
-                                        });
-                                      },
-                              );
-                            },
-                          ),
-                        ),
-                      ),
+                )
+              : SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _editorForm(),
+                      const SizedBox(height: 12),
+                      _editorPreviewCard(),
                     ],
-                  ],
-                ],
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  value: active,
-                  onChanged:
-                      saving ? null : (value) => setState(() => active = value),
-                  title: const Text('نشط ويظهر للعملاء'),
-                  subtitle: const Text(
-                    'يمكن إيقافه لاحقاً من القائمة من دون حذف البيانات.',
                   ),
                 ),
-                if (saveError != null)
-                  Container(
-                    margin: const EdgeInsets.only(top: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.errorContainer,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Text(
-                      saveError!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onErrorContainer,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
         ),
       ),
       actions: [
@@ -1159,61 +789,468 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
       ],
     );
   }
+
+  Widget _editorForm() {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (AppConfig.isDemoMode) ...[
+            const _DialogDemoNotice(),
+            const SizedBox(height: 12),
+          ],
+          TextFormField(
+            controller: title,
+            enabled: !saving,
+            maxLength: 120,
+            textInputAction: TextInputAction.next,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(labelText: 'العنوان *'),
+            validator: (value) => value == null || value.trim().isEmpty
+                ? 'اكتب عنوان البانر'
+                : null,
+          ),
+          TextFormField(
+            controller: body,
+            enabled: !saving,
+            maxLength: 500,
+            maxLines: 3,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(labelText: 'الوصف المختصر'),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const ValueKey('banner-image-upload-button'),
+                  onPressed: saving ||
+                          uploading ||
+                          !ref.read(productImagesRepositoryProvider).canUpload
+                      ? null
+                      : _uploadImage,
+                  icon: const Icon(Icons.upload_file_outlined),
+                  label: Text(uploading
+                      ? uploadProgressLabelAr(uploadProgress)
+                      : 'رفع صورة البانر'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: SizedBox(
+                  height: 150,
+                  child: imagePreviewBytes != null
+                      ? Image.memory(
+                          imagePreviewBytes!,
+                          key: const ValueKey('banner-image-preview'),
+                          fit: BoxFit.cover,
+                        )
+                      : _BannerUrlThumbnail(url: imageUrl.text),
+                ),
+              ),
+              if (uploading)
+                CircularUploadProgress(
+                  key: const ValueKey('banner-image-upload-progress'),
+                  progress: uploadProgress,
+                  size: 64,
+                  borderRadius: 16,
+                  strokeWidth: 3,
+                ),
+            ],
+          ),
+          if (AppConfig.isDemoMode ||
+              !ref.read(productImagesRepositoryProvider).canUpload) ...[
+            const SizedBox(height: 6),
+            Text(
+              AppConfig.isDemoMode
+                  ? 'رفع الصور غير متاح في الوضع التجريبي. استخدم رابط HTTPS آمناً.'
+                  : 'رفع الصور يحتاج ربط Supabase الإنتاجي وتسجيل دخول إداري. استخدم رابط HTTPS يدوياً حالياً.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ],
+          if (uploadError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              uploadError!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          const SizedBox(height: 4),
+          TextButton.icon(
+            key: const ValueKey('banner-image-advanced-toggle'),
+            onPressed: () => setState(
+              () => _showAdvancedImageUrl = !_showAdvancedImageUrl,
+            ),
+            icon: Icon(
+              _showAdvancedImageUrl ? Icons.expand_less : Icons.expand_more,
+            ),
+            label: const Text('خيارات متقدمة للصورة (رابط HTTPS)'),
+          ),
+          Offstage(
+            offstage: !_showAdvancedImageUrl,
+            child: TextFormField(
+              key: const ValueKey('banner-image-url-field'),
+              controller: imageUrl,
+              enabled: !saving && !uploading,
+              maxLength: 2000,
+              keyboardType: TextInputType.url,
+              textDirection: TextDirection.ltr,
+              onChanged: (_) => setState(() => imagePreviewBytes = null),
+              decoration: const InputDecoration(
+                labelText: 'رابط الصورة HTTPS',
+                hintText: 'https://cdn.example.com/banner.webp',
+              ),
+              validator: (value) {
+                final trimmed = value?.trim() ?? '';
+                if (trimmed.isEmpty) return 'أضف رابط صورة أو ارفع صورة';
+                return _isSafeHttpsUrl(trimmed)
+                    ? null
+                    : 'استخدم رابط صورة HTTPS صالحاً ومن دون بيانات دخول';
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildCtaSection(),
+          const SizedBox(height: 12),
+          _buildDestinationSection(),
+          const SizedBox(height: 8),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            value: active,
+            onChanged:
+                saving ? null : (value) => setState(() => active = value),
+            title: const Text('ظاهر للعملاء'),
+          ),
+          if (saveError != null)
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.errorContainer,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(
+                saveError!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCtaSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'نص زر الإجراء *',
+          style: Theme.of(context)
+              .textTheme
+              .titleSmall
+              ?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final preset in widget.ctaPresets)
+              ChoiceChip(
+                label: Text(preset),
+                selected: !customCta && cta.text.trim() == preset,
+                onSelected: saving
+                    ? null
+                    : (_) {
+                        setState(() {
+                          customCta = false;
+                          cta.text = preset;
+                        });
+                      },
+              ),
+            ChoiceChip(
+              key: const ValueKey('banner-cta-custom-chip'),
+              label: const Text('مخصص'),
+              selected: customCta,
+              onSelected:
+                  saving ? null : (_) => setState(() => customCta = true),
+            ),
+          ],
+        ),
+        if (customCta) ...[
+          const SizedBox(height: 8),
+          TextFormField(
+            key: const ValueKey('banner-cta-custom-field'),
+            controller: cta,
+            enabled: !saving,
+            maxLength: 40,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(labelText: 'نص الزر المخصص *'),
+            validator: (value) => value == null || value.trim().isEmpty
+                ? 'اكتب نص زر الإجراء'
+                : null,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildDestinationSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('وجهة البانر'),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          key: const ValueKey('banner-target-type-field'),
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: 'catalog', label: Text('جميع المنتجات')),
+            ButtonSegment(value: 'category', label: Text('تصنيف')),
+            ButtonSegment(value: 'product', label: Text('منتج')),
+          ],
+          selected: {targetType},
+          onSelectionChanged: saving
+              ? null
+              : (selection) => setState(() {
+                    targetType = selection.single;
+                    if (targetType == 'catalog') {
+                      selectedCategory = null;
+                      selectedProductId = null;
+                      selectedProductLabel = null;
+                    }
+                  }),
+        ),
+        if (targetType == 'category') ...[
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            initialValue: selectedCategory,
+            decoration: const InputDecoration(labelText: 'اسم التصنيف *'),
+            items: [
+              for (final category in categories)
+                DropdownMenuItem(value: category, child: Text(category)),
+            ],
+            onChanged: saving
+                ? null
+                : (value) => setState(() => selectedCategory = value),
+            validator: (value) =>
+                value == null || value.trim().isEmpty ? 'اختر تصنيفاً' : null,
+          ),
+        ],
+        if (targetType == 'product') ...[
+          const SizedBox(height: 8),
+          TextFormField(
+            key: const ValueKey('banner-product-search-field'),
+            controller: productSearch,
+            enabled: !saving,
+            decoration: const InputDecoration(
+              labelText: 'ابحث عن منتج',
+              prefixIcon: Icon(Icons.search),
+            ),
+            onChanged: _scheduleProductSearch,
+            validator: (_) =>
+                selectedProductId == null ? 'اختر منتجاً من القائمة' : null,
+          ),
+          if (productResults.isNotEmpty)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ListView.builder(
+                itemCount: productResults.length,
+                itemBuilder: (context, index) {
+                  final product = productResults[index];
+                  return ListTile(
+                    leading: _ProductThumb(url: product.imageUrl),
+                    title: Text(product.nameAr),
+                    subtitle: Text(product.brand),
+                    onTap: () => setState(() {
+                      selectedProductId = product.id;
+                      selectedProductLabel = product.nameAr;
+                      productResults = const [];
+                      productSearch.clear();
+                    }),
+                  );
+                },
+              ),
+            ),
+          if (selectedProductLabel != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Chip(label: Text('🎯 $selectedProductLabel')),
+            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _editorPreviewCard() {
+    final banner = AppBanner(
+      id: widget.banner?.id ?? 'preview',
+      title: title.text.trim().isEmpty ? 'عنوان البانر' : title.text.trim(),
+      body: body.text.trim(),
+      ctaText: cta.text.trim().isEmpty ? 'عرض' : cta.text.trim(),
+      imageUrl: imageUrl.text.trim().isEmpty
+          ? 'https://cdn.example.com/banner.webp'
+          : imageUrl.text.trim(),
+      targetType: targetType,
+      targetValue: '',
+      sortOrder: sortOrder,
+      active: true,
+    );
+    final slides = HomeBannerSlide.fromAdminBanners([banner]);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.green.withValues(alpha: .14)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                const Text('معاينة مباشرة'),
+                SegmentedButton<_BannerPreviewMode>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(
+                        value: _BannerPreviewMode.mobile, label: Text('جوال')),
+                    ButtonSegment(
+                        value: _BannerPreviewMode.desktop,
+                        label: Text('حاسوب')),
+                  ],
+                  selected: {_previewMode},
+                  onSelectionChanged: (selection) =>
+                      setState(() => _previewMode = selection.single),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _CustomerBannerPreviewStage(
+              mobile: _previewMode == _BannerPreviewMode.mobile,
+              child: OfferBannerCarousel(
+                banners: slides,
+                preview: true,
+                compact: _previewMode == _BannerPreviewMode.mobile,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 enum _BannerFilter { all, active, inactive }
 
-class _BannerListHeader extends StatelessWidget {
-  const _BannerListHeader({required this.count});
+class _AdminBannersToolbar extends StatelessWidget {
+  const _AdminBannersToolbar({
+    required this.totalCount,
+    required this.activeCount,
+    required this.filter,
+    required this.onFilterChanged,
+    required this.onPreviewStore,
+    required this.onNewBanner,
+  });
 
-  final int count;
+  final int totalCount;
+  final int activeCount;
+  final _BannerFilter filter;
+  final ValueChanged<_BannerFilter> onFilterChanged;
+  final VoidCallback onPreviewStore;
+  final VoidCallback onNewBanner;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            'قائمة البانرات',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
-                ),
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.green.withValues(alpha: .14)),
+      ),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text('$totalCount بانرات'),
+          Text('$activeCount نشطة'),
+          SegmentedButton<_BannerFilter>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: _BannerFilter.all, label: Text('الكل')),
+              ButtonSegment(value: _BannerFilter.active, label: Text('النشطة')),
+              ButtonSegment(
+                  value: _BannerFilter.inactive, label: Text('المتوقفة')),
+            ],
+            selected: {filter},
+            onSelectionChanged: (selection) =>
+                onFilterChanged(selection.single),
           ),
-        ),
-        Text(
-          '$count',
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: AppTheme.darkGreen.withValues(alpha: .72),
-              ),
-        ),
-      ],
+          OutlinedButton.icon(
+            key: const ValueKey('preview-store-button'),
+            onPressed: onPreviewStore,
+            icon: const Icon(Icons.storefront_outlined),
+            label: const Text('معاينة المتجر'),
+          ),
+          FilledButton.icon(
+            onPressed: onNewBanner,
+            icon: const Icon(Icons.add),
+            label: const Text('بانر جديد'),
+          ),
+        ],
+      ),
     );
   }
 }
 
 enum _BannerPreviewMode { desktop, mobile }
 
-class _ClientBannerPreview extends ConsumerStatefulWidget {
-  const _ClientBannerPreview({required this.banners});
+class _StorePreviewPanel extends ConsumerStatefulWidget {
+  const _StorePreviewPanel({required this.banners, this.focusBanner});
 
   final List<AppBanner> banners;
+  final AppBanner? focusBanner;
 
   @override
-  ConsumerState<_ClientBannerPreview> createState() =>
-      _ClientBannerPreviewState();
+  ConsumerState<_StorePreviewPanel> createState() => _StorePreviewPanelState();
 }
 
-class _ClientBannerPreviewState extends ConsumerState<_ClientBannerPreview> {
+class _StorePreviewPanelState extends ConsumerState<_StorePreviewPanel> {
   _BannerPreviewMode _mode = _BannerPreviewMode.desktop;
+  bool _showAllContext = false;
 
   @override
   Widget build(BuildContext context) {
-    final active = activeBannersInShowingOrder(widget.banners);
+    final allActive = activeBannersInShowingOrder(widget.banners);
+    final active = widget.focusBanner != null && !_showAllContext
+        ? [widget.focusBanner!]
+        : allActive;
     final slides = HomeBannerSlide.fromAdminBanners(active);
     final desktop = _mode == _BannerPreviewMode.desktop;
     return DecoratedBox(
-      key: const Key('admin-banner-client-preview'),
+      key: const Key('admin-banner-preview-panel'),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(22),
@@ -1238,7 +1275,7 @@ class _ClientBannerPreviewState extends ConsumerState<_ClientBannerPreview> {
               alignment: WrapAlignment.spaceBetween,
               children: [
                 Text(
-                  'معاينة عرض العملاء',
+                  'معاينة المتجر',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w900,
                       ),
@@ -1271,14 +1308,23 @@ class _ClientBannerPreviewState extends ConsumerState<_ClientBannerPreview> {
             Text(
               slides.isEmpty
                   ? 'لا توجد بانرات نشطة في ${ref.watch(shopBrandingProvider).shopName}.'
-                  : desktop
-                      ? 'شريط العروض كما يظهر للعملاء على الحاسوب.'
-                      : 'شريط العروض كما يظهر للعملاء على الجوال.',
+                  : 'عدد البانرات النشطة: ${allActive.length}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppTheme.darkGreen.withValues(alpha: .78),
                   ),
             ),
+            if (widget.focusBanner != null) ...[
+              const SizedBox(height: 6),
+              CheckboxListTile(
+                value: _showAllContext,
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('عرض ضمن جميع البانرات'),
+                onChanged: (value) =>
+                    setState(() => _showAllContext = value ?? false),
+              ),
+            ],
             if (slides.isNotEmpty) ...[
               const SizedBox(height: 10),
               _CustomerBannerPreviewStage(
@@ -1375,65 +1421,81 @@ class _CustomerBannerPreviewStage extends StatelessWidget {
 class _BannerCard extends StatelessWidget {
   const _BannerCard({
     required this.banner,
+    required this.itemIndex,
     required this.busy,
-    required this.canMoveUp,
-    required this.canMoveDown,
+    required this.reorderEnabled,
+    required this.destinationLabel,
+    required this.onQuickPreview,
     required this.onEdit,
     required this.onToggleActive,
-    required this.onMoveUp,
-    required this.onMoveDown,
-    required this.onSortOrderChanged,
+    required this.onDuplicate,
+    required this.onDelete,
   });
 
   final AppBanner banner;
+  final int itemIndex;
   final bool busy;
-  final bool canMoveUp;
-  final bool canMoveDown;
+  final bool reorderEnabled;
+  final String destinationLabel;
+  final VoidCallback onQuickPreview;
   final VoidCallback onEdit;
-  final VoidCallback onToggleActive;
-  final VoidCallback onMoveUp;
-  final VoidCallback onMoveDown;
-  final ValueChanged<int> onSortOrderChanged;
+  final ValueChanged<bool> onToggleActive;
+  final VoidCallback onDuplicate;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      key: ValueKey('banner-card-${banner.id}'),
-      clipBehavior: Clip.antiAlias,
+    final isMobile = MediaQuery.sizeOf(context).width < 700;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.green.withValues(alpha: .12)),
+      ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(
-            height: 108,
-            child: Image.network(
-              banner.imageUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => const ColoredBox(
-                color: Color(0xFFE8F1EC),
-                child: Center(
-                  child: Icon(
-                    Icons.broken_image_outlined,
-                    size: 48,
-                    color: AppTheme.green,
-                  ),
+          InkWell(
+            key: ValueKey('banner-thumbnail-${banner.id}'),
+            onTap: onQuickPreview,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+            child: AspectRatio(
+              aspectRatio: isMobile ? 16 / 7 : 16 / 5,
+              child: Image.network(
+                banner.imageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => const ColoredBox(
+                  color: Color(0xFFE8F1EC),
+                  child: Center(child: Icon(Icons.broken_image_outlined)),
                 ),
               ),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            padding: const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  banner.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w900,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        banner.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w900, fontSize: 16),
+                      ),
+                    ),
+                    if (reorderEnabled)
+                      Tooltip(
+                        message: 'اسحب لتغيير الترتيب',
+                        child: ReorderableDragStartListener(
+                          index: itemIndex,
+                          enabled: !busy,
+                          child: const Icon(Icons.drag_indicator),
+                        ),
+                      ),
+                  ],
                 ),
                 if (banner.body.isNotEmpty) ...[
                   const SizedBox(height: 4),
@@ -1443,95 +1505,58 @@ class _BannerCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
-                const SizedBox(height: 6),
-                Text(
-                  '${_targetLabel(banner.targetType)}'
-                  '${banner.targetValue.isEmpty ? '' : ': ${banner.targetValue}'}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                  textDirection: banner.targetType == 'url'
-                      ? TextDirection.ltr
-                      : TextDirection.rtl,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'زر الإجراء: ${banner.ctaText}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Wrap(
-                  key: ValueKey('banner-actions-${banner.id}'),
                   spacing: 8,
                   runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     _StatusChip(active: banner.active),
-                    _BannerSortOrderField(
-                      bannerId: banner.id,
-                      sortOrder: banner.sortOrder,
-                      enabled: !busy,
-                      onSubmit: onSortOrderChanged,
+                    _DestinationChip(
+                        type: banner.targetType, value: destinationLabel),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  value: banner.active,
+                  onChanged: busy ? null : onToggleActive,
+                  title: const Text('ظاهر للعملاء'),
+                ),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton(
+                      onPressed: busy ? null : onQuickPreview,
+                      child: const Text('معاينة'),
                     ),
-                    IconButton(
-                      key: ValueKey('banner-move-up-${banner.id}'),
-                      tooltip: 'تقديم في العرض',
-                      visualDensity: VisualDensity.compact,
-                      constraints: const BoxConstraints(
-                        minWidth: 40,
-                        minHeight: 40,
-                      ),
-                      onPressed: busy || !canMoveUp ? null : onMoveUp,
-                      icon: const Icon(Icons.keyboard_arrow_up),
-                    ),
-                    IconButton(
-                      key: ValueKey('banner-move-down-${banner.id}'),
-                      tooltip: 'تأخير في العرض',
-                      visualDensity: VisualDensity.compact,
-                      constraints: const BoxConstraints(
-                        minWidth: 40,
-                        minHeight: 40,
-                      ),
-                      onPressed: busy || !canMoveDown ? null : onMoveDown,
-                      icon: const Icon(Icons.keyboard_arrow_down),
-                    ),
-                    OutlinedButton.icon(
+                    OutlinedButton(
                       onPressed: busy ? null : onEdit,
-                      style: OutlinedButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                      ),
-                      icon: const Icon(Icons.edit_outlined, size: 18),
-                      label: const Text('تعديل'),
+                      child: const Text('تعديل'),
                     ),
-                    FilledButton.tonalIcon(
-                      onPressed: busy ? null : onToggleActive,
-                      style: FilledButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                      ),
-                      icon: busy
-                          ? const SizedBox.square(
-                              dimension: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(
-                              banner.active
-                                  ? Icons.pause_circle_outline
-                                  : Icons.play_circle_outline,
-                              size: 18,
-                            ),
-                      label: Text(banner.active ? 'إيقاف' : 'تفعيل'),
+                    PopupMenuButton<String>(
+                      onSelected: (value) async {
+                        if (value == 'preview') onQuickPreview();
+                        if (value == 'edit') onEdit();
+                        if (value == 'duplicate') onDuplicate();
+                        if (value == 'toggle') onToggleActive(!banner.active);
+                        if (value == 'delete' && onDelete != null) onDelete!();
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                            value: 'preview', child: Text('معاينة')),
+                        const PopupMenuItem(
+                            value: 'edit', child: Text('تعديل')),
+                        const PopupMenuItem(
+                            value: 'duplicate', child: Text('نسخ البانر')),
+                        PopupMenuItem(
+                            value: 'toggle',
+                            child: Text(banner.active ? 'إيقاف' : 'تفعيل')),
+                        if (onDelete != null)
+                          const PopupMenuItem(
+                              value: 'delete', child: Text('حذف')),
+                      ],
                     ),
                   ],
                 ),
@@ -1649,16 +1674,68 @@ class _StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Chip(
-      avatar: Icon(
-        active ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-        size: 16,
-        color: active ? AppTheme.green : Colors.grey.shade700,
-      ),
-      label: Text(active ? 'نشط' : 'غير نشط'),
+      label: Text(active ? '🟢 نشط' : '⚪ متوقف'),
       backgroundColor: active
           ? AppTheme.green.withValues(alpha: .10)
           : Colors.grey.withValues(alpha: .12),
       visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
+class _DestinationChip extends StatelessWidget {
+  const _DestinationChip({required this.type, required this.value});
+
+  final String type;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = switch (type) {
+      'product' => '🎯 منتج',
+      'category' => '📂 تصنيف',
+      _ => '🛒 الكتالوج',
+    };
+    return Chip(
+      label: Text('$label · $value'),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
+class _ProductThumb extends StatelessWidget {
+  const _ProductThumb({required this.url});
+
+  final String? url;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isSafeHttpsUrl(url)) {
+      return const CircleAvatar(child: Icon(Icons.inventory_2_outlined));
+    }
+    return CircleAvatar(
+      backgroundImage: NetworkImage(url!),
+      onBackgroundImageError: (_, __) {},
+    );
+  }
+}
+
+class _ReorderDisabledHint extends StatelessWidget {
+  const _ReorderDisabledHint({required this.filter});
+
+  final _BannerFilter filter;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.sand,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Text(
+        'إعادة الترتيب متاحة فقط عند اختيار "الكل". الفلتر الحالي: ${filter == _BannerFilter.active ? 'النشطة' : 'المتوقفة'}',
+      ),
     );
   }
 }
@@ -1799,13 +1876,6 @@ class _EmptyBanners extends ConsumerWidget {
     );
   }
 }
-
-String _targetLabel(String targetType) => switch (targetType) {
-      'category' => 'فئة',
-      'product' => 'منتج',
-      'url' => 'رابط خارجي',
-      _ => 'الكتالوج العام',
-    };
 
 bool _isSafeHttpsUrl(String? raw) {
   final uri = Uri.tryParse(raw?.trim() ?? '');

@@ -89,14 +89,17 @@ class _AdminReportDetailSheetState
 
   Future<List<Order>> _loadOrders() {
     final until = (widget.to ?? DateTime.now()).add(const Duration(seconds: 1));
-    return ref.read(ordersRepositoryProvider).ordersPage(
+    return ref
+        .read(ordersRepositoryProvider)
+        .ordersPage(
           statuses: widget.kind == AdminReportDetailKind.cancelled
               ? const [OrderStatus.cancelled]
               : const [OrderStatus.delivered],
           createdFrom: widget.from,
           createdUntil: until,
           pageSize: 100,
-        ).then((page) => page.orders);
+        )
+        .then((page) => page.orders);
   }
 
   @override
@@ -259,7 +262,8 @@ class _SummaryBanner extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(color: Colors.grey.shade700, fontSize: 12)),
+          Text(label,
+              style: TextStyle(color: Colors.grey.shade700, fontSize: 12)),
           const SizedBox(height: 2),
           Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
         ],
@@ -315,7 +319,8 @@ class _OrdersList extends StatelessWidget {
             if (address.isNotEmpty)
               _metaRow(Icons.place_outlined, 'التسليم', address),
             if (order.customerNote.trim().isNotEmpty)
-              _metaRow(Icons.notes_outlined, 'ملاحظة', order.customerNote.trim()),
+              _metaRow(
+                  Icons.notes_outlined, 'ملاحظة', order.customerNote.trim()),
             for (final item in order.items)
               ListTile(
                 dense: true,

@@ -199,8 +199,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   logoError = null;
                                 });
                                 try {
-                                  final images = ref
-                                      .read(productImagesRepositoryProvider);
+                                  final images =
+                                      ref.read(productImagesRepositoryProvider);
                                   final picked = await images.pick();
                                   if (picked == null) {
                                     setDialogState(() => uploadingLogo = false);
@@ -236,7 +236,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         icon: uploadingLogo
                             ? const SizedBox.square(
                                 dimension: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.upload_file_outlined),
                         label: Text(
@@ -322,14 +323,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 final validWhatsapp =
                     rawWhatsapp.isEmpty || _isValidWhatsapp(rawWhatsapp);
                 final rawLogo = logoUrl.trim();
-                final validLogo = rawLogo.isEmpty ||
-                    safeHttpsUpdateUri(rawLogo) != null;
-                if (shop.text.trim().isEmpty ||
-                    !validWhatsapp ||
-                    !validLogo) {
+                final validLogo =
+                    rawLogo.isEmpty || safeHttpsUpdateUri(rawLogo) != null;
+                if (shop.text.trim().isEmpty || !validWhatsapp || !validLogo) {
                   setDialogState(() {
-                    validationMessage =
-                        'أدخل اسم المتجر ورقم واتساب صحيحاً، '
+                    validationMessage = 'أدخل اسم المتجر ورقم واتساب صحيحاً، '
                         'واستخدم روابط HTTPS فقط للشعار.';
                   });
                   return;

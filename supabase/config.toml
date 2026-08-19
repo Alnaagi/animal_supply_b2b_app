@@ -15,7 +15,7 @@ additional_redirect_urls = [
 ]
 enable_signup = false
 enable_anonymous_sign_ins = false
-minimum_password_length = 6
+minimum_password_length = 10
 password_requirements = ""
 
 [auth.email]
@@ -43,6 +43,9 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.unregister-device-token]
+verify_jwt = true
+
+[functions.admin-reset-customer-device-binding]
 verify_jwt = true
 
 # Application-data wipe is admin-only. Gateway JWT stays on; the function also
