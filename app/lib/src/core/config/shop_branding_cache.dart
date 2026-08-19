@@ -70,8 +70,8 @@ class ShopBrandingCache {
         ? AppConfig.shopName
         : branding.shopName.trim();
     final next = ShopBranding(shopName: nextName, logoUrl: branding.logoUrl);
-    final changed = next.shopName != _current.shopName ||
-        next.logoUrl != _current.logoUrl;
+    final changed =
+        next.shopName != _current.shopName || next.logoUrl != _current.logoUrl;
     _current = next;
     applyShopDocumentTitle(_current.shopName);
     if (changed) unawaited(_persist());

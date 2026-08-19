@@ -444,7 +444,7 @@ class LocalCache {
       effectivePrice: (json['effectivePrice'] as num?)?.toDouble(),
       retailUnitPrice: (json['retailUnitPrice'] as num?)?.toDouble(),
       oldPrice: (json['oldPrice'] as num?)?.toDouble(),
-      discountPercent: (json['discountPercent'] as num?)?.toInt(),
+      discountPercent: (json['discountPercent'] as num?)?.toDouble(),
       stockQuantity: (json['stockQuantity'] as num?)?.toInt() ?? 0,
       availableQuantity: (json['availableQuantity'] as num?)?.toInt(),
       stockTrackingEnabled: json['stockTrackingEnabled'] != false,

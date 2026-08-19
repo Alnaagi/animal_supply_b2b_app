@@ -141,7 +141,7 @@ void main() {
       expect(
         tester
             .widget<ChoiceChip>(
-              find.widgetWithText(ChoiceChip, 'الكل'),
+              find.byKey(const ValueKey('admin-products-category-all')),
             )
             .selected,
         isTrue,
@@ -223,7 +223,8 @@ void main() {
     expect(created.iconUrl, 'https://cdn.example/category-icon.png');
   });
 
-  test('updateCategory keeps an existing icon and rejects clearing it', () async {
+  test('updateCategory keeps an existing icon and rejects clearing it',
+      () async {
     final repository = CatalogRepository.demo(seed: const []);
     final created = await repository.createCategory(
       'أعلاف',
@@ -264,7 +265,8 @@ void main() {
         find.text('اختر أيقونة جاهزة أو ارفع أيقونة للتصنيف.'),
         findsOneWidget,
       );
-      expect(find.byKey(const ValueKey('save-category-button')), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey('save-category-button')), findsOneWidget);
       final listed = await repository.productCategories();
       expect(
         listed.any((item) => item.name == 'أعلاف تجريبية'),

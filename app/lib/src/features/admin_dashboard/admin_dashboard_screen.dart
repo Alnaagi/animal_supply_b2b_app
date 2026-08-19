@@ -236,9 +236,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           value: '${stats.todayOrders}',
                           icon: Icons.today_outlined,
                           color: AppTheme.brown,
-                          onTap: () => unawaited(
-                              _openAdminOrders(
-                                  location: '/admin/orders?period=today'))),
+                          onTap: () => unawaited(_openAdminOrders(
+                              location: '/admin/orders?period=today'))),
                     if (visibility.isVisible(DashboardWidgetId.lowStockStat))
                       _StatCard(
                           width: cardWidth,
@@ -386,7 +385,8 @@ class _DashboardLayoutSheet extends ConsumerWidget {
                 const SizedBox(height: 6),
                 const Text(
                   'أخفِ البطاقات غير المطلوبة. يُحفظ الاختيار على هذا الجهاز.',
-                  style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                      color: Colors.grey, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 14),
                 const Text(
@@ -662,8 +662,7 @@ class _FullnessCard extends StatelessWidget {
                         value: progress,
                         strokeWidth: 8,
                         color: AppTheme.green,
-                        backgroundColor:
-                            AppTheme.green.withValues(alpha: 0.14),
+                        backgroundColor: AppTheme.green.withValues(alpha: 0.14),
                       ),
                     ),
                     Text(

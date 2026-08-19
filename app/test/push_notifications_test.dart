@@ -224,6 +224,7 @@ PushNotificationsCoordinator _coordinator(
     repository: repository,
     enabled: true,
     appVersionLoader: () async => '1.0.2+3',
+    installationIdLoader: () async => 'test-installation-id-0001',
   );
 }
 
@@ -304,6 +305,7 @@ class _FakeNotificationsRepository extends NotificationsRepository {
     required String token,
     required String platform,
     required String appVersion,
+    String? installationId,
     String? deviceId,
     String? deviceLabel,
   }) async {

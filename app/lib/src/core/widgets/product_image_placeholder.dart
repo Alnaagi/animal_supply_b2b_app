@@ -14,6 +14,7 @@ class ProductImagePlaceholder extends StatelessWidget {
       this.size = 92,
       this.expand = false,
       this.borderRadius,
+      this.fit = BoxFit.cover,
       super.key});
   final String category;
   final String? productId;
@@ -23,6 +24,7 @@ class ProductImagePlaceholder extends StatelessWidget {
   final double size;
   final bool expand;
   final BorderRadius? borderRadius;
+  final BoxFit fit;
 
   IconData get icon => switch (category) {
         'قطط' => Icons.pets,
@@ -39,11 +41,15 @@ class ProductImagePlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final image = expand
         ? LayoutBuilder(
-            builder: (context, constraints) => _buildImage(
-              width: constraints.maxWidth,
-              height: constraints.maxHeight,
-              iconSize: constraints.biggest.shortestSide * .32,
-            ),
+            builder: (context, constraints) {
+              final width = _finiteSize(constraints.maxWidth, size);
+              final height = _finiteSize(constraints.maxHeight, size);
+              return _buildImage(
+                width: width,
+                height: height,
+                iconSize: (width < height ? width : height) * .62,
+              );
+            },
           )
         : _buildImage(width: size, height: size, iconSize: size * .42);
     return Semantics(
@@ -60,39 +66,39 @@ class ProductImagePlaceholder extends StatelessWidget {
   }) {
     final radius =
         borderRadius ?? BorderRadius.circular(expand || size > 120 ? 28 : 20);
-    final fallback = Container(
+    final fallback = _filledPanel(
       width: width,
       height: height,
-      decoration: BoxDecoration(
-        borderRadius: radius,
-        gradient: const LinearGradient(
-            colors: [Color(0xffffffff), Color(0xffe9f4ee)],
-            begin: Alignment.topRight,
-            end: Alignment.bottomLeft),
-      ),
-      child: Icon(icon, color: AppTheme.green, size: iconSize),
+      radius: radius,
+      child: Center(child: _placeholderGlyph(iconSize: iconSize)),
     );
     final assetFallback = !_hasBundledProductImage(productId)
         ? fallback
-        : ClipRRect(
-            borderRadius: radius,
-            child: Image.asset(
+        : _photoPanel(
+            width: width,
+            height: height,
+            radius: radius,
+            image: Image.asset(
               'assets/images/products/$productId.png',
               width: width,
               height: height,
-              fit: BoxFit.cover,
+              fit: fit,
+              alignment: Alignment.center,
               errorBuilder: (context, error, stackTrace) => fallback,
             ),
           );
     final bytes = imageBytes;
     if (bytes != null && bytes.isNotEmpty) {
-      return ClipRRect(
-        borderRadius: radius,
-        child: Image.memory(
+      return _photoPanel(
+        width: width,
+        height: height,
+        radius: radius,
+        image: Image.memory(
           bytes,
           width: width,
           height: height,
-          fit: BoxFit.cover,
+          fit: fit,
+          alignment: Alignment.center,
           excludeFromSemantics: true,
           errorBuilder: (context, error, stackTrace) => assetFallback,
         ),
@@ -103,13 +109,16 @@ class ProductImagePlaceholder extends StatelessWidget {
         imageUrl!.contains('placehold.co')) {
       return assetFallback;
     }
-    return ClipRRect(
-      borderRadius: radius,
-      child: Image.network(
+    return _photoPanel(
+      width: width,
+      height: height,
+      radius: radius,
+      image: Image.network(
         imageUrl!,
         width: width,
         height: height,
-        fit: BoxFit.cover,
+        fit: fit,
+        alignment: Alignment.center,
         excludeFromSemantics: true,
         webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
         loadingBuilder: (context, child, loadingProgress) =>
@@ -118,6 +127,64 @@ class ProductImagePlaceholder extends StatelessWidget {
       ),
     );
   }
+
+  Widget _placeholderGlyph({required double iconSize}) {
+    final glyph = Icon(icon, color: AppTheme.green, size: iconSize);
+    if (!expand) return glyph;
+    return Padding(
+      padding: const EdgeInsets.all(10),
+      child: FittedBox(fit: BoxFit.contain, child: glyph),
+    );
+  }
+
+  Widget _photoPanel({
+    required double width,
+    required double height,
+    required BorderRadius radius,
+    required Widget image,
+  }) {
+    return _filledPanel(
+      width: width,
+      height: height,
+      radius: radius,
+      child: Positioned.fill(child: image),
+    );
+  }
+
+  Widget _filledPanel({
+    required double width,
+    required double height,
+    required BorderRadius radius,
+    required Widget child,
+  }) {
+    return ClipRRect(
+      borderRadius: radius,
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            const ColoredBox(color: Color(0xffdceee6)),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xffeef7f2), Color(0xffd7eee4)],
+                  begin: Alignment.topRight,
+                  end: Alignment.bottomLeft,
+                ),
+              ),
+            ),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+double _finiteSize(double value, double fallback) {
+  return value.isFinite && value > 0 ? value : fallback;
 }
 
 bool _hasBundledProductImage(String? productId) {

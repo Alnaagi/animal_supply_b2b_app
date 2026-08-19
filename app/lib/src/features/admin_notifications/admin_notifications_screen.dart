@@ -81,9 +81,11 @@ class _AdminNotificationsScreenState
       title: 'إرسال الإشعارات',
       actions: [
         IconButton(
-          onPressed: sending ? null : () {
-            _reloadScreen();
-          },
+          onPressed: sending
+              ? null
+              : () {
+                  _reloadScreen();
+                },
           icon: const Icon(Icons.refresh),
           tooltip: 'تحديث الحملات والعملاء',
         ),

@@ -181,10 +181,16 @@ void main() {
         child: MaterialApp(home: ChangePasswordScreen()),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
 
-    expect(find.byTooltip('إظهار كلمة المرور'), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.visibility_outlined));
+    final toggle = find.byTooltip('إظهار كلمة المرور');
+    expect(toggle, findsOneWidget);
+    final visibilityButton = find.byWidgetPredicate(
+      (widget) => widget is IconButton && widget.tooltip == 'إظهار كلمة المرور',
+    );
+    expect(visibilityButton, findsOneWidget);
+    final iconButton = tester.widget<IconButton>(visibilityButton);
+    iconButton.onPressed!.call();
     await tester.pump();
     expect(find.byTooltip('إخفاء كلمة المرور'), findsOneWidget);
   });

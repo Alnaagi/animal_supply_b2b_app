@@ -70,8 +70,7 @@ class LocalAlertCoordinator {
       tag: id,
       target: target,
     );
-    final mobileShown =
-        await _mobileAlerts?.showInboxNotification(
+    final mobileShown = await _mobileAlerts?.showInboxNotification(
           id: id,
           title: title,
           body: body,

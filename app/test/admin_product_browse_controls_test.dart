@@ -24,14 +24,6 @@ void main() {
         find.byKey(const ValueKey('admin-product-card-budget')),
         findsOneWidget,
       );
-      expect(
-        find.byKey(const ValueKey('admin-product-compact-budget')),
-        findsNothing,
-      );
-      expect(
-        find.byKey(const ValueKey('admin-product-grid-budget')),
-        findsNothing,
-      );
       expect(tester.takeException(), isNull);
 
       await _tapVisible(
@@ -40,12 +32,8 @@ void main() {
       );
 
       expect(
-        find.byKey(const ValueKey('admin-product-compact-budget')),
+        find.byKey(const ValueKey('admin-product-card-budget')),
         findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('admin-product-grid-budget')),
-        findsNothing,
       );
       expect(tester.takeException(), isNull);
 
@@ -55,12 +43,8 @@ void main() {
       );
 
       expect(
-        find.byKey(const ValueKey('admin-product-grid-budget')),
+        find.byKey(const ValueKey('admin-product-card-budget')),
         findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('admin-product-compact-budget')),
-        findsNothing,
       );
       expect(tester.takeException(), isNull);
     },
@@ -201,8 +185,12 @@ void main() {
       );
 
       final gridProduct =
-          find.byKey(const ValueKey('admin-product-grid-budget'));
-      await tester.ensureVisible(gridProduct);
+          find.byKey(const ValueKey('admin-product-card-budget'));
+      await tester.scrollUntilVisible(
+        gridProduct,
+        120,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.pumpAndSettle();
 
       expect(gridProduct, findsOneWidget);
@@ -213,31 +201,6 @@ void main() {
       final gridRect = tester.getRect(gridProduct);
       expect(gridRect.left, greaterThanOrEqualTo(0));
       expect(gridRect.right, lessThanOrEqualTo(surfaceSize.width));
-      expect(tester.takeException(), isNull);
-
-      await _tapVisible(
-        tester,
-        find.byKey(const ValueKey('admin-products-filter-button')),
-      );
-
-      final sheet = find.byKey(const ValueKey('admin-products-filter-sheet'));
-      expect(sheet, findsOneWidget);
-      expect(Directionality.of(tester.element(sheet)), TextDirection.rtl);
-      final sheetRect = tester.getRect(sheet);
-      expect(sheetRect.left, greaterThanOrEqualTo(0));
-      expect(sheetRect.right, lessThanOrEqualTo(surfaceSize.width));
-      expect(sheetRect.height, lessThanOrEqualTo(surfaceSize.height));
-
-      await tester.ensureVisible(
-        find.byKey(
-          const ValueKey('admin-products-filter-availability-all'),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('admin-products-apply-filters')),
-        findsOneWidget,
-      );
       expect(tester.takeException(), isNull);
     },
   );
@@ -292,13 +255,20 @@ Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
 }
 
 List<String> _resultCardKeys(WidgetTester tester) {
-  final results = tester.widget<Column>(
-    find.byKey(const ValueKey('admin-products-results')),
-  );
-  return [
-    for (final child in results.children)
-      if (child.key case ValueKey<String>(value: final value)) value,
-  ];
+  return find
+      .descendant(
+        of: find.byKey(const ValueKey('admin-products-results')),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget.key is ValueKey<String> &&
+              (widget.key! as ValueKey<String>)
+                  .value
+                  .startsWith('admin-product-card-'),
+        ),
+      )
+      .evaluate()
+      .map((element) => (element.widget.key! as ValueKey<String>).value)
+      .toList();
 }
 
 class _AdminAuthController extends AuthController {

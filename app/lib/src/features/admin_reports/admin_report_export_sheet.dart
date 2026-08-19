@@ -168,7 +168,8 @@ class _AdminReportExportSheetState extends State<AdminReportExportSheet> {
   Future<void> _export({required bool pdf}) async {
     if (selected.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('اختر مجموعة واحدة على الأقل قبل التصدير.')),
+        const SnackBar(
+            content: Text('اختر مجموعة واحدة على الأقل قبل التصدير.')),
       );
       return;
     }

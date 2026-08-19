@@ -26,8 +26,10 @@ import '../../features/customer_home/customer_home_screen.dart';
 import '../../features/customer_home/customer_shell.dart';
 import '../../features/download/app_download_screen.dart';
 import '../../features/orders/orders_screen.dart';
+import '../../features/offers/offers_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/settings/settings_screen.dart';
+import '../../features/support/support_screen.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   final refresh = ValueNotifier<int>(0);
@@ -57,6 +59,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final requestedLocation = _safeNextLocation(state.uri.toString());
       final resumeLocation =
           nextLocation ?? _safeNextLocation(auth.restoredRoute);
+      if (location == '/order-success/') return '/orders';
 
       if (auth.bootstrapping) {
         // Keep an incoming invite URI intact while the saved session is
@@ -114,9 +117,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       _rememberAuthenticatedRoute(state.uri);
       return null;
     },
-    errorBuilder: (context, state) => _RouteNotFoundScreen(
-      requestedLocation: state.uri.path,
-    ),
+    errorBuilder: (context, state) {
+      final fallback =
+          _fallbackLocationForRole(ref.read(authControllerProvider));
+      return _RouteNotFoundScreen(
+        requestedLocation: state.uri.path,
+        fallbackLocation: fallback,
+      );
+    },
     routes: [
       GoRoute(
         path: '/',
@@ -152,6 +160,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/checkout',
         builder: (context, state) => const CheckoutScreen(),
       ),
+      GoRoute(
+        path: '/order-success',
+        redirect: (context, state) => '/orders',
+      ),
+      GoRoute(
+        path: '/offers',
+        builder: (context, state) => const OffersScreen(),
+      ),
+      GoRoute(
+        path: '/support',
+        builder: (context, state) => const SupportScreen(),
+      ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, shell) => CustomerShell(shell: shell),
         branches: [
@@ -174,7 +194,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             GoRoute(
                 path: '/orders',
                 builder: (context, state) => OrdersScreen(
-                    highlightedOrderId: state.uri.queryParameters['order'])),
+                      highlightedOrderId: _validatedOrderIdParam(state.uri),
+                      showSuccessState: _validatedSuccessParam(state.uri),
+                    )),
           ]),
           StatefulShellBranch(routes: [
             GoRoute(
@@ -248,6 +270,8 @@ bool _isCustomerLocation(String location) {
       _isProductLocation(location) ||
       location == '/cart' ||
       location == '/checkout' ||
+      location == '/offers' ||
+      location == '/support' ||
       location == '/orders' ||
       location == '/profile';
 }
@@ -320,7 +344,13 @@ String? _safeNextLocation(String? raw) {
 
   if (uri.path == '/catalog') copyNonEmpty('category');
   if (uri.path == '/orders' || uri.path == '/admin/orders') {
-    copyNonEmpty('order');
+    final order = uri.queryParameters['order']?.trim();
+    if (_isValidOrderIdentifier(order)) {
+      query['order'] = order!;
+    }
+  }
+  if (uri.path == '/orders' && uri.queryParameters['success'] == '1') {
+    query['success'] = '1';
   }
   if (uri.path == '/admin/orders' && uri.queryParameters['period'] == 'today') {
     query['period'] = 'today';
@@ -347,9 +377,13 @@ String _authorizedDestination(AppUser user, String requested) {
 }
 
 class _RouteNotFoundScreen extends StatelessWidget {
-  const _RouteNotFoundScreen({required this.requestedLocation});
+  const _RouteNotFoundScreen({
+    required this.requestedLocation,
+    required this.fallbackLocation,
+  });
 
   final String requestedLocation;
+  final String fallbackLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -382,7 +416,7 @@ class _RouteNotFoundScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 FilledButton.icon(
-                  onPressed: () => context.go('/'),
+                  onPressed: () => context.go(fallbackLocation),
                   icon: const Icon(Icons.home_outlined),
                   label: const Text('العودة للصفحة الرئيسية'),
                 ),
@@ -393,4 +427,26 @@ class _RouteNotFoundScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+String _fallbackLocationForRole(AuthState auth) {
+  final user = auth.user;
+  if (user == null) return '/login';
+  return user.isCustomer ? '/home' : '/admin';
+}
+
+String? _validatedOrderIdParam(Uri uri) {
+  final value = uri.queryParameters['order']?.trim();
+  if (!_isValidOrderIdentifier(value)) return null;
+  return value;
+}
+
+bool _validatedSuccessParam(Uri uri) {
+  return uri.queryParameters['success'] == '1' &&
+      _validatedOrderIdParam(uri) != null;
+}
+
+bool _isValidOrderIdentifier(String? value) {
+  if (value == null || value.isEmpty || value.length > 128) return false;
+  return RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value);
 }

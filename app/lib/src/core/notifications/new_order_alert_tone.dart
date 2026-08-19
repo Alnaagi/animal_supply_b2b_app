@@ -132,4 +132,3 @@ class NewOrderAlertSoundSettings {
   @override
   int get hashCode => Object.hash(tone, volume);
 }
-

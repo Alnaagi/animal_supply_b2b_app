@@ -1,4 +1,5 @@
 import 'package:animal_supply_b2b/src/data/local/local_cache.dart';
+import 'package:animal_supply_b2b/src/data/local/catalog_view_mode_store.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
 import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:animal_supply_b2b/src/data/repositories/catalog_repository.dart';
@@ -245,8 +246,48 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('سعر الجملة'), findsOneWidget);
     expect(find.textContaining('بيع الوحدة المقترح'), findsOneWidget);
     expect(find.textContaining('50.00'), findsNothing);
+  });
+
+  testWidgets('catalog view mode switch persists locally', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      CatalogViewModeStore.storageKey: CatalogViewMode.grid.storageValue,
+    });
+    final repository = _ScreenCatalogRepository(
+      firstPage: [
+        _product(id: 'persist-1', name: 'منتج حفظ النمط'),
+      ],
+      secondPage: const [],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          catalogRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Scaffold(body: CatalogScreen()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('catalog-grid-view')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('catalog-view-mode-compact')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('catalog-compact-view')), findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getString(CatalogViewModeStore.storageKey),
+      CatalogViewMode.compact.storageValue,
+    );
   });
 
   testWidgets('admin product list pages inactive-capable results safely',

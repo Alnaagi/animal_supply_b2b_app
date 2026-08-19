@@ -46,7 +46,8 @@ class _AdminOrderPricingSheet extends StatefulWidget {
   final bool demoData;
 
   @override
-  State<_AdminOrderPricingSheet> createState() => _AdminOrderPricingSheetState();
+  State<_AdminOrderPricingSheet> createState() =>
+      _AdminOrderPricingSheetState();
 }
 
 class _AdminOrderPricingSheetState extends State<_AdminOrderPricingSheet> {
@@ -503,7 +504,9 @@ class _SummaryRow extends StatelessWidget {
           Icon(
             icon,
             size: 16,
-            color: bold ? AppTheme.green : Theme.of(context).colorScheme.onSurfaceVariant,
+            color: bold
+                ? AppTheme.green
+                : Theme.of(context).colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 6),
           Expanded(

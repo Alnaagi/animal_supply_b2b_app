@@ -21,7 +21,8 @@ class DashboardFullnessEstimate {
   final String captionAr;
 
   bool get isDemoEstimate => kind == DashboardFullnessKind.demoCatalog;
-  bool get isFallbackEstimate => kind == DashboardFullnessKind.localCacheFallback;
+  bool get isFallbackEstimate =>
+      kind == DashboardFullnessKind.localCacheFallback;
   bool get isOperationalDbQuota => kind == DashboardFullnessKind.operationalDb;
 }
 
@@ -46,15 +47,13 @@ DashboardFullnessEstimate estimateDashboardFullness({
             .clamp(0.0, 1.0);
     final orderRatio =
         (safeOrders / (demoOrderCap <= 0 ? 1 : demoOrderCap)).clamp(0.0, 1.0);
-    final percent = ((productRatio * 0.65 + orderRatio * 0.35) * 100)
-        .round()
-        .clamp(0, 100);
+    final percent =
+        ((productRatio * 0.65 + orderRatio * 0.35) * 100).round().clamp(0, 100);
     return DashboardFullnessEstimate(
       percent: percent,
       kind: DashboardFullnessKind.demoCatalog,
       titleAr: databaseFullnessTitleAr,
-      captionAr:
-          'تقدير تجريبي من الكتالوج والطلبات المحلية — غير تشغيلي',
+      captionAr: 'تقدير تجريبي من الكتالوج والطلبات المحلية — غير تشغيلي',
     );
   }
 
@@ -69,16 +68,14 @@ DashboardFullnessEstimate localCacheFallbackFullness({
   int localCacheProductCap = 200,
 }) {
   final cap = localCacheProductCap <= 0 ? 1 : localCacheProductCap;
-  final percent =
-      ((productCount.clamp(0, 1 << 30) / cap).clamp(0.0, 1.0) * 100)
-          .round()
-          .clamp(0, 100);
+  final percent = ((productCount.clamp(0, 1 << 30) / cap).clamp(0.0, 1.0) * 100)
+      .round()
+      .clamp(0, 100);
   return DashboardFullnessEstimate(
     percent: percent,
     kind: DashboardFullnessKind.localCacheFallback,
     titleAr: databaseFullnessTitleAr,
-    captionAr:
-        'تعذر قراءة سعة قاعدة البيانات — تقدير محلي من ذاكرة الجهاز',
+    captionAr: 'تعذر قراءة سعة قاعدة البيانات — تقدير محلي من ذاكرة الجهاز',
   );
 }
 

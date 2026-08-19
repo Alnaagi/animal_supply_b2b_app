@@ -107,7 +107,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('مؤسسة النور للأعلاف'), findsWidgets);
     expect(
-      find.textContaining('مرحباً بك في منصة طلبات الجملة لدى مؤسسة النور للأعلاف'),
+      find.textContaining(
+          'مرحباً بك في منصة طلبات الجملة لدى مؤسسة النور للأعلاف'),
       findsOneWidget,
     );
   });
@@ -193,16 +194,19 @@ void main() {
 
     expect(find.text('إعدادات المتجر'), findsOneWidget);
     expect(find.text('تنبيهات المتصفح مفعلة'), findsNothing);
-    expect(find.text('تنبيهات المتصفح متاحة — Firebase غير مهيأ'), findsNothing);
+    expect(
+        find.text('تنبيهات المتصفح متاحة — Firebase غير مهيأ'), findsNothing);
     expect(find.text('فعّل تنبيهات الطلب'), findsNothing);
     expect(find.text('إدارة إصدارات التطبيق'), findsNothing);
     expect(find.text('نشر إصدار Android'), findsNothing);
-    expect(find.byKey(const Key('store-settings-logo-preview')), findsOneWidget);
+    expect(
+        find.byKey(const Key('store-settings-logo-preview')), findsOneWidget);
     expect(find.text('الشعار الافتراضي'), findsOneWidget);
 
     await tester.tap(find.text('تعديل الإعدادات'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('store-settings-logo-edit-preview')), findsOneWidget);
+    expect(find.byKey(const Key('store-settings-logo-edit-preview')),
+        findsOneWidget);
     expect(find.byKey(const Key('store-settings-logo-upload')), findsOneWidget);
     expect(find.text('رفع شعار المتجر'), findsOneWidget);
     expect(find.text('واتساب الدعم'), findsWidgets);

@@ -297,6 +297,66 @@ void main() {
     expect(repository.pageCalls.last.snapshotAt, _ScreenOrdersRepository.time);
   });
 
+  testWidgets('orders success panel renders and can clear success state',
+      (tester) async {
+    final prefs = await SharedPreferences.getInstance();
+    final outbox = SyncOutbox(prefs: prefs);
+    addTearDown(outbox.dispose);
+    final order = _order(
+      id: 'success-order',
+      orderNumber: 'ORD-SUCCESS',
+      customerId: 'customer-a',
+      createdAt: DateTime.utc(2026, 7, 22, 11),
+    );
+    final repository = _ScreenOrdersRepository(
+      firstPage: [order],
+      secondPage: const [],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          syncOutboxProvider.overrideWithValue(outbox),
+          authControllerProvider.overrideWith(
+            (ref) => _FixedAuthController(
+              const AppUser(
+                id: 'profile-a',
+                username: 'customer',
+                role: 'customer',
+                businessName: 'متجر الاختبار',
+                customerId: 'customer-a',
+              ),
+            ),
+          ),
+          ordersRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(disableAnimations: true),
+            child: const Directionality(
+              textDirection: TextDirection.rtl,
+              child: Scaffold(
+                body: OrdersScreen(
+                  highlightedOrderId: 'success-order',
+                  showSuccessState: true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('orders-success-panel')), findsOneWidget);
+    expect(find.text('تم استلام طلبك بنجاح!'), findsOneWidget);
+    expect(find.text('طلب ORD-SUCCESS'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('orders-success-view-order')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('orders-success-panel')), findsNothing);
+  });
+
   testWidgets('admin combined filters and pagination stay server-side and RTL',
       (tester) async {
     const viewport = Size(646, 838);

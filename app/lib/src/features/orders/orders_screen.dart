@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,17 +12,24 @@ import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/shop_loading.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../core/widgets/status_chip.dart';
+import '../../data/models/app_user.dart';
 import '../../data/models/order.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/orders_repository.dart';
 import '../../data/sync/sync_outbox.dart';
 import '../auth/auth_controller.dart';
 import '../cart/cart_controller.dart';
+import 'customer_invoice_actions.dart';
 
 class OrdersScreen extends ConsumerStatefulWidget {
-  const OrdersScreen({this.highlightedOrderId, super.key});
+  const OrdersScreen({
+    this.highlightedOrderId,
+    this.showSuccessState = false,
+    super.key,
+  });
 
   final String? highlightedOrderId;
+  final bool showSuccessState;
 
   @override
   ConsumerState<OrdersScreen> createState() => _OrdersScreenState();
@@ -41,6 +49,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   int loadRevision = 0;
   DateTime? snapshotAt;
   String? reorderingOrderId;
+  bool successDismissed = false;
 
   @override
   void didUpdateWidget(covariant OrdersScreen oldWidget) {
@@ -48,6 +57,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     if (oldWidget.highlightedOrderId != widget.highlightedOrderId &&
         loadedCustomerId != null) {
       unawaited(_reloadCustomer(loadedCustomerId!));
+    }
+    if (oldWidget.highlightedOrderId != widget.highlightedOrderId ||
+        oldWidget.showSuccessState != widget.showSuccessState) {
+      successDismissed = false;
     }
   }
 
@@ -79,6 +92,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final remoteLoading = initialLoading || loadedCustomerId != customerId;
     final visibleOrders =
         loadedCustomerId == customerId ? orders : const <Order>[];
+    final successOrder =
+        _resolveSuccessOrder(user: user, visibleOrders: visibleOrders);
     final localSnapshot = queuedOrders.asData?.value;
 
     if (remoteLoading && localSnapshot == null && !queuedOrders.hasError) {
@@ -110,6 +125,18 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
             ],
           ),
           const SizedBox(height: 12),
+          if (successOrder != null) ...[
+            _OrderSuccessPanel(
+              order: successOrder,
+              onViewOrder: () => setState(() => successDismissed = true),
+              onBackToOrders: () {
+                context.go(
+                    '/orders?order=${Uri.encodeQueryComponent(successOrder.id)}');
+              },
+              shopName: user.businessName ?? user.username,
+            ),
+            const SizedBox(height: 12),
+          ],
           queuedOrders.when(
             data: (queued) => queued.isEmpty
                 ? const SizedBox.shrink()
@@ -154,6 +181,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   order,
                   user.businessName ?? user.username,
                 ),
+                shopName: user.businessName ?? user.username,
               ),
             if (hasMore)
               Padding(
@@ -412,6 +440,210 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       );
     }
   }
+
+  Order? _resolveSuccessOrder({
+    required AppUser user,
+    required List<Order> visibleOrders,
+  }) {
+    if (!widget.showSuccessState || successDismissed) return null;
+    final highlightedId = widget.highlightedOrderId?.trim();
+    if (highlightedId == null || highlightedId.isEmpty) return null;
+    final expectedCustomerId = user.customerId ?? user.id;
+    for (final order in visibleOrders) {
+      if (order.id == highlightedId && order.customerId == expectedCustomerId) {
+        return order;
+      }
+    }
+    return null;
+  }
+}
+
+class _OrderSuccessPanel extends StatelessWidget {
+  const _OrderSuccessPanel({
+    required this.order,
+    required this.onViewOrder,
+    required this.onBackToOrders,
+    required this.shopName,
+  });
+
+  final Order order;
+  final VoidCallback onViewOrder;
+  final VoidCallback onBackToOrders;
+  final String shopName;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      key: const ValueKey('orders-success-panel'),
+      color: scheme.primaryContainer.withValues(alpha: .45),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                _SuccessCelebrationIcon(),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'تم استلام طلبك بنجاح!',
+                    style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'شكراً لطلبك 🤍 سنقوم بمراجعته وتحديث حالته قريباً.',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 10),
+            Text('رقم الطلب: ${order.displayNumber}'),
+            const SizedBox(height: 2),
+            Text(
+              'الإجمالي المعتمد: ${lyd(order.total)}',
+              key: const ValueKey('orders-success-total'),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  key: const ValueKey('orders-success-view-order'),
+                  onPressed: onViewOrder,
+                  icon: const Icon(Icons.receipt_long_outlined),
+                  label: const Text('عرض الطلب'),
+                ),
+                OutlinedButton.icon(
+                  key: const ValueKey('orders-success-download-pdf'),
+                  onPressed: () => CustomerInvoiceActions.downloadPdfForOrder(
+                    context,
+                    order: order,
+                    shopName: shopName,
+                  ),
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('تحميل الفاتورة PDF'),
+                ),
+                TextButton(
+                  key: const ValueKey('orders-success-back'),
+                  onPressed: onBackToOrders,
+                  child: const Text('العودة إلى طلباتي'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SuccessCelebrationIcon extends StatefulWidget {
+  const _SuccessCelebrationIcon();
+
+  @override
+  State<_SuccessCelebrationIcon> createState() =>
+      _SuccessCelebrationIconState();
+}
+
+class _SuccessCelebrationIconState extends State<_SuccessCelebrationIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+  late final Animation<double> _scale = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeOutBack,
+  );
+  late final Animation<double> _fade = CurvedAnimation(
+    parent: _controller,
+    curve: const Interval(0, .65, curve: Curves.easeOut),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    if (reduceMotion) {
+      _controller.value = 1;
+    } else if (_controller.status == AnimationStatus.dismissed) {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return SizedBox(
+          width: 52,
+          height: 52,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CustomPaint(
+                painter: _BurstPainter(progress: _fade.value),
+                size: const Size.square(52),
+              ),
+              Opacity(
+                opacity: .7 + (_fade.value * .3),
+                child: Transform.scale(
+                  scale: .88 + (_scale.value * .12),
+                  child: const Icon(
+                    Icons.check_circle,
+                    color: Color(0xff1d8f52),
+                    size: 34,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _BurstPainter extends CustomPainter {
+  const _BurstPainter({required this.progress});
+
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0) return;
+    const count = 10;
+    final center = size.center(Offset.zero);
+    final radius = 14 + (progress * 11);
+    final paint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xff8cd9af).withValues(alpha: 1 - progress);
+    for (var i = 0; i < count; i++) {
+      final angle = (i / count) * 6.28318530718;
+      final dot = Offset(
+        center.dx + radius * math.cos(angle),
+        center.dy + radius * math.sin(angle),
+      );
+      canvas.drawCircle(dot, 2.2, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BurstPainter oldDelegate) =>
+      oldDelegate.progress != progress;
 }
 
 class _QueuedOrdersSection extends StatelessWidget {
@@ -591,12 +823,14 @@ class _CustomerOrderCard extends StatelessWidget {
     required this.highlighted,
     required this.onReorder,
     required this.onCopy,
+    this.shopName = '',
   });
 
   final Order order;
   final bool highlighted;
   final VoidCallback? onReorder;
   final VoidCallback onCopy;
+  final String shopName;
 
   @override
   Widget build(BuildContext context) {
@@ -683,6 +917,14 @@ class _CustomerOrderCard extends StatelessWidget {
                   label: const Text('نسخ ملخص واتساب'),
                 ),
               ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(
+                start: 12, end: 12, bottom: 14),
+            child: CustomerInvoiceActions(
+              order: order,
+              shopName: shopName.isEmpty ? order.businessName : shopName,
             ),
           ),
         ],

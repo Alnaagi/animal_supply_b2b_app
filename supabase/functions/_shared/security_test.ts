@@ -5,15 +5,46 @@ import {
   publicLoginUrl,
   rateLimitIdentity,
   strongPassword,
+  validatedInstallationId,
   validateCustomerLoginDomain,
   validateInviteBaseUrl,
   validateNotificationDispatchSecret,
   validateRateLimitSalt,
 } from "./security.ts";
 
-Deno.test("adminSetPassword accepts short chosen passwords such as test", () => {
-  if (adminSetPassword("test") !== "test") {
+Deno.test("adminSetPassword enforces strong admin-set passwords", () => {
+  const value = "Strong-Password-42!";
+  if (adminSetPassword(value) !== value) {
     throw new Error("The admin-chosen password was not returned unchanged.");
+  }
+});
+
+Deno.test("adminSetPassword rejects weak or oversized values", () => {
+  for (
+    const value of [
+      null,
+      "",
+      "a",
+      "short",
+      "alllowercase42!",
+      "ALLUPPERCASE42!",
+      "NoNumberHere!",
+      "NoSymbolHere42",
+      `A1!${"a".repeat(126)}`,
+    ]
+  ) {
+    let error: unknown;
+    try {
+      adminSetPassword(value);
+    } catch (caught) {
+      error = caught;
+    }
+    if (
+      !(error instanceof HttpError) ||
+      error.code !== "PASSWORD_POLICY_FAILED"
+    ) {
+      throw new Error(`Expected PASSWORD_POLICY_FAILED for ${String(value)}`);
+    }
   }
 });
 
@@ -88,6 +119,8 @@ Deno.test("validateInviteBaseUrl rejects unsafe configuration", () => {
       "http://app.example.ly/invite",
       "https://user:secret@app.example.ly/invite",
       "https://app.example.ly/invite?temporary_password=secret",
+      "https://app.example.ly/invite?campaign=summer",
+      "https://app.example.ly/invite#fragment",
     ]
   ) {
     let error: unknown;
@@ -104,6 +137,24 @@ Deno.test("validateInviteBaseUrl rejects unsafe configuration", () => {
   const safe = validateInviteBaseUrl("https://app.example.ly/invite");
   if (safe !== "https://app.example.ly/invite") {
     throw new Error("The safe invite base URL was unexpectedly changed.");
+  }
+});
+
+Deno.test("validatedInstallationId enforces bounded safe identifiers", () => {
+  const value = "install_abc123:device-1";
+  if (validatedInstallationId(value) !== value) {
+    throw new Error("Installation id was unexpectedly changed.");
+  }
+  for (const invalid of [null, "short", "x".repeat(201), "bad value with space"]) {
+    let error: unknown;
+    try {
+      validatedInstallationId(invalid);
+    } catch (caught) {
+      error = caught;
+    }
+    if (!(error instanceof HttpError) || error.code !== "VALIDATION_ERROR") {
+      throw new Error(`Expected installation id validation failure: ${invalid}`);
+    }
   }
 });
 

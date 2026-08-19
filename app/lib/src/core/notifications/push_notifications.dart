@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../data/models/app_user.dart';
 import '../../data/repositories/notifications_repository.dart';
@@ -220,8 +222,9 @@ class PushNotificationsService {
     if (!_mobileLocalReady) return false;
     try {
       if (defaultTargetPlatform == TargetPlatform.android) {
-        final android = _localNotifications.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
+        final android =
+            _localNotifications.resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>();
         return await android?.requestNotificationsPermission() ?? false;
       }
       if (defaultTargetPlatform == TargetPlatform.iOS) {
@@ -433,14 +436,19 @@ class PushNotificationsCoordinator {
     required this.repository,
     bool? enabled,
     Future<String> Function()? appVersionLoader,
+    Future<String> Function()? installationIdLoader,
   })  : _enabled = enabled ??
             (!AppConfig.isDemoMode && AppConfig.remoteBackendEnabled),
-        _appVersionLoader = appVersionLoader ?? _loadAppVersion;
+        _appVersionLoader = appVersionLoader ?? _loadAppVersion,
+        _installationIdLoader =
+            installationIdLoader ?? _loadOrCreateInstallationId;
 
   final PushNotificationsService service;
   final NotificationsRepository repository;
   final bool _enabled;
   final Future<String> Function() _appVersionLoader;
+  final Future<String> Function() _installationIdLoader;
+  static const String _installationIdKey = 'push.installation_id.v1';
 
   AppUser? _currentUser;
   String _appVersion = '';
@@ -449,6 +457,7 @@ class PushNotificationsCoordinator {
   Future<void>? _initializeFuture;
   Future<void> _authTransitionQueue = Future<void>.value();
   bool _disposed = false;
+  String? _installationId;
 
   Future<void> initialize(AppUser? initialUser) {
     _currentUser = initialUser;
@@ -519,10 +528,12 @@ class PushNotificationsCoordinator {
   Future<void> _registerToken(String token) async {
     final user = _currentUser;
     if (user == null || user.isDemo) return;
+    _installationId ??= await _installationIdLoader();
     await repository.registerDeviceToken(
       token: token,
       platform: _platformName(),
       appVersion: _appVersion,
+      installationId: _installationId,
     );
     if (_currentUser?.id == user.id) {
       _currentToken = token;
@@ -589,5 +600,14 @@ class PushNotificationsCoordinator {
   static Future<String> _loadAppVersion() async {
     final info = await PackageInfo.fromPlatform();
     return '${info.version}+${info.buildNumber}';
+  }
+
+  static Future<String> _loadOrCreateInstallationId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = prefs.getString(_installationIdKey)?.trim() ?? '';
+    if (existing.length >= 16) return existing;
+    final generated = const Uuid().v4();
+    await prefs.setString(_installationIdKey, generated);
+    return generated;
   }
 }

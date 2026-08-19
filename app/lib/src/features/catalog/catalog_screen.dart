@@ -8,12 +8,19 @@ import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/connectivity/connectivity_provider.dart';
 import '../../core/widgets/category_icon_view.dart';
+import '../../core/widgets/customer_product_summary.dart'
+    show
+        AddToCartPill,
+        CustomerProductCardCopy,
+        DiscountBadge,
+        WholesalePriceBlock;
+
 import '../../core/widgets/empty_state.dart';
-import '../../core/widgets/price_text.dart';
 import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/product_info_chip.dart';
 import '../../core/widgets/shop_loading.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
+import '../../data/local/catalog_view_mode_store.dart';
 import '../../data/models/product.dart';
 import '../../data/models/product_category.dart';
 import '../../data/repositories/catalog_repository.dart';
@@ -21,8 +28,13 @@ import '../cart/added_to_cart_prompt.dart';
 import 'catalog_filters.dart';
 
 class CatalogScreen extends ConsumerStatefulWidget {
-  const CatalogScreen({this.initialCategory, super.key});
+  const CatalogScreen({
+    this.initialCategory,
+    this.viewModeStore,
+    super.key,
+  });
   final String? initialCategory;
+  final CatalogViewModeStore? viewModeStore;
 
   @override
   ConsumerState<CatalogScreen> createState() => _CatalogScreenState();
@@ -51,13 +63,18 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
   DateTime? snapshotAt;
   CatalogPageSource pageSource = CatalogPageSource.demo;
   Timer? _searchDebounce;
+  late final CatalogViewModeStore _viewModeStore;
+  CatalogViewMode _viewMode = CatalogViewMode.comfortable;
 
   @override
   void initState() {
     super.initState();
     category = widget.initialCategory;
+    _viewModeStore = widget.viewModeStore ?? CatalogViewModeStore();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_reloadCatalog(refreshMetadata: true));
+      if (!mounted) return;
+      unawaited(_restoreViewModePreference());
+      unawaited(_reloadCatalog(refreshMetadata: true));
     });
   }
 
@@ -230,6 +247,21 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
     unawaited(_reloadCatalog());
   }
 
+  Future<void> _restoreViewModePreference() async {
+    final fallback = CatalogViewModeStore.defaultForWidth(
+      MediaQuery.sizeOf(context).width,
+    );
+    final restored = await _viewModeStore.load(fallbackMode: fallback);
+    if (!mounted) return;
+    setState(() => _viewMode = restored);
+  }
+
+  Future<void> _selectViewMode(CatalogViewMode mode) async {
+    if (_viewMode == mode) return;
+    setState(() => _viewMode = mode);
+    await _viewModeStore.save(mode);
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<int>(networkRetryTickProvider, (previous, next) {
@@ -282,37 +314,35 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
                   ),
                   label: const Text('فلترة متقدمة'),
                 ),
+                _CatalogViewModeToggle(
+                  mode: _viewMode,
+                  onChanged: _selectViewMode,
+                ),
               ],
             ),
           ),
           const SizedBox(height: 12),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                Padding(
-                  padding: const EdgeInsetsDirectional.only(end: 8),
-                  child: FilterChip(
-                    label: const Text('الكل'),
-                    selected: category == null,
-                    onSelected: (_) => _selectCategory(null),
+          ProductChipWrap(
+            key: const ValueKey('catalog-category-chips'),
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilterChip(
+                label: const Text('الكل'),
+                selected: category == null,
+                onSelected: (_) => _selectCategory(null),
+              ),
+              for (final value in categories)
+                FilterChip(
+                  avatar: CategoryIconView.fromCategory(
+                    _categoryModelByName(value),
+                    size: 18,
                   ),
+                  label: Text(value),
+                  selected: category == value,
+                  onSelected: (_) => _selectCategory(value),
                 ),
-                for (final value in categories)
-                  Padding(
-                    padding: const EdgeInsetsDirectional.only(end: 8),
-                    child: FilterChip(
-                      avatar: CategoryIconView.fromCategory(
-                        _categoryModelByName(value),
-                        size: 18,
-                      ),
-                      label: Text(value),
-                      selected: category == value,
-                      onSelected: (_) => _selectCategory(value),
-                    ),
-                  ),
-              ],
-            ),
+            ],
           ),
           if (!filters.isEmpty) ...[
             const SizedBox(height: 10),
@@ -384,7 +414,10 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
               icon: Icons.search_off,
             )
           else ...[
-            for (final product in products) ProductListCard(product: product),
+            _CatalogProductsLayout(
+              products: products,
+              mode: _viewMode,
+            ),
             if (hasMore)
               Padding(
                 padding: const EdgeInsets.only(top: 4, bottom: 20),
@@ -663,41 +696,233 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
   }
 }
 
+class _CatalogViewModeToggle extends StatelessWidget {
+  const _CatalogViewModeToggle({
+    required this.mode,
+    required this.onChanged,
+  });
+
+  final CatalogViewMode mode;
+  final ValueChanged<CatalogViewMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _CatalogViewModeButton(
+            key: const ValueKey('catalog-view-mode-comfortable'),
+            tooltip: 'عرض مريح',
+            icon: Icons.view_agenda_outlined,
+            selected: mode == CatalogViewMode.comfortable,
+            onPressed: () => onChanged(CatalogViewMode.comfortable),
+          ),
+          _CatalogViewModeButton(
+            key: const ValueKey('catalog-view-mode-compact'),
+            tooltip: 'عرض مختصر',
+            icon: Icons.view_headline_outlined,
+            selected: mode == CatalogViewMode.compact,
+            onPressed: () => onChanged(CatalogViewMode.compact),
+          ),
+          _CatalogViewModeButton(
+            key: const ValueKey('catalog-view-mode-grid'),
+            tooltip: 'عرض شبكي',
+            icon: Icons.grid_view_rounded,
+            selected: mode == CatalogViewMode.grid,
+            onPressed: () => onChanged(CatalogViewMode.grid),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CatalogViewModeButton extends StatelessWidget {
+  const _CatalogViewModeButton({
+    required super.key,
+    required this.tooltip,
+    required this.icon,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Semantics(
+        button: true,
+        label: tooltip,
+        selected: selected,
+        child: IconButton(
+          onPressed: onPressed,
+          style: IconButton.styleFrom(
+            backgroundColor:
+                selected ? colorScheme.primaryContainer : Colors.transparent,
+            foregroundColor: selected
+                ? colorScheme.onPrimaryContainer
+                : colorScheme.onSurfaceVariant,
+          ),
+          icon: Icon(icon),
+        ),
+      ),
+    );
+  }
+}
+
+class _CatalogProductsLayout extends StatelessWidget {
+  const _CatalogProductsLayout({
+    required this.products,
+    required this.mode,
+  });
+
+  final List<Product> products;
+  final CatalogViewMode mode;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (mode) {
+      case CatalogViewMode.comfortable:
+        return Column(
+          key: const ValueKey('catalog-comfortable-view'),
+          children: [
+            for (final product in products) ProductListCard(product: product),
+          ],
+        );
+      case CatalogViewMode.compact:
+        return Column(
+          key: const ValueKey('catalog-compact-view'),
+          children: [
+            for (final product in products)
+              ProductCompactCard(product: product),
+          ],
+        );
+      case CatalogViewMode.grid:
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            final crossAxisCount = switch (width) {
+              >= 1400 => 4,
+              >= 1000 => 3,
+              _ => 2,
+            };
+            return GridView.builder(
+              key: const ValueKey('catalog-grid-view'),
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: crossAxisCount,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: .66,
+              ),
+              itemCount: products.length,
+              itemBuilder: (context, index) => ProductGridCard(
+                product: products[index],
+              ),
+            );
+          },
+        );
+    }
+  }
+}
+
 class ProductListCard extends ConsumerWidget {
   const ProductListCard({required this.product, super.key});
   final Product product;
 
+  static const _imagePanelWidth = 112.0;
+  static const _radius = 16.0;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final pack = CustomerProductCardCopy.packSize(product);
     return Card(
+      key: Key('catalog-product-card-${product.id}'),
       margin: const EdgeInsets.only(bottom: 12),
+      clipBehavior: Clip.antiAlias,
+      elevation: 3,
+      shadowColor: Colors.black.withValues(alpha: .16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(_radius),
+      ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(22),
         onTap: () => context.push('/product/${product.id}'),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            ProductImagePlaceholder(
-                category: product.category,
-                productId: product.id,
-                imageUrl: product.imageUrl,
-                size: 86),
-            const SizedBox(width: 12),
-            Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text(product.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w900)),
-                  if (product.brand.trim().isNotEmpty)
+        child: Stack(
+          children: [
+            Positioned.directional(
+              textDirection: Directionality.of(context),
+              start: 0,
+              top: 0,
+              bottom: 0,
+              width: _imagePanelWidth,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ProductImagePlaceholder(
+                    key: Key('catalog-product-image-${product.id}'),
+                    category: product.category,
+                    productId: product.id,
+                    imageUrl: product.imageUrl,
+                    semanticLabel: 'صورة ${product.name}',
+                    expand: true,
+                    borderRadius: BorderRadius.zero,
+                  ),
+                  if (product.hasProductDiscount)
+                    PositionedDirectional(
+                      top: 6,
+                      start: 6,
+                      child: DiscountBadge(
+                        discountPercent: product.discountPercent!,
+                        compact: true,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(
+                _imagePanelWidth + 12,
+                12,
+                12,
+                12,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    product.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w900),
+                  ),
+                  if (CustomerProductCardCopy.brand(product).isNotEmpty)
                     Text(
-                      product.brand,
-                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                      CustomerProductCardCopy.brand(product),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: AppTheme.darkGreen.withValues(alpha: .62),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   const SizedBox(height: 6),
                   ProductChipWrap(children: [
@@ -722,6 +947,11 @@ class ProductListCard extends ConsumerWidget {
                         ),
                       ),
                     ),
+                    if (pack.isNotEmpty)
+                      ProductInfoChip(
+                        pack,
+                        color: AppTheme.green,
+                      ),
                     ProductInfoChip(
                       'أقل جملة ${product.minOrderQuantity}',
                     ),
@@ -733,45 +963,241 @@ class ProductListCard extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'سعر الجملة',
-                              style:
-                                  TextStyle(color: Colors.grey, fontSize: 11),
-                            ),
-                            PriceText(
-                              price: product.price,
-                            ),
-                            if (product.retailUnitPrice != null)
-                              Text(
-                                'بيع الوحدة المقترح: '
-                                '${product.retailUnitPrice!.toStringAsFixed(2)} د.ل',
-                                style: const TextStyle(
-                                  color: Colors.grey,
-                                  fontSize: 11,
-                                ),
-                              ),
-                          ],
+                        child: WholesalePriceBlock(
+                          product: product,
+                          showWholesaleLabel: true,
                         ),
                       ),
-                      IconButton.filled(
-                          tooltip: product.isOrderable
-                              ? 'إضافة ${product.name} إلى السلة'
-                              : 'المنتج غير متوفر',
-                          onPressed: product.isOrderable
-                              ? () => addProductToCartThenPrompt(
-                                    context: context,
-                                    ref: ref,
-                                    product: product,
-                                  )
-                              : null,
-                          icon: const Icon(Icons.add)),
+                      const SizedBox(width: 8),
+                      AddToCartPill(
+                        enabled: product.isOrderable,
+                        tooltip: product.isOrderable
+                            ? 'إضافة ${product.name} إلى السلة'
+                            : 'المنتج غير متوفر',
+                        onPressed: product.isOrderable
+                            ? () => addProductToCartThenPrompt(
+                                  context: context,
+                                  ref: ref,
+                                  product: product,
+                                )
+                            : null,
+                      ),
                     ],
                   ),
-                ])),
-          ]),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ProductCompactCard extends ConsumerWidget {
+  const ProductCompactCard({required this.product, super.key});
+  final Product product;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pack = CustomerProductCardCopy.packSize(product);
+    return Card(
+      key: Key('catalog-compact-card-${product.id}'),
+      margin: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        onTap: () => context.push('/product/${product.id}'),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: 70,
+                  height: 70,
+                  child: ProductImagePlaceholder(
+                    category: product.category,
+                    productId: product.id,
+                    imageUrl: product.imageUrl,
+                    semanticLabel: 'صورة ${product.name}',
+                    expand: true,
+                    borderRadius: BorderRadius.zero,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                    if (CustomerProductCardCopy.brand(product).isNotEmpty)
+                      Text(
+                        CustomerProductCardCopy.brand(product),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: AppTheme.darkGreen.withValues(alpha: .62),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        ProductInfoChip(
+                          product.customerAvailabilityLabel,
+                          color: product.isOrderable
+                              ? AppTheme.green
+                              : AppTheme.red,
+                        ),
+                        if (pack.isNotEmpty)
+                          ProductInfoChip(
+                            pack,
+                            color: AppTheme.green,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    WholesalePriceBlock(
+                      product: product,
+                      showWholesaleLabel: false,
+                    ),
+                    const SizedBox(height: 6),
+                    AddToCartPill(
+                      enabled: product.isOrderable,
+                      tooltip: product.isOrderable
+                          ? 'إضافة ${product.name} إلى السلة'
+                          : 'المنتج غير متوفر',
+                      onPressed: product.isOrderable
+                          ? () => addProductToCartThenPrompt(
+                                context: context,
+                                ref: ref,
+                                product: product,
+                              )
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ProductGridCard extends ConsumerWidget {
+  const ProductGridCard({required this.product, super.key});
+  final Product product;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pack = CustomerProductCardCopy.packSize(product);
+    return Card(
+      key: Key('catalog-grid-card-${product.id}'),
+      clipBehavior: Clip.antiAlias,
+      elevation: 2,
+      child: InkWell(
+        onTap: () => context.push('/product/${product.id}'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ProductImagePlaceholder(
+                    category: product.category,
+                    productId: product.id,
+                    imageUrl: product.imageUrl,
+                    semanticLabel: 'صورة ${product.name}',
+                    expand: true,
+                    borderRadius: BorderRadius.zero,
+                  ),
+                  if (product.hasProductDiscount)
+                    PositionedDirectional(
+                      top: 6,
+                      start: 6,
+                      child: DiscountBadge(
+                        discountPercent: product.discountPercent!,
+                        compact: true,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    product.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w900),
+                  ),
+                  if (pack.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    ProductInfoChip(
+                      pack,
+                      color: AppTheme.green,
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  ProductInfoChip(
+                    product.customerAvailabilityLabel,
+                    color: product.isOrderable ? AppTheme.green : AppTheme.red,
+                  ),
+                  const SizedBox(height: 8),
+                  WholesalePriceBlock(
+                    product: product,
+                    showWholesaleLabel: false,
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: AddToCartPill(
+                      enabled: product.isOrderable,
+                      tooltip: product.isOrderable
+                          ? 'إضافة ${product.name} إلى السلة'
+                          : 'المنتج غير متوفر',
+                      onPressed: product.isOrderable
+                          ? () => addProductToCartThenPrompt(
+                                context: context,
+                                ref: ref,
+                                product: product,
+                              )
+                          : null,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -217,10 +217,12 @@ class RenderProductChipWrap extends RenderBox
 
     maxRunWidth = math.max(maxRunWidth, runWidth > 0 ? runWidth - spacing : 0);
     final height = y + runHeight;
-    return constraints.constrain(Size(maxWidth.isFinite ? maxWidth : maxRunWidth, height));
+    return constraints
+        .constrain(Size(maxWidth.isFinite ? maxWidth : maxRunWidth, height));
   }
 
-  double _foldChildren(double initial, double Function(double, RenderBox) combine) {
+  double _foldChildren(
+      double initial, double Function(double, RenderBox) combine) {
     var value = initial;
     var child = firstChild;
     while (child != null) {

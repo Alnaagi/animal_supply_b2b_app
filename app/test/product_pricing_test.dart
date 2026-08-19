@@ -181,7 +181,8 @@ void main() {
     expect(product.reservedQuantity, 13);
   });
 
-  test('demo catalog applies the customer discount without replacing base price',
+  test(
+      'demo catalog applies the customer discount without replacing base price',
       () {
     expect(demoProducts, isNotEmpty);
     for (final product in demoProducts) {

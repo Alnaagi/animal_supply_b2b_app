@@ -52,7 +52,7 @@ class Product {
   final double? effectivePrice;
   final double? retailUnitPrice;
   final double? oldPrice;
-  final int? discountPercent;
+  final double? discountPercent;
   final int stockQuantity;
   final int? availableQuantity;
   final bool stockTrackingEnabled;
@@ -76,7 +76,18 @@ class Product {
   final List<String> tags;
 
   String get name => nameAr;
-  double get price => effectivePrice ?? basePrice;
+
+  /// Effective wholesale price after product-level discount.
+  double get discountedPrice {
+    final base = effectivePrice ?? basePrice;
+    final pct = discountPercent ?? 0;
+    if (pct <= 0) return base;
+    return base * (1 - pct / 100);
+  }
+
+  bool get hasProductDiscount => (discountPercent ?? 0) > 0;
+
+  double get price => discountedPrice;
   int get minOrderQuantity => minOrderQty;
   String get description => descriptionAr;
   String get effectivePackageSize => packageSize ?? unitSize;
@@ -133,7 +144,7 @@ class Product {
     double? retailUnitPrice,
     bool clearRetailUnitPrice = false,
     double? oldPrice,
-    int? discountPercent,
+    double? discountPercent,
     int? stockQuantity,
     int? availableQuantity,
     bool? stockTrackingEnabled,
@@ -254,7 +265,7 @@ class Product {
       effectivePrice: _asNullableDouble(row['effective_price']),
       retailUnitPrice: _asNullableDouble(row['retail_unit_price']),
       oldPrice: _asNullableDouble(row['old_price']),
-      discountPercent: row['discount_percent'] as int?,
+      discountPercent: _asNullableDouble(row['discount_percent']),
       stockQuantity: (row['stock_quantity'] as num?)?.toInt() ?? 0,
       availableQuantity: (row['available_quantity'] as num?)?.toInt(),
       stockTrackingEnabled: row['stock_tracking_enabled'] != false,

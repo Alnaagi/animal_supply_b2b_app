@@ -319,46 +319,18 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           );
       if (!mounted) return;
 
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('تم إرسال الطلب بنجاح'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('رقم الطلب: ${order.displayNumber}'),
-              const SizedBox(height: 6),
-              Text('الإجمالي المعتمد: ${lyd(order.total)}'),
-              if (order.deliveryAddress.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text('عنوان التسليم: ${order.deliveryAddress}'),
-              ],
-            ],
-          ),
-          actions: [
-            TextButton.icon(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: summary));
-                if (dialogContext.mounted) {
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    const SnackBar(content: Text('تم نسخ ملخص الطلب')),
-                  );
-                }
-              },
-              icon: const Icon(Icons.copy),
-              label: const Text('نسخ ملخص واتساب'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('عرض الطلب'),
-            ),
-          ],
-        ),
-      );
+      await Clipboard.setData(ClipboardData(text: summary));
       requestScreenReload(ref);
-      if (mounted) context.go('/orders');
+      if (mounted) {
+        final destination = Uri(
+          path: '/orders',
+          queryParameters: {
+            'order': order.id,
+            'success': '1',
+          },
+        ).toString();
+        context.replace(destination);
+      }
     } on OrdersRepositoryException catch (exception) {
       if (mounted) {
         setState(
@@ -649,9 +621,7 @@ class _CheckoutTotalRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = TextStyle(
-      color: muted
-          ? Colors.white.withValues(alpha: 0.82)
-          : Colors.white,
+      color: muted ? Colors.white.withValues(alpha: 0.82) : Colors.white,
       fontWeight: emphasize ? FontWeight.w900 : FontWeight.w600,
       fontSize: emphasize ? 18 : 14,
       letterSpacing: emphasize ? 0.2 : 0,

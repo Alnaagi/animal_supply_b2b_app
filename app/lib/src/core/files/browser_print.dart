@@ -4,3 +4,10 @@ import 'browser_print_stub.dart'
 bool printHtmlDocument(String html) {
   return platform.printHtmlDocumentImpl(html);
 }
+
+bool printPdfDocument({
+  required List<int> bytes,
+  String title = 'invoice',
+}) {
+  return platform.printPdfDocumentImpl(bytes: bytes, title: title);
+}

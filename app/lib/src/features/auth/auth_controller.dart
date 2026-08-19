@@ -144,7 +144,8 @@ class AuthController extends StateNotifier<AuthState> {
       },
     );
 
-    final authUser = client.auth.currentUser ?? client.auth.currentSession?.user;
+    final authUser =
+        client.auth.currentUser ?? client.auth.currentSession?.user;
     if (authUser == null) {
       if (!_disposed) state = const AuthState();
       return;
@@ -442,13 +443,25 @@ class AuthController extends StateNotifier<AuthState> {
 
     try {
       final payload = await client.rpc('bootstrap_current_account');
-      return appUserFromBootstrapPayload(
+      final user = appUserFromBootstrapPayload(
         payload,
         authUserId: authUser.id,
         fallbackIdentifier: authUser.email ?? authUser.phone,
       );
+      unawaited(_touchOwnLastSeen());
+      return user;
     } on AccountBootstrapException catch (error) {
       throw _AccountRejected(error.message);
+    }
+  }
+
+  Future<void> _touchOwnLastSeen() async {
+    final client = supabaseClient;
+    if (client == null) return;
+    try {
+      await client.rpc('touch_own_last_seen');
+    } catch (_) {
+      // Presence is best-effort and must never block sign-in or session restore.
     }
   }
 

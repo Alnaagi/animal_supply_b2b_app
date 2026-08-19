@@ -342,7 +342,8 @@ CategoryIconSelection _resolvedCategoryIcon({
     return CategoryIconSelection(iconKey: trimmedKey);
   }
   if (inferIfMissing) {
-    return CategoryIconSelection(iconKey: CategoryIconCatalog.inferredKey(name));
+    return CategoryIconSelection(
+        iconKey: CategoryIconCatalog.inferredKey(name));
   }
   throw const CategoryIconRequiredException();
 }
@@ -497,6 +498,7 @@ class CatalogRepository {
     CatalogPagedRemoteGateway? pagedRemote,
     List<Product>? demoSeed,
   })  : _cache = cache,
+        _useInjectedPagedRemote = pagedRemote != null,
         _pagedRemote = pagedRemote ?? _configuredPagedRemote(),
         _demoProducts = [...(demoSeed ?? demoProducts)] {
     _initializeDemoCategories();
@@ -506,18 +508,23 @@ class CatalogRepository {
     LocalCache? cache,
     List<Product>? seed,
   })  : _cache = cache,
+        _useInjectedPagedRemote = false,
         _pagedRemote = null,
         _demoProducts = [...(seed ?? demoProducts)] {
     _initializeDemoCategories();
   }
 
   final LocalCache? _cache;
+  final bool _useInjectedPagedRemote;
   final CatalogPagedRemoteGateway? _pagedRemote;
   final List<Product> _demoProducts;
   final List<ProductCategory> _demoCategories = [];
 
-  CatalogPagedRemoteGateway? get _activePagedRemote =>
-      AppConfig.isDemoMode || supabaseClient == null ? null : _pagedRemote;
+  CatalogPagedRemoteGateway? get _activePagedRemote {
+    if (_useInjectedPagedRemote) return _pagedRemote;
+    if (AppConfig.isDemoMode) return null;
+    return supabaseClient == null ? null : _pagedRemote;
+  }
 
   static const defaultPageSize = 50;
   static const offlineSnapshotLimit = 200;
@@ -1634,7 +1641,8 @@ class CatalogRepository {
   }
 
   String? get _cacheOwnerProfileId =>
-      _activePagedRemote?.ownerProfileId ?? supabaseClient?.auth.currentUser?.id;
+      _activePagedRemote?.ownerProfileId ??
+      supabaseClient?.auth.currentUser?.id;
 
   Future<String?> _categoryIdFor(String categoryName) async {
     final client = supabaseClient;

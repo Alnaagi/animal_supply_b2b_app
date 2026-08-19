@@ -30,7 +30,8 @@ class AdminOrderSoundSettingsPanel extends ConsumerWidget {
         decoration: BoxDecoration(
           color: scheme.surface.withValues(alpha: .78),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: scheme.outlineVariant.withValues(alpha: .7)),
+          border:
+              Border.all(color: scheme.outlineVariant.withValues(alpha: .7)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -164,9 +165,8 @@ class _ToneRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final borderColor = selected
-        ? scheme.primary
-        : scheme.outlineVariant.withValues(alpha: .8);
+    final borderColor =
+        selected ? scheme.primary : scheme.outlineVariant.withValues(alpha: .8);
     return Material(
       color: selected
           ? scheme.primary.withValues(alpha: .10)

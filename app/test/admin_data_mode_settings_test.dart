@@ -277,13 +277,16 @@ void main() {
 
     expect(find.text('مسح البيانات التجريبية'), findsNothing);
     expect(find.text('مسح قاعدة البيانات الحقيقية'), findsWidgets);
-    expect(find.byKey(const Key('admin-production-reset-button')), findsOneWidget);
-    expect(find.byKey(const Key('admin-local-cache-reset-button')), findsOneWidget);
+    expect(
+        find.byKey(const Key('admin-production-reset-button')), findsOneWidget);
+    expect(find.byKey(const Key('admin-local-cache-reset-button')),
+        findsOneWidget);
     expect(find.textContaining('لا رجعة فيه على الخادم'), findsWidgets);
 
     await tester.tap(find.byKey(const Key('admin-production-reset-button')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('حسابك الإداري الحالي لن يُحذف'), findsOneWidget);
+    expect(
+        find.textContaining('حسابك الإداري الحالي لن يُحذف'), findsOneWidget);
 
     await tester.enterText(
       find.byKey(const Key('admin-reset-password')),
