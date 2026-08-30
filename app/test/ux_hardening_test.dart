@@ -1,3 +1,4 @@
+import 'package:animal_supply_b2b/src/core/theme/app_theme.dart';
 import 'package:animal_supply_b2b/src/core/widgets/quantity_selector.dart';
 import 'package:animal_supply_b2b/src/core/widgets/responsive_field_group.dart';
 import 'package:animal_supply_b2b/src/core/widgets/product_image_placeholder.dart';
@@ -172,6 +173,105 @@ void main() {
       find.byTooltip('حذف ${_product.name} من السلة'),
       findsOneWidget,
     );
+    final removeButton = tester.widget<Container>(
+      find.byKey(const Key('cart-remove-button')),
+    );
+    expect((removeButton.decoration! as BoxDecoration).color, AppTheme.red);
+  });
+
+  testWidgets('cart uses a compact premium layout at phone width',
+      (tester) async {
+    tester.view.physicalSize = const Size(338, 838);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          cartControllerProvider.overrideWith(
+            (ref) => CartController(
+              ref,
+              ownerProfileId: null,
+              initialItems: const [
+                CartItem(product: _product, quantity: 2),
+              ],
+            ),
+          ),
+          appSettingsProvider.overrideWith(
+            (ref) async => const AppSettingsData(),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Scaffold(body: CartScreen()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('cart-mobile-layout')), findsOneWidget);
+    expect(find.byKey(const Key('cart-desktop-layout')), findsNothing);
+    expect(find.byKey(const Key('cart-item-card')), findsOneWidget);
+    expect(find.byKey(const Key('cart-item-quantity')), findsOneWidget);
+    expect(find.byKey(const Key('cart-item-total')), findsOneWidget);
+    expect(find.byKey(const Key('cart-summary-total')), findsOneWidget);
+    expect(find.text('جاهز للمراجعة'), findsOneWidget);
+
+    final itemRect = tester.getRect(find.byKey(const Key('cart-item-card')));
+    expect(itemRect.left, greaterThanOrEqualTo(0));
+    expect(itemRect.right, lessThanOrEqualTo(338));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('WhatsApp support nudge expands into an Arabic help prompt',
+      (tester) async {
+    var supportTaps = 0;
+    var pageTaps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Scaffold(
+            body: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => pageTaps++,
+              child: Stack(
+                children: [
+                  const SizedBox.expand(),
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: CustomerSupportNudge(
+                      expanded: true,
+                      onTap: () => supportTaps++,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('تحتاج مساعدة؟ اضغط هنا'), findsOneWidget);
+    expect(
+      tester
+          .getSize(find.byKey(const Key('customer-support-nudge-frame')))
+          .width,
+      186,
+    );
+    await tester.tap(find.byKey(const Key('customer-support-nudge')));
+    expect(supportTaps, 1);
+    expect(pageTaps, 0);
+
+    await tester.tapAt(const Offset(120, 120));
+    expect(supportTaps, 1);
+    expect(pageTaps, 1);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('password visibility control exposes its current action',

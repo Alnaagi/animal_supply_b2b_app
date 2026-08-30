@@ -1,17 +1,20 @@
 begin;
 
-create extension if not exists "pgcrypto";
+-- Supabase installs pgcrypto in the `extensions` schema. Keep it on
+-- search_path (and prefer the schema-qualified call) so SECURITY INVOKER
+-- functions with a locked search_path can still generate order numbers.
+create extension if not exists pgcrypto with schema extensions;
 
 create or replace function public.generate_public_order_number()
 returns text
 language plpgsql
 volatile
 security invoker
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 declare
   v_alphabet constant text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  v_bytes bytea := gen_random_bytes(7);
+  v_bytes bytea := extensions.gen_random_bytes(7);
   v_token text := '';
   v_idx integer;
 begin

@@ -4,6 +4,26 @@ begin;
 
 do $$
 declare
+  def text;
+begin
+  -- Regression guard: hosted Supabase keeps pgcrypto in `extensions`.
+  -- A locked search_path of only public/pg_temp breaks checkout.
+  select pg_get_functiondef(
+    'public.generate_public_order_number()'::regprocedure
+  )
+  into def;
+  if position('extensions' in def) = 0 then
+    raise exception
+      'generate_public_order_number must use the extensions schema for pgcrypto';
+  end if;
+  if public.generate_public_order_number() !~ '^AS-[A-HJ-NP-Z2-9]{7}$' then
+    raise exception 'generate_public_order_number returned an invalid reference';
+  end if;
+end;
+$$;
+
+do $$
+declare
   bad_format_count integer;
   duplicated_count integer;
 begin

@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart';
-
 class QuantitySelector extends StatelessWidget {
   const QuantitySelector(
       {required this.quantity,
@@ -16,13 +14,14 @@ class QuantitySelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final canDecrease = quantity > min;
     final canIncrease = max == null || quantity < max!;
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: scheme.surface,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: AppTheme.green.withValues(alpha: 0.3)),
+        border: Border.all(color: scheme.outline),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -44,7 +43,6 @@ class QuantitySelector extends StatelessWidget {
                   style: const TextStyle(
                     fontWeight: FontWeight.w800,
                     fontSize: 15,
-                    color: AppTheme.darkGreen,
                   ),
                 ),
               ),
@@ -77,16 +75,17 @@ class _StepperButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return IconButton(
       tooltip: tooltip,
       onPressed: enabled ? onPressed : null,
-      visualDensity: VisualDensity.compact,
-      padding: const EdgeInsets.all(6),
-      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      padding: const EdgeInsets.all(8),
+      constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
       iconSize: 20,
       icon: Icon(
         icon,
-        color: enabled ? AppTheme.green : Colors.grey.shade400,
+        color:
+            enabled ? scheme.primary : scheme.onSurface.withValues(alpha: .38),
       ),
     );
   }

@@ -35,6 +35,23 @@ void main() {
       expect(cleared.price, 100);
     });
 
+    test('clearProductDiscount serializes zero for Supabase persistence', () {
+      const product = Product(
+        id: 'p1',
+        nameAr: 'منتج',
+        sku: 'SKU1',
+        category: 'قطط',
+        animalType: 'قطط',
+        brand: 'Brand',
+        unitSize: '1',
+        basePrice: 100,
+        stockQuantity: 5,
+        minOrderQty: 1,
+      );
+      final cleared = clearProductDiscount(applyProductDiscount(product, 10));
+      expect(cleared.toSupabaseMap()['discount_percent'], 0);
+    });
+
     test('bulk adjusted price never goes below zero', () {
       expect(bulkAdjustedPrice(10, percentDelta: -200), 0);
       expect(bulkAdjustedPrice(100, percentDelta: 10), closeTo(110, 0.001));
@@ -124,6 +141,38 @@ void main() {
       (item) => item.id == 'disc-product',
     );
     expect(product.discountPercent, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('discount remove survives Supabase round-trip save',
+      (tester) async {
+    final repo = _SupabaseRoundTripCatalogRepository([
+      applyProductDiscount(
+        _seedProduct(id: 'disc-product', basePrice: 200),
+        10,
+      ),
+    ]);
+    await _pumpAdminProducts(tester, repo);
+
+    await tester.scrollUntilVisible(
+      find.byKey(
+        const ValueKey('admin-product-quick-discount-disc-product'),
+      ),
+      80,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('admin-product-quick-discount-disc-product')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('admin-discount-remove')));
+    await tester.pumpAndSettle();
+
+    final product = (await repo.snapshot()).firstWhere(
+      (item) => item.id == 'disc-product',
+    );
+    expect(product.hasProductDiscount, isFalse);
+    expect((product.discountPercent ?? 0), 0);
     expect(tester.takeException(), isNull);
   });
 
@@ -288,6 +337,33 @@ class _FailingCatalogRepository extends CatalogRepository {
   @override
   Future<Product> saveProduct(Product product) async {
     throw StateError('network fail');
+  }
+}
+
+class _SupabaseRoundTripCatalogRepository extends _TrackingCatalogRepository {
+  _SupabaseRoundTripCatalogRepository(super.seed);
+
+  @override
+  Future<Product> saveProduct(Product product) async {
+    final payload = product.toSupabaseMap();
+    final prior = (await products(includeInactive: true))
+        .firstWhere((item) => item.id == product.id);
+    // products.discount_percent is NOT NULL in Supabase; null payloads do not clear it.
+    final persistedDiscount =
+        payload['discount_percent'] ?? prior.discountPercent ?? 0;
+    final saved = Product.fromSupabase({
+      'id': product.id,
+      'name': product.nameAr,
+      'sku': product.sku,
+      'category_name': product.category,
+      'base_price': product.basePrice,
+      'old_price': payload['old_price'] ?? prior.oldPrice,
+      'discount_percent': persistedDiscount,
+      'stock_quantity': product.stockQuantity,
+      'min_order_quantity': product.minOrderQty,
+      'active': product.isActive,
+    });
+    return super.saveProduct(saved);
   }
 }
 

@@ -6,11 +6,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/config/shop_branding.dart';
 import '../../core/refresh/screen_reload.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/empty_state.dart';
+import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/shop_loading.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/status_chip.dart';
 import '../../data/models/app_user.dart';
 import '../../data/models/order.dart';
@@ -68,6 +71,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   Widget build(BuildContext context) {
     listenForScreenReload(ref, _refresh);
     final user = ref.watch(authControllerProvider).user;
+    final branding = ref.watch(shopBrandingProvider);
     final highlightedOrderId = widget.highlightedOrderId;
     if (user == null) {
       return const Center(
@@ -96,8 +100,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         _resolveSuccessOrder(user: user, visibleOrders: visibleOrders);
     final localSnapshot = queuedOrders.asData?.value;
 
-    if (remoteLoading && localSnapshot == null && !queuedOrders.hasError) {
-      return const ShopLoading.page();
+    final hasQueuedOrders = localSnapshot?.isEmpty == false;
+    if (remoteLoading && !hasQueuedOrders && !queuedOrders.hasError) {
+      return const _OrdersInitialSkeleton();
     }
 
     return ShopRefreshIndicator(
@@ -133,7 +138,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 context.go(
                     '/orders?order=${Uri.encodeQueryComponent(successOrder.id)}');
               },
-              shopName: user.businessName ?? user.username,
+              shopName: branding.shopName,
+              logoUrl: branding.logoUrl,
             ),
             const SizedBox(height: 12),
           ],
@@ -144,7 +150,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     snapshot: queued,
                     onEdit: _discardAndEditQueuedOrder,
                   ),
-            loading: () => const LinearProgressIndicator(),
+            loading: () => const ShopSkeleton(
+              semanticLabel: 'جارٍ فحص الطلبات غير المكتملة...',
+              child: ShopSkeletonBox(
+                height: 52,
+                borderRadius: 14,
+              ),
+            ),
             error: (_, __) => const _OutboxReadErrorCard(),
           ),
           if (localSnapshot != null && !localSnapshot.isEmpty)
@@ -179,9 +191,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     : () => _reorder(order),
                 onCopy: () => _copySummary(
                   order,
-                  user.businessName ?? user.username,
+                  branding.shopName,
                 ),
-                shopName: user.businessName ?? user.username,
+                shopName: branding.shopName,
+                logoUrl: branding.logoUrl,
               ),
             if (hasMore)
               Padding(
@@ -458,18 +471,108 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   }
 }
 
+class _OrdersInitialSkeleton extends StatelessWidget {
+  const _OrdersInitialSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      key: const ValueKey('orders-initial-skeleton'),
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      children: [
+        ShopSkeleton(
+          semanticLabel: 'جارٍ تحميل الطلبات',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Row(
+                children: [
+                  Expanded(
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: ShopSkeletonBox(
+                        width: 104,
+                        height: 28,
+                        borderRadius: 9,
+                      ),
+                    ),
+                  ),
+                  ShopSkeletonCircle(size: 44),
+                ],
+              ),
+              const SizedBox(height: 12),
+              for (var index = 0; index < 4; index++)
+                _OrderSkeletonCard(index: index),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _OrderSkeletonCard extends StatelessWidget {
+  const _OrderSkeletonCard({required this.index});
+
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: ValueKey('orders-skeleton-card-$index'),
+      margin: const EdgeInsets.only(bottom: 12),
+      child: const Padding(
+        padding: EdgeInsets.all(12),
+        child: Row(
+          children: [
+            ShopSkeletonBox(
+              width: 48,
+              height: 48,
+              borderRadius: 12,
+            ),
+            SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ShopSkeletonBox(height: 16, borderRadius: 7),
+                  SizedBox(height: 8),
+                  FractionallySizedBox(
+                    widthFactor: .72,
+                    alignment: AlignmentDirectional.centerStart,
+                    child: ShopSkeletonBox(height: 11, borderRadius: 6),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(width: 8),
+            ShopSkeletonBox(
+              width: 58,
+              height: 28,
+              borderRadius: 999,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _OrderSuccessPanel extends StatelessWidget {
   const _OrderSuccessPanel({
     required this.order,
     required this.onViewOrder,
     required this.onBackToOrders,
     required this.shopName,
+    this.logoUrl,
   });
 
   final Order order;
   final VoidCallback onViewOrder;
   final VoidCallback onBackToOrders;
   final String shopName;
+  final String? logoUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -525,6 +628,7 @@ class _OrderSuccessPanel extends StatelessWidget {
                     context,
                     order: order,
                     shopName: shopName,
+                    logoUrl: logoUrl,
                   ),
                   icon: const Icon(Icons.download_outlined),
                   label: const Text('تحميل الفاتورة PDF'),
@@ -824,6 +928,7 @@ class _CustomerOrderCard extends StatelessWidget {
     required this.onReorder,
     required this.onCopy,
     this.shopName = '',
+    this.logoUrl,
   });
 
   final Order order;
@@ -831,6 +936,7 @@ class _CustomerOrderCard extends StatelessWidget {
   final VoidCallback? onReorder;
   final VoidCallback onCopy;
   final String shopName;
+  final String? logoUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -847,6 +953,22 @@ class _CustomerOrderCard extends StatelessWidget {
       ),
       child: ExpansionTile(
         initiallyExpanded: highlighted,
+        leading: order.items.isEmpty
+            ? null
+            : SizedBox.square(
+                dimension: 48,
+                child: ProductImagePlaceholder(
+                  key: ValueKey(
+                    'customer-order-preview-image-${order.id}',
+                  ),
+                  category: order.items.first.product.category,
+                  productId: order.items.first.productId,
+                  imageUrl: order.items.first.product.imageUrl,
+                  expand: true,
+                  fit: BoxFit.contain,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
         title: Text(
           'طلب ${order.displayNumber}',
           style: const TextStyle(fontWeight: FontWeight.w900),
@@ -857,15 +979,9 @@ class _CustomerOrderCard extends StatelessWidget {
         trailing: StatusChip.order(order.status),
         children: [
           for (final item in order.items)
-            ListTile(
-              title: Text(item.productName),
-              subtitle: item.unitsPerBox == null
-                  ? null
-                  : Text('${item.unitsPerBox} قطعة في الصندوق'),
-              trailing: Text(
-                '${item.quantity} × ${lyd(item.unitPrice)}\n${lyd(item.lineTotal)}',
-                textAlign: TextAlign.end,
-              ),
+            _CustomerOrderProductRow(
+              orderId: order.id,
+              item: item,
             ),
           const Divider(height: 1),
           _OrderTotalTile(
@@ -925,6 +1041,86 @@ class _CustomerOrderCard extends StatelessWidget {
             child: CustomerInvoiceActions(
               order: order,
               shopName: shopName.isEmpty ? order.businessName : shopName,
+              logoUrl: logoUrl,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CustomerOrderProductRow extends StatelessWidget {
+  const _CustomerOrderProductRow({
+    required this.orderId,
+    required this.item,
+  });
+
+  final String orderId;
+  final OrderLine item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox.square(
+            dimension: 58,
+            child: ProductImagePlaceholder(
+              key: ValueKey(
+                'customer-order-item-image-$orderId-${item.productId}',
+              ),
+              category: item.product.category,
+              productId: item.productId,
+              imageUrl: item.product.imageUrl,
+              expand: true,
+              fit: BoxFit.contain,
+              borderRadius: BorderRadius.circular(13),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.productName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  [
+                    '${item.quantity} × ${lyd(item.unitPrice)}',
+                    if (item.unitsPerBox != null)
+                      '${item.unitsPerBox} قطعة في الصندوق',
+                  ].join(' • '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: .66),
+                    fontSize: 12.5,
+                    height: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            lyd(item.lineTotal),
+            style: const TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 12.5,
             ),
           ),
         ],
@@ -987,9 +1183,20 @@ class _OrderTotalTile extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
       child: Row(
         children: [
-          Text(label, style: style),
-          const Spacer(),
-          Text(lyd(amount), style: style),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: style,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            lyd(amount),
+            maxLines: 1,
+            style: style,
+          ),
         ],
       ),
     );

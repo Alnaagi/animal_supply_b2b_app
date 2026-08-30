@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/config/shop_branding.dart';
+import '../../core/config/shop_branding_cache.dart';
 import '../../core/files/browser_file_download.dart';
 import '../../core/files/browser_print.dart';
 import '../../core/utils/formatters.dart';
@@ -13,11 +15,15 @@ class CustomerInvoiceActions extends StatelessWidget {
   const CustomerInvoiceActions({
     required this.order,
     required this.shopName,
+    this.logoUrl,
+    this.logoBytes,
     super.key,
   });
 
   final Order order;
   final String shopName;
+  final String? logoUrl;
+  final Uint8List? logoBytes;
 
   Future<void> _viewInvoice(BuildContext context) async {
     await showModalBottomSheet<void>(
@@ -79,10 +85,15 @@ class CustomerInvoiceActions extends StatelessWidget {
     BuildContext context, {
     required Order order,
     required String shopName,
+    String? logoUrl,
+    Uint8List? logoBytes,
   }) async {
+    final resolvedLogoBytes = logoBytes ??
+        await fetchShopLogoBytes(logoUrl ?? ShopBrandingCache.current.logoUrl);
     final bytes = await OrderInvoicePdf.build(
       order: order,
       shopName: shopName,
+      logoBytes: resolvedLogoBytes,
     );
     final fileName = _safeInvoiceFilename(order.displayNumber);
     if (kIsWeb) {
@@ -105,9 +116,12 @@ class CustomerInvoiceActions extends StatelessWidget {
   }
 
   Future<void> _printInvoice(BuildContext context) async {
+    final resolvedLogoBytes = logoBytes ??
+        await fetchShopLogoBytes(logoUrl ?? ShopBrandingCache.current.logoUrl);
     final bytes = await OrderInvoicePdf.build(
       order: order,
       shopName: shopName,
+      logoBytes: resolvedLogoBytes,
     );
     final opened = printPdfDocument(
       bytes: bytes,
@@ -125,6 +139,8 @@ class CustomerInvoiceActions extends StatelessWidget {
       context,
       order: order,
       shopName: shopName,
+      logoUrl: logoUrl,
+      logoBytes: logoBytes,
     );
   }
 

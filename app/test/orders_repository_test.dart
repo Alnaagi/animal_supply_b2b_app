@@ -288,6 +288,43 @@ void main() {
       );
     });
 
+    test(
+        'maps opaque order-create failures to Arabic cart-preserved copy',
+        () async {
+      final gateway = _FakeGateway(
+        placeResponses: const [
+          OrdersFunctionResponse(
+            status: 500,
+            data: {
+              'ok': false,
+              'error': {
+                'code': 'ORDER_CREATE_FAILED',
+                'message': 'The order could not be created.',
+              },
+            },
+          ),
+        ],
+      );
+      final repository = OrdersRepository(remote: gateway, demoSeed: const []);
+
+      expect(
+        () => repository.placeOrder(
+          clientRequestId: 'request-1',
+          customerId: 'customer-1',
+          items: [CartItem(product: _product(price: 20), quantity: 1)],
+        ),
+        throwsA(
+          isA<OrdersRepositoryException>()
+              .having((error) => error.code, 'code', 'ORDER_CREATE_FAILED')
+              .having(
+                (error) => error.message,
+                'message',
+                'تعذر إكمال عملية الطلب حالياً. لم يتم مسح السلة، ويمكنك المحاولة مجدداً.',
+              ),
+        ),
+      );
+    });
+
     test('classifies a transport failure as retryable', () async {
       final repository = OrdersRepository(
         remote: _TransportFailureGateway(),

@@ -11,6 +11,7 @@ class OrderInvoicePdf {
   static Future<Uint8List> build({
     required Order order,
     required String shopName,
+    Uint8List? logoBytes,
     bool demoData = false,
   }) async {
     final fontData =
@@ -22,6 +23,7 @@ class OrderInvoicePdf {
         bold: arabicFont,
         italic: arabicFont,
         boldItalic: arabicFont,
+        fontFallback: [pw.Font.helvetica()],
       ),
     );
 
@@ -38,19 +40,39 @@ class OrderInvoicePdf {
                 bottom: pw.BorderSide(width: .8, color: PdfColors.grey400),
               ),
             ),
-            child: pw.Column(
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                pw.Text(
-                  shopName.trim().isEmpty ? 'متجر B2B' : shopName.trim(),
-                  style: pw.TextStyle(
-                      fontSize: 18, fontWeight: pw.FontWeight.bold),
+                pw.Expanded(
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(
+                        shopName.trim().isEmpty ? 'متجر B2B' : shopName.trim(),
+                        style: pw.TextStyle(
+                            fontSize: 18, fontWeight: pw.FontWeight.bold),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text('فاتورة طلب',
+                          style: const pw.TextStyle(fontSize: 14)),
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                          _line('رقم الطلب', westernDigits(order.displayNumber))),
+                      pw.Text(_line('التاريخ', _formatDate(order.createdAt))),
+                    ],
+                  ),
                 ),
-                pw.SizedBox(height: 4),
-                pw.Text('فاتورة طلب', style: const pw.TextStyle(fontSize: 14)),
-                pw.SizedBox(height: 4),
-                pw.Text(_line('رقم الطلب', westernDigits(order.displayNumber))),
-                pw.Text(_line('التاريخ', _formatDate(order.createdAt))),
+                if (logoBytes != null && logoBytes.isNotEmpty)
+                  pw.Container(
+                    width: 52,
+                    height: 52,
+                    padding: const pw.EdgeInsets.all(2),
+                    child: pw.Image(
+                      pw.MemoryImage(logoBytes),
+                      fit: pw.BoxFit.contain,
+                    ),
+                  ),
               ],
             ),
           ),

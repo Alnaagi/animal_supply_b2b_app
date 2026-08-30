@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme/app_theme.dart';
 import '../../core/updates/update_link.dart';
 import '../../core/widgets/category_icon_view.dart';
 import '../../data/models/category_icon.dart';
@@ -263,8 +262,10 @@ class _CategoryEditorDialogState extends ConsumerState<CategoryEditorDialog> {
                           alignment: AlignmentDirectional.centerStart,
                           child: CircleAvatar(
                             radius: 28,
-                            backgroundColor:
-                                AppTheme.green.withValues(alpha: .12),
+                            backgroundColor: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withValues(alpha: .12),
                             child: _previewBytes != null
                                 ? ClipOval(
                                     child: Image.memory(

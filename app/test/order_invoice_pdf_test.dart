@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:animal_supply_b2b/src/core/constants/order_status.dart';
 import 'package:animal_supply_b2b/src/data/export/order_invoice_pdf.dart';
 import 'package:animal_supply_b2b/src/data/models/order.dart';
@@ -34,6 +36,23 @@ void main() {
     final second =
         await OrderInvoicePdf.build(order: changed, shopName: 'متجر');
     expect(first, isNot(equals(second)));
+  });
+
+  test('invoice pdf includes custom shop logo when provided', () async {
+    const transparentPng =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    final logoBytes = base64Decode(transparentPng);
+    final withLogo = await OrderInvoicePdf.build(
+      order: _order(itemCount: 2),
+      shopName: 'متجر النور',
+      logoBytes: logoBytes,
+    );
+    final withoutLogo = await OrderInvoicePdf.build(
+      order: _order(itemCount: 2),
+      shopName: 'متجر النور',
+    );
+    expect(withLogo.length, greaterThan(100));
+    expect(withLogo, isNot(equals(withoutLogo)));
   });
 }
 

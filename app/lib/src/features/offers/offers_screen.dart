@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/widgets/empty_state.dart';
-import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/product.dart';
 import '../../data/repositories/catalog_repository.dart';
@@ -46,7 +46,10 @@ class _OffersScreenState extends ConsumerState<OffersScreen> {
           future: _offersFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const ShopLoading.page();
+              return const ShopSkeleton(
+                semanticLabel: 'جارٍ تحميل العروض...',
+                child: ShopProductGridSkeleton(itemCount: 6),
+              );
             }
             if (snapshot.hasError) {
               return EmptyState(

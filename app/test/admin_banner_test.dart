@@ -323,6 +323,148 @@ void main() {
     expect(tester.widget<Switch>(switchFinder).value, isTrue);
     expect(find.textContaining('تم التراجع عن التعديل'), findsOneWidget);
   });
+
+  test('archive hides banner from customer list and restore keeps it inactive',
+      () async {
+    final repository = AdminRepository();
+    final created = await repository.saveBanner(
+      draft(title: 'بانر للأرشفة', active: true, sortOrder: 4),
+    );
+
+    final archived = await repository.archiveBanner(created);
+    expect(archived.isArchived, isTrue);
+    expect(archived.active, isFalse);
+    expect(
+      await repository.banners(),
+      isNot(contains(predicate<AppBanner>((item) => item.id == created.id))),
+    );
+    expect(
+      await repository.allBanners(),
+      contains(predicate<AppBanner>((item) => item.id == created.id && item.isArchived)),
+    );
+
+    final restored = await repository.restoreBanner(archived);
+    expect(restored.isArchived, isFalse);
+    expect(restored.active, isFalse);
+    expect(
+      await repository.banners(),
+      isNot(contains(predicate<AppBanner>((item) => item.id == created.id))),
+    );
+    expect(
+      await repository.allBanners(),
+      contains(
+        predicate<AppBanner>(
+          (item) => item.id == created.id && !item.isArchived && !item.active,
+        ),
+      ),
+    );
+  });
+
+  test('delete removes banner permanently from demo session', () async {
+    final repository = AdminRepository();
+    final created = await repository.saveBanner(
+      draft(title: 'بانر للحذف', active: false, sortOrder: 5),
+    );
+
+    await repository.deleteBanner(created);
+    expect(
+      await repository.allBanners(),
+      isNot(contains(predicate<AppBanner>((item) => item.id == created.id))),
+    );
+  });
+
+  test('activeBannersInShowingOrder excludes archived banners', () {
+    final active = draft(id: 'a', title: 'نشط', sortOrder: 1, active: true);
+    final archived = draft(id: 'b', title: 'مؤرشف', sortOrder: 2, active: true)
+        .copyWith(archivedAt: DateTime(2026, 8, 22));
+    final inactive = draft(id: 'c', title: 'متوقف', sortOrder: 3, active: false);
+
+    expect(
+      activeBannersInShowingOrder([archived, inactive, active])
+          .map((banner) => banner.id),
+      ['a'],
+    );
+  });
+
+
+  testWidgets('archive action confirms and moves banner to archived filter',
+      (tester) async {
+    final repository = AdminRepository();
+    await repository.saveBanner(
+      draft(title: 'بانر أرشفة واجهة', active: true, sortOrder: 2),
+    );
+    await pumpAdminBanners(tester, repository: repository);
+
+    // Open the kebab on the created banner, not the seeded demo banner.
+    final titleFinder = find.text('بانر أرشفة واجهة');
+    expect(titleFinder, findsOneWidget);
+    final menu = find.descendant(
+      of: find.ancestor(
+        of: titleFinder,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget.key is ValueKey<String> &&
+              (widget.key as ValueKey<String>).value.startsWith('banner-card-'),
+        ),
+      ),
+      matching: find.byType(PopupMenuButton<String>),
+    );
+    await tester.ensureVisible(menu);
+    await tester.pumpAndSettle();
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('أرشفة').last);
+    await tester.pumpAndSettle();
+    expect(find.text('تأكيد أرشفة البانر'), findsOneWidget);
+    await tester
+        .tap(find.byKey(const ValueKey('confirm-archive-banner-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('بانر أرشفة واجهة'), findsNothing);
+    await tester.tap(find.text('المؤرشفة'));
+    await tester.pumpAndSettle();
+    expect(find.text('بانر أرشفة واجهة'), findsOneWidget);
+    expect(find.textContaining('مؤرشف'), findsWidgets);
+  });
+
+  testWidgets('delete action confirms and removes banner from list',
+      (tester) async {
+    final repository = AdminRepository();
+    await repository.saveBanner(
+      draft(title: 'بانر حذف واجهة', active: false, sortOrder: 2),
+    );
+    await pumpAdminBanners(tester, repository: repository);
+
+    final titleFinder = find.text('بانر حذف واجهة');
+    expect(titleFinder, findsOneWidget);
+    final menu = find.descendant(
+      of: find.ancestor(
+        of: titleFinder,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget.key is ValueKey<String> &&
+              (widget.key as ValueKey<String>).value.startsWith('banner-card-'),
+        ),
+      ),
+      matching: find.byType(PopupMenuButton<String>),
+    );
+    await tester.ensureVisible(menu);
+    await tester.pumpAndSettle();
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('حذف نهائي').last);
+    await tester.pumpAndSettle();
+    expect(find.text('تأكيد الحذف النهائي'), findsOneWidget);
+    await tester
+        .tap(find.byKey(const ValueKey('confirm-delete-banner-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('بانر حذف واجهة'), findsNothing);
+    await tester.tap(find.text('المؤرشفة'));
+    await tester.pumpAndSettle();
+    expect(find.text('بانر حذف واجهة'), findsNothing);
+  });
+
 }
 
 class _FailToggleRepository extends AdminRepository {

@@ -229,7 +229,8 @@ class Product {
         'base_price': basePrice,
         'retail_unit_price': retailUnitPrice,
         'old_price': oldPrice,
-        'discount_percent': discountPercent,
+        // DB stores 0 for "no discount"; null must not be sent on update.
+        'discount_percent': (discountPercent ?? 0) <= 0 ? 0 : discountPercent,
         'stock_quantity': stockQuantity,
         'stock_tracking_enabled': stockTrackingEnabled,
         'show_stock_quantity_to_customers': showStockQuantityToCustomers,

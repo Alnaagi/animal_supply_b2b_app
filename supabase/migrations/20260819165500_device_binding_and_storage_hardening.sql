@@ -288,7 +288,12 @@ revoke all on function public.admin_reset_customer_device_binding(uuid, uuid)
 grant execute on function public.admin_reset_customer_device_binding(uuid, uuid)
   to service_role;
 
--- Tighten storage upload object names: exactly 3 segments and image extension.
+-- Tighten storage upload object names: folder/{auth.uid()}/file + image
+-- extension regex. NOTE: this revision incorrectly used
+-- cardinality(storage.foldername(name)) = 3; foldername excludes the file
+-- name so valid paths have cardinality 2. Fixed by
+-- 20260822090402_fix_storage_foldername_cardinality.sql (do not edit this
+-- applied migration's policy bodies further).
 drop policy if exists "product images staff insert" on storage.objects;
 create policy "product images staff insert"
 on storage.objects

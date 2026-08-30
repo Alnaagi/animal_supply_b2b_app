@@ -18,6 +18,7 @@ import '../models/database_usage.dart';
 import '../models/order.dart';
 import '../models/product.dart';
 import '../remote/supabase_clients.dart';
+import 'product_images_repository.dart';
 
 final adminRepositoryProvider =
     Provider<AdminRepository>((ref) => AdminRepository());
@@ -578,6 +579,7 @@ AppBanner _validatedBanner(AppBanner banner) {
       'Banner order must be between 0 and 100000.',
     );
   }
+  // aspectMode is an enum; parse() already normalizes unknown DB values to wide.
 
   switch (targetType) {
     case 'catalog':
@@ -1377,29 +1379,38 @@ class AdminRepository {
     _settings = settings.copyWith(updatedAt: DateTime.now());
   }
 
-  Future<List<AppBanner>> banners() => _loadBanners(includeInactive: false);
+  Future<List<AppBanner>> banners() => _loadBanners(
+        includeInactive: false,
+        includeArchived: false,
+      );
 
-  Future<List<AppBanner>> allBanners() => _loadBanners(includeInactive: true);
+  Future<List<AppBanner>> allBanners() => _loadBanners(
+        includeInactive: true,
+        includeArchived: true,
+      );
 
-  Future<List<AppBanner>> _loadBanners({required bool includeInactive}) async {
+  Future<List<AppBanner>> _loadBanners({
+    required bool includeInactive,
+    required bool includeArchived,
+  }) async {
     final client = supabaseClient;
     if (client != null) {
-      final rows = includeInactive
-          ? await client
-              .from('banners')
-              .select()
-              .order('sort_order')
-              .order('created_at')
-          : await client
-              .from('banners')
-              .select()
-              .eq('active', true)
-              .order('sort_order')
-              .order('created_at');
+      var query = client.from('banners').select();
+      if (!includeInactive) {
+        query = query.eq('active', true);
+      }
+      if (!includeArchived) {
+        query = query.isFilter('archived_at', null);
+      }
+      final rows = await query.order('sort_order').order('created_at');
       return rows.map<AppBanner>((row) => AppBanner.fromSupabase(row)).toList();
     }
     final result = _banners
-        .where((banner) => includeInactive || banner.active)
+        .where((banner) {
+          if (!includeInactive && !banner.active) return false;
+          if (!includeArchived && banner.isArchived) return false;
+          return true;
+        })
         .toList(growable: false)
       ..sort((a, b) {
         final order = a.sortOrder.compareTo(b.sortOrder);
@@ -1473,6 +1484,68 @@ class AdminRepository {
     required bool active,
   }) {
     return saveBanner(banner.copyWith(active: active));
+  }
+
+  Future<AppBanner> archiveBanner(AppBanner banner) {
+    return saveBanner(
+      banner.copyWith(
+        active: false,
+        archivedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  Future<AppBanner> restoreBanner(AppBanner banner) {
+    return saveBanner(
+      banner.copyWith(
+        active: false,
+        clearArchivedAt: true,
+      ),
+    );
+  }
+
+  /// Permanently deletes a banner. Best-effort storage cleanup runs only when
+  /// the image URL maps to `product-images/banners/...` and no other banner
+  /// still references the same URL.
+  Future<void> deleteBanner(
+    AppBanner banner, {
+    ProductImagesRepository? imagesRepository,
+  }) async {
+    final client = supabaseClient;
+    final imageUrl = banner.imageUrl.trim();
+    if (client != null) {
+      await client.from('banners').delete().eq('id', banner.id);
+    } else {
+      final index = _banners.indexWhere((item) => item.id == banner.id);
+      if (index == -1) {
+        throw StateError('Banner not found.');
+      }
+      _banners.removeAt(index);
+    }
+
+    if (imageUrl.isEmpty) return;
+    final stillUsed = client != null
+        ? ((await client
+                    .from('banners')
+                    .select('id')
+                    .eq('image_url', imageUrl)
+                    .limit(1))
+                as List)
+            .isNotEmpty
+        : _banners.any((item) => item.imageUrl.trim() == imageUrl);
+    if (stillUsed) return;
+
+    final storagePath =
+        ProductImagesRepository.bannerStoragePathFromPublicUrl(imageUrl);
+    if (storagePath == null) return;
+    final images = imagesRepository ??
+        (client == null ? null : ProductImagesRepository());
+    if (images == null) return;
+    try {
+      await images.removeByStoragePath(storagePath);
+    } catch (_) {
+      // Keep row deletion successful even if storage cleanup fails.
+    }
   }
 
   Future<AppVersionInfo> latestVersion({String platform = 'android'}) async {

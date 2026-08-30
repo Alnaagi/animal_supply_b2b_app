@@ -1,7 +1,7 @@
 name: animal_supply_b2b
 description: Animal Supply B2B mobile MVP for admin-created wholesale customers.
 publish_to: "none"
-version: 1.0.4+5
+version: 1.0.4+25
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -33,6 +33,7 @@ dependencies:
   pdf: ^3.11.3
   web: ^1.1.1
   image: ^4.8.0
+  flutter_colorpicker: ^1.1.0
 
 dev_dependencies:
   flutter_test:

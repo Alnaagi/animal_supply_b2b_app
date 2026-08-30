@@ -12,7 +12,7 @@ import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/banner_image_crop_dialog.dart';
 import '../../core/widgets/circular_upload_progress.dart';
-import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/product.dart';
@@ -43,7 +43,7 @@ List<AppBanner> bannersInShowingOrder(Iterable<AppBanner> banners) {
 
 List<AppBanner> activeBannersInShowingOrder(Iterable<AppBanner> banners) {
   return bannersInShowingOrder(
-    banners.where((banner) => banner.active),
+    banners.where((banner) => banner.active && !banner.isArchived),
   );
 }
 
@@ -163,14 +163,23 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
         future: _loadFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const ShopLoading.page();
+            return const ShopSkeleton(
+              semanticLabel: 'جارٍ تحميل العروض الترويجية...',
+              child: ShopBannersSkeleton(),
+            );
           }
           if (snapshot.hasError) {
             return _BannerLoadError(onRetry: _reload);
           }
           final allBanners = _allBanners;
           final banners = _filteredBanners();
-          final activeCount = allBanners.where((item) => item.active).length;
+          final managedBanners = allBanners
+              .where((item) => !item.isArchived)
+              .toList(growable: false);
+          final activeCount =
+              managedBanners.where((item) => item.active).length;
+          final archivedCount =
+              allBanners.where((item) => item.isArchived).length;
           final canReorder = _filter == _BannerFilter.all;
 
           return ShopRefreshIndicator(
@@ -194,8 +203,9 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
                     const SizedBox(height: 12),
                   ],
                   _AdminBannersToolbar(
-                    totalCount: allBanners.length,
+                    totalCount: managedBanners.length,
                     activeCount: activeCount,
+                    archivedCount: archivedCount,
                     filter: _filter,
                     onFilterChanged: (filter) =>
                         setState(() => _filter = filter),
@@ -238,7 +248,13 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
                             onToggleActive: (value) =>
                                 _toggleActive(banner, value),
                             onDuplicate: () => _duplicateBanner(banner),
-                            onDelete: null,
+                            onArchive: banner.isArchived
+                                ? null
+                                : () => _archiveBanner(banner),
+                            onRestore: banner.isArchived
+                                ? () => _restoreBanner(banner)
+                                : null,
+                            onDelete: () => _deleteBanner(banner),
                           ),
                         );
                       },
@@ -255,9 +271,10 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
   List<AppBanner> _filteredBanners() {
     return _allBanners.where((banner) {
       return switch (_filter) {
-        _BannerFilter.all => true,
-        _BannerFilter.active => banner.active,
-        _BannerFilter.inactive => !banner.active,
+        _BannerFilter.all => !banner.isArchived,
+        _BannerFilter.active => !banner.isArchived && banner.active,
+        _BannerFilter.inactive => !banner.isArchived && !banner.active,
+        _BannerFilter.archived => banner.isArchived,
       };
     }).toList(growable: false);
   }
@@ -433,6 +450,175 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
     }
   }
 
+  Future<void> _archiveBanner(AppBanner banner) async {
+    if (_busyBannerIds.contains(banner.id) || banner.isArchived) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تأكيد أرشفة البانر'),
+        content: Text(
+          'سيتم إخفاء «${banner.title}» من قائمة الإدارة الافتراضية ومن عرض العملاء. يمكنك استعادته لاحقاً من المؤرشفة.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-archive-banner-button'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('أرشفة'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final before = banner;
+    final after = banner.copyWith(
+      active: false,
+      archivedAt: DateTime.now(),
+    );
+    setState(() => _busyBannerIds.add(banner.id));
+    _replaceBannerLocally(after);
+    try {
+      await ref.read(adminRepositoryProvider).archiveBanner(banner);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تمت أرشفة البانر.')),
+      );
+    } catch (error) {
+      _replaceBannerLocally(before);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            mutationFailureMessageAr(
+              error,
+              fallback: 'تعذر أرشفة البانر. تم التراجع عن التعديل.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busyBannerIds.remove(banner.id));
+    }
+  }
+
+  Future<void> _restoreBanner(AppBanner banner) async {
+    if (_busyBannerIds.contains(banner.id) || !banner.isArchived) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تأكيد استعادة البانر'),
+        content: Text(
+          'ستُعاد «${banner.title}» إلى قائمة الإدارة كبانر متوقف. فعّله يدوياً ليظهر للعملاء.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-restore-banner-button'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('استعادة'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final before = banner;
+    final after = banner.copyWith(active: false, clearArchivedAt: true);
+    setState(() => _busyBannerIds.add(banner.id));
+    _replaceBannerLocally(after);
+    try {
+      await ref.read(adminRepositoryProvider).restoreBanner(banner);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تمت استعادة البانر. ما زال متوقفاً حتى تفعيله.'),
+        ),
+      );
+    } catch (error) {
+      _replaceBannerLocally(before);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            mutationFailureMessageAr(
+              error,
+              fallback: 'تعذر استعادة البانر. تم التراجع عن التعديل.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busyBannerIds.remove(banner.id));
+    }
+  }
+
+  Future<void> _deleteBanner(AppBanner banner) async {
+    if (_busyBannerIds.contains(banner.id)) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تأكيد الحذف النهائي'),
+        content: Text(
+          'سيتم حذف «${banner.title}» نهائياً ولا يمكن التراجع عن ذلك. '
+          'يُفضّل الأرشفة إن أردت الإبقاء على البانر.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-delete-banner-button'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('حذف نهائي'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final beforeList = List<AppBanner>.from(_allBanners);
+    setState(() {
+      _busyBannerIds.add(banner.id);
+      _allBanners = [
+        for (final item in _allBanners)
+          if (item.id != banner.id) item,
+      ];
+    });
+    try {
+      await ref.read(adminRepositoryProvider).deleteBanner(banner);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حذف البانر نهائياً.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _allBanners = beforeList);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            mutationFailureMessageAr(
+              error,
+              fallback: 'تعذر حذف البانر. تم التراجع عن التعديل.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busyBannerIds.remove(banner.id));
+    }
+  }
+
   Future<void> _openStorePreview({AppBanner? focusBanner}) async {
     final isMobile = MediaQuery.sizeOf(context).width < 800;
     final child = _StorePreviewPanel(
@@ -504,6 +690,7 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
   List<Product> productResults = const [];
   Timer? productSearchDebounce;
   _BannerPreviewMode _previewMode = _BannerPreviewMode.mobile;
+  BannerAspectMode aspectMode = BannerAspectMode.wide;
   bool _showAdvancedImageUrl = true;
 
   bool get editing => widget.banner != null;
@@ -528,6 +715,7 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
     imageUrl = TextEditingController(text: banner?.imageUrl ?? '');
     productSearch = TextEditingController();
     active = banner?.active ?? true;
+    aspectMode = banner?.aspectMode ?? BannerAspectMode.wide;
     sortOrder = editing ? banner!.sortOrder : widget.nextSortOrder;
     selectedCategory =
         targetType == 'category' && !legacyUrl ? banner?.targetValue : null;
@@ -644,6 +832,7 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
         context,
         imageBytes: picked.bytes,
         sourceFileName: picked.fileName,
+        aspectRatio: aspectMode.ratio,
       );
       if (!mounted) return;
       if (cropped == null) return;
@@ -724,6 +913,7 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
       },
       sortOrder: sortOrder,
       active: active,
+      aspectMode: aspectMode,
       updatedAt: widget.banner?.updatedAt,
     );
     try {
@@ -818,6 +1008,62 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
             onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(labelText: 'الوصف المختصر'),
           ),
+          const SizedBox(height: 12),
+          Text(
+            'نسبة إطار البانر',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+          ),
+          const SizedBox(height: 8),
+          SegmentedButton<BannerAspectMode>(
+            key: const ValueKey('banner-aspect-mode'),
+            segments: const [
+              ButtonSegment(
+                value: BannerAspectMode.wide,
+                label: Text('عريض'),
+                icon: Icon(Icons.crop_landscape_outlined, size: 18),
+              ),
+              ButtonSegment(
+                value: BannerAspectMode.square,
+                label: Text('مربع 1:1'),
+                icon: Icon(Icons.crop_square_outlined, size: 18),
+              ),
+            ],
+            selected: {aspectMode},
+            onSelectionChanged: saving || uploading
+                ? null
+                : (selection) => setState(() => aspectMode = selection.single),
+          ),
+          const SizedBox(height: 8),
+          DecoratedBox(
+            key: const ValueKey('banner-upload-advice'),
+            decoration: BoxDecoration(
+              color: Theme.of(context)
+                  .colorScheme
+                  .primary
+                  .withValues(alpha: .06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: Theme.of(context)
+                    .colorScheme
+                    .primary
+                    .withValues(alpha: .14),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                '${aspectMode.uploadAdviceAr}\n'
+                'املأ الإطار بالكامل (بدون فراغ أسفل الصورة). '
+                'قصّ الصورة بعد الاختيار حسب النسبة المحددة.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      height: 1.45,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
+          ),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -843,13 +1089,15 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(14),
-                child: SizedBox(
-                  height: 150,
+                child: AspectRatio(
+                  aspectRatio: aspectMode.ratio,
                   child: imagePreviewBytes != null
                       ? Image.memory(
                           imagePreviewBytes!,
                           key: const ValueKey('banner-image-preview'),
-                          fit: BoxFit.cover,
+                          fit: BoxFit.fill,
+                          width: double.infinity,
+                          height: double.infinity,
                         )
                       : _BannerUrlThumbnail(url: imageUrl.text),
                 ),
@@ -1109,13 +1357,16 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
       targetValue: '',
       sortOrder: sortOrder,
       active: true,
+      aspectMode: aspectMode,
     );
     final slides = HomeBannerSlide.fromAdminBanners([banner]);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.green.withValues(alpha: .14)),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: .14),
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -1161,12 +1412,13 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
   }
 }
 
-enum _BannerFilter { all, active, inactive }
+enum _BannerFilter { all, active, inactive, archived }
 
 class _AdminBannersToolbar extends StatelessWidget {
   const _AdminBannersToolbar({
     required this.totalCount,
     required this.activeCount,
+    required this.archivedCount,
     required this.filter,
     required this.onFilterChanged,
     required this.onPreviewStore,
@@ -1175,6 +1427,7 @@ class _AdminBannersToolbar extends StatelessWidget {
 
   final int totalCount;
   final int activeCount;
+  final int archivedCount;
   final _BannerFilter filter;
   final ValueChanged<_BannerFilter> onFilterChanged;
   final VoidCallback onPreviewStore;
@@ -1187,7 +1440,9 @@ class _AdminBannersToolbar extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.green.withValues(alpha: .14)),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: .14),
+        ),
       ),
       child: Wrap(
         spacing: 10,
@@ -1196,6 +1451,7 @@ class _AdminBannersToolbar extends StatelessWidget {
         children: [
           Text('$totalCount بانرات'),
           Text('$activeCount نشطة'),
+          if (archivedCount > 0) Text('$archivedCount مؤرشفة'),
           SegmentedButton<_BannerFilter>(
             showSelectedIcon: false,
             segments: const [
@@ -1203,6 +1459,8 @@ class _AdminBannersToolbar extends StatelessWidget {
               ButtonSegment(value: _BannerFilter.active, label: Text('النشطة')),
               ButtonSegment(
                   value: _BannerFilter.inactive, label: Text('المتوقفة')),
+              ButtonSegment(
+                  value: _BannerFilter.archived, label: Text('المؤرشفة')),
             ],
             selected: {filter},
             onSelectionChanged: (selection) =>
@@ -1254,10 +1512,15 @@ class _StorePreviewPanelState extends ConsumerState<_StorePreviewPanel> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppTheme.green.withValues(alpha: .14)),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: .14),
+        ),
         boxShadow: [
           BoxShadow(
-            color: AppTheme.darkGreen.withValues(alpha: .06),
+            color: Theme.of(context)
+                .colorScheme
+                .onSurface
+                .withValues(alpha: .06),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -1311,7 +1574,10 @@ class _StorePreviewPanelState extends ConsumerState<_StorePreviewPanel> {
                   : 'عدد البانرات النشطة: ${allActive.length}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontWeight: FontWeight.w600,
-                    color: AppTheme.darkGreen.withValues(alpha: .78),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: .78),
                   ),
             ),
             if (widget.focusBanner != null) ...[
@@ -1362,15 +1628,21 @@ class _CustomerBannerPreviewStage extends StatelessWidget {
     final stage = DecoratedBox(
       key: const Key('admin-banner-client-preview-stage'),
       decoration: BoxDecoration(
-        color: AppTheme.sand,
+        color: Theme.of(context).scaffoldBackgroundColor,
         borderRadius: BorderRadius.circular(mobile ? 20 : 18),
         border: Border.all(
-          color: AppTheme.green.withValues(alpha: mobile ? .18 : .10),
+          color: Theme.of(context)
+              .colorScheme
+              .primary
+              .withValues(alpha: mobile ? .18 : .10),
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: AppTheme.darkGreen.withValues(alpha: .06),
+            color: Theme.of(context)
+                .colorScheme
+                .onSurface
+                .withValues(alpha: .06),
             blurRadius: mobile ? 10 : 14,
             offset: const Offset(0, 4),
           ),
@@ -1388,7 +1660,10 @@ class _CustomerBannerPreviewStage extends StatelessWidget {
                 child: DecoratedBox(
                   key: const Key('admin-banner-preview-home-indicator'),
                   decoration: BoxDecoration(
-                    color: AppTheme.green.withValues(alpha: .42),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: .42),
                     borderRadius: BorderRadius.circular(99),
                   ),
                   child: const SizedBox(width: 92, height: 4),
@@ -1429,6 +1704,8 @@ class _BannerCard extends StatelessWidget {
     required this.onEdit,
     required this.onToggleActive,
     required this.onDuplicate,
+    required this.onArchive,
+    required this.onRestore,
     required this.onDelete,
   });
 
@@ -1441,6 +1718,8 @@ class _BannerCard extends StatelessWidget {
   final VoidCallback onEdit;
   final ValueChanged<bool> onToggleActive;
   final VoidCallback onDuplicate;
+  final VoidCallback? onArchive;
+  final VoidCallback? onRestore;
   final VoidCallback? onDelete;
 
   @override
@@ -1450,7 +1729,9 @@ class _BannerCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.green.withValues(alpha: .12)),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: .12),
+        ),
       ),
       child: Column(
         children: [
@@ -1462,10 +1743,12 @@ class _BannerCard extends StatelessWidget {
               aspectRatio: isMobile ? 16 / 7 : 16 / 5,
               child: Image.network(
                 banner.imageUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => const ColoredBox(
-                  color: Color(0xFFE8F1EC),
-                  child: Center(child: Icon(Icons.broken_image_outlined)),
+                fit: BoxFit.fill,
+                errorBuilder: (context, error, stackTrace) => ColoredBox(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  child: const Center(
+                    child: Icon(Icons.broken_image_outlined),
+                  ),
                 ),
               ),
             ),
@@ -1510,7 +1793,8 @@ class _BannerCard extends StatelessWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    _StatusChip(active: banner.active),
+                    _StatusChip(
+                        active: banner.active, archived: banner.isArchived),
                     _DestinationChip(
                         type: banner.targetType, value: destinationLabel),
                   ],
@@ -1519,9 +1803,13 @@ class _BannerCard extends StatelessWidget {
                 SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
                   dense: true,
-                  value: banner.active,
-                  onChanged: busy ? null : onToggleActive,
-                  title: const Text('ظاهر للعملاء'),
+                  value: banner.active && !banner.isArchived,
+                  onChanged: busy || banner.isArchived ? null : onToggleActive,
+                  title: Text(
+                    banner.isArchived
+                        ? 'مؤرشف (غير ظاهر للعملاء)'
+                        : 'ظاهر للعملاء',
+                  ),
                 ),
                 Wrap(
                   spacing: 8,
@@ -1541,6 +1829,12 @@ class _BannerCard extends StatelessWidget {
                         if (value == 'edit') onEdit();
                         if (value == 'duplicate') onDuplicate();
                         if (value == 'toggle') onToggleActive(!banner.active);
+                        if (value == 'archive' && onArchive != null) {
+                          onArchive!();
+                        }
+                        if (value == 'restore' && onRestore != null) {
+                          onRestore!();
+                        }
                         if (value == 'delete' && onDelete != null) onDelete!();
                       },
                       itemBuilder: (context) => [
@@ -1548,14 +1842,22 @@ class _BannerCard extends StatelessWidget {
                             value: 'preview', child: Text('معاينة')),
                         const PopupMenuItem(
                             value: 'edit', child: Text('تعديل')),
-                        const PopupMenuItem(
-                            value: 'duplicate', child: Text('نسخ البانر')),
-                        PopupMenuItem(
-                            value: 'toggle',
-                            child: Text(banner.active ? 'إيقاف' : 'تفعيل')),
+                        if (!banner.isArchived)
+                          const PopupMenuItem(
+                              value: 'duplicate', child: Text('نسخ البانر')),
+                        if (!banner.isArchived)
+                          PopupMenuItem(
+                              value: 'toggle',
+                              child: Text(banner.active ? 'إيقاف' : 'تفعيل')),
+                        if (onArchive != null)
+                          const PopupMenuItem(
+                              value: 'archive', child: Text('أرشفة')),
+                        if (onRestore != null)
+                          const PopupMenuItem(
+                              value: 'restore', child: Text('استعادة')),
                         if (onDelete != null)
                           const PopupMenuItem(
-                              value: 'delete', child: Text('حذف')),
+                              value: 'delete', child: Text('حذف نهائي')),
                       ],
                     ),
                   ],
@@ -1667,17 +1969,24 @@ class _BannerSortOrderFieldState extends State<_BannerSortOrderField> {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.active});
+  const _StatusChip({required this.active, this.archived = false});
 
   final bool active;
+  final bool archived;
 
   @override
   Widget build(BuildContext context) {
+    final label = archived ? '📦 مؤرشف' : (active ? '🟢 نشط' : '⚪ متوقف');
     return Chip(
-      label: Text(active ? '🟢 نشط' : '⚪ متوقف'),
-      backgroundColor: active
-          ? AppTheme.green.withValues(alpha: .10)
-          : Colors.grey.withValues(alpha: .12),
+      label: Text(label),
+      backgroundColor: archived
+          ? Colors.blueGrey.withValues(alpha: .12)
+          : active
+              ? Theme.of(context)
+                  .colorScheme
+                  .primary
+                  .withValues(alpha: .10)
+              : Colors.grey.withValues(alpha: .12),
       visualDensity: VisualDensity.compact,
     );
   }
@@ -1730,11 +2039,16 @@ class _ReorderDisabledHint extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: AppTheme.sand,
+        color: Theme.of(context).scaffoldBackgroundColor,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Text(
-        'إعادة الترتيب متاحة فقط عند اختيار "الكل". الفلتر الحالي: ${filter == _BannerFilter.active ? 'النشطة' : 'المتوقفة'}',
+        'إعادة الترتيب متاحة فقط عند اختيار "الكل". الفلتر الحالي: ${switch (filter) {
+          _BannerFilter.active => 'النشطة',
+          _BannerFilter.inactive => 'المتوقفة',
+          _BannerFilter.archived => 'المؤرشفة',
+          _ => 'الكل',
+        }}',
       ),
     );
   }
@@ -1777,22 +2091,22 @@ class _BannerUrlThumbnail extends StatelessWidget {
   Widget build(BuildContext context) {
     final trimmed = url.trim();
     if (!_isSafeHttpsUrl(trimmed)) {
-      return const ColoredBox(
-        key: ValueKey('banner-image-preview-empty'),
-        color: Color(0xFFE8EEEC),
-        child: Center(child: Icon(Icons.image_outlined)),
+      return ColoredBox(
+        key: const ValueKey('banner-image-preview-empty'),
+        color: Theme.of(context).colorScheme.primaryContainer,
+        child: const Center(child: Icon(Icons.image_outlined)),
       );
     }
     return Image.network(
       trimmed,
       key: const ValueKey('banner-image-preview'),
-      width: 112,
-      height: 44,
-      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      fit: BoxFit.fill,
       gaplessPlayback: true,
-      errorBuilder: (context, error, stackTrace) => const ColoredBox(
-        color: Color(0xFFE8EEEC),
-        child: Center(child: Icon(Icons.broken_image_outlined)),
+      errorBuilder: (context, error, stackTrace) => ColoredBox(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        child: const Center(child: Icon(Icons.broken_image_outlined)),
       ),
     );
   }

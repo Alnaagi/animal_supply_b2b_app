@@ -2,20 +2,21 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart';
-
 class ProductImagePlaceholder extends StatelessWidget {
-  const ProductImagePlaceholder(
-      {required this.category,
-      this.productId,
-      this.imageUrl,
-      this.imageBytes,
-      this.semanticLabel,
-      this.size = 92,
-      this.expand = false,
-      this.borderRadius,
-      this.fit = BoxFit.cover,
-      super.key});
+  const ProductImagePlaceholder({
+    required this.category,
+    this.productId,
+    this.imageUrl,
+    this.imageBytes,
+    this.semanticLabel,
+    this.size = 92,
+    this.expand = false,
+    this.borderRadius,
+    this.fit = BoxFit.contain,
+    this.backgroundColor,
+    super.key,
+  });
+
   final String category;
   final String? productId;
   final String? imageUrl;
@@ -25,6 +26,12 @@ class ProductImagePlaceholder extends StatelessWidget {
   final bool expand;
   final BorderRadius? borderRadius;
   final BoxFit fit;
+
+  /// Overrides the neutral surface behind a real product photo.
+  ///
+  /// Missing, loading, and failed images intentionally keep the themed brand
+  /// placeholder so they remain distinguishable from product photography.
+  final Color? backgroundColor;
 
   IconData get icon => switch (category) {
         'قطط' => Icons.pets,
@@ -39,6 +46,16 @@ class ProductImagePlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final photoSurfaceColor = backgroundColor ?? Colors.white;
+    final placeholderStart = Color.alphaBlend(
+      colors.primary.withValues(alpha: .08),
+      colors.surface,
+    );
+    final placeholderEnd = Color.alphaBlend(
+      colors.primary.withValues(alpha: .20),
+      colors.surface,
+    );
     final image = expand
         ? LayoutBuilder(
             builder: (context, constraints) {
@@ -48,10 +65,22 @@ class ProductImagePlaceholder extends StatelessWidget {
                 width: width,
                 height: height,
                 iconSize: (width < height ? width : height) * .62,
+                photoSurfaceColor: photoSurfaceColor,
+                placeholderStart: placeholderStart,
+                placeholderEnd: placeholderEnd,
+                placeholderIconColor: colors.primary,
               );
             },
           )
-        : _buildImage(width: size, height: size, iconSize: size * .42);
+        : _buildImage(
+            width: size,
+            height: size,
+            iconSize: size * .42,
+            photoSurfaceColor: photoSurfaceColor,
+            placeholderStart: placeholderStart,
+            placeholderEnd: placeholderEnd,
+            placeholderIconColor: colors.primary,
+          );
     return Semantics(
       image: true,
       label: semanticLabel ?? 'صورة منتج من تصنيف $category',
@@ -63,14 +92,25 @@ class ProductImagePlaceholder extends StatelessWidget {
     required double width,
     required double height,
     required double iconSize,
+    required Color photoSurfaceColor,
+    required Color placeholderStart,
+    required Color placeholderEnd,
+    required Color placeholderIconColor,
   }) {
     final radius =
         borderRadius ?? BorderRadius.circular(expand || size > 120 ? 28 : 20);
-    final fallback = _filledPanel(
+    final fallback = _placeholderPanel(
       width: width,
       height: height,
       radius: radius,
-      child: Center(child: _placeholderGlyph(iconSize: iconSize)),
+      startColor: placeholderStart,
+      endColor: placeholderEnd,
+      child: Center(
+        child: _placeholderGlyph(
+          iconSize: iconSize,
+          color: placeholderIconColor,
+        ),
+      ),
     );
     final assetFallback = !_hasBundledProductImage(productId)
         ? fallback
@@ -78,6 +118,7 @@ class ProductImagePlaceholder extends StatelessWidget {
             width: width,
             height: height,
             radius: radius,
+            surfaceColor: photoSurfaceColor,
             image: Image.asset(
               'assets/images/products/$productId.png',
               width: width,
@@ -93,6 +134,7 @@ class ProductImagePlaceholder extends StatelessWidget {
         width: width,
         height: height,
         radius: radius,
+        surfaceColor: photoSurfaceColor,
         image: Image.memory(
           bytes,
           width: width,
@@ -113,6 +155,7 @@ class ProductImagePlaceholder extends StatelessWidget {
       width: width,
       height: height,
       radius: radius,
+      surfaceColor: photoSurfaceColor,
       image: Image.network(
         imageUrl!,
         width: width,
@@ -128,8 +171,11 @@ class ProductImagePlaceholder extends StatelessWidget {
     );
   }
 
-  Widget _placeholderGlyph({required double iconSize}) {
-    final glyph = Icon(icon, color: AppTheme.green, size: iconSize);
+  Widget _placeholderGlyph({
+    required double iconSize,
+    required Color color,
+  }) {
+    final glyph = Icon(icon, color: color, size: iconSize);
     if (!expand) return glyph;
     return Padding(
       padding: const EdgeInsets.all(10),
@@ -141,20 +187,29 @@ class ProductImagePlaceholder extends StatelessWidget {
     required double width,
     required double height,
     required BorderRadius radius,
+    required Color surfaceColor,
     required Widget image,
   }) {
-    return _filledPanel(
-      width: width,
-      height: height,
-      radius: radius,
-      child: Positioned.fill(child: image),
+    return ClipRRect(
+      borderRadius: radius,
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: ColoredBox(
+          key: const Key('product-image-photo-surface'),
+          color: surfaceColor,
+          child: image,
+        ),
+      ),
     );
   }
 
-  Widget _filledPanel({
+  Widget _placeholderPanel({
     required double width,
     required double height,
     required BorderRadius radius,
+    required Color startColor,
+    required Color endColor,
     required Widget child,
   }) {
     return ClipRRect(
@@ -163,13 +218,14 @@ class ProductImagePlaceholder extends StatelessWidget {
         width: width,
         height: height,
         child: Stack(
+          key: const Key('product-image-placeholder-surface'),
           fit: StackFit.expand,
           children: [
-            const ColoredBox(color: Color(0xffdceee6)),
-            const DecoratedBox(
+            ColoredBox(color: startColor),
+            DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Color(0xffeef7f2), Color(0xffd7eee4)],
+                  colors: [startColor, endColor],
                   begin: Alignment.topRight,
                   end: Alignment.bottomLeft,
                 ),

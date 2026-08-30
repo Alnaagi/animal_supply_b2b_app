@@ -9,7 +9,6 @@ import 'package:uuid/uuid.dart';
 import '../../core/concurrency/stale_write.dart';
 import '../../core/config/app_config.dart';
 import '../../core/refresh/screen_reload.dart';
-import '../../core/theme/app_theme.dart';
 import '../../core/updates/update_link.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/category_icon_view.dart';
@@ -17,6 +16,7 @@ import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/product_info_chip.dart';
 import '../../core/widgets/responsive_field_group.dart';
 import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/product.dart';
 import '../../data/models/product_category.dart';
@@ -294,8 +294,12 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
             ],
             const SizedBox(height: 14),
             if (initialLoading)
-              const ShopLoading.section(
-                message: 'جارٍ تحميل المنتجات...',
+              const ShopSkeleton(
+                semanticLabel: 'جارٍ تحميل المنتجات...',
+                child: ShopProductListSkeleton(
+                  itemCount: 4,
+                  padding: EdgeInsets.zero,
+                ),
               )
             else if (loadError != null)
               _ProductLoadError(
@@ -1238,8 +1242,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                       return ListTile(
                         key: ValueKey('managed-category-${item.id}'),
                         leading: CircleAvatar(
-                          backgroundColor:
-                              AppTheme.green.withValues(alpha: .12),
+                          backgroundColor: Theme.of(context)
+                              .colorScheme
+                              .primary
+                              .withValues(alpha: .12),
                           child: CategoryIconView.fromCategory(
                             item,
                             size: 22,
@@ -1299,7 +1305,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                                         ),
                                       );
                                       if (!mounted) return;
-                                      ScaffoldMessenger.of(context)
+                                      ScaffoldMessenger.of(this.context)
                                           .showSnackBar(
                                         SnackBar(
                                           content: Text(
@@ -1656,12 +1662,20 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
               width: 620,
               child: ScrollbarTheme(
                 data: ScrollbarThemeData(
-                  thumbColor: WidgetStateProperty.all(AppTheme.green),
+                  thumbColor: WidgetStateProperty.all(
+                    Theme.of(context).colorScheme.primary,
+                  ),
                   trackColor: WidgetStateProperty.all(
-                    AppTheme.green.withValues(alpha: 0.10),
+                    Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.10),
                   ),
                   trackBorderColor: WidgetStateProperty.all(
-                    AppTheme.green.withValues(alpha: 0.18),
+                    Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.18),
                   ),
                   radius: const Radius.circular(999),
                   thickness: WidgetStateProperty.all(8),
@@ -1707,16 +1721,16 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          const Row(
-                            key: ValueKey('product-form-scroll-hint'),
+                          Row(
+                            key: const ValueKey('product-form-scroll-hint'),
                             children: [
                               Icon(
                                 Icons.keyboard_arrow_down,
                                 size: 18,
-                                color: AppTheme.green,
+                                color: Theme.of(context).colorScheme.primary,
                               ),
-                              SizedBox(width: 4),
-                              Expanded(
+                              const SizedBox(width: 4),
+                              const Expanded(
                                 child: Text(
                                   'مرّر لأسفل لعرض بقية الحقول والخيارات',
                                   style: TextStyle(
@@ -2549,7 +2563,7 @@ class _AdminBulkActionBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       key: const ValueKey('admin-products-bulk-toolbar'),
-      color: AppTheme.green.withValues(alpha: .06),
+      color: Theme.of(context).colorScheme.primary.withValues(alpha: .06),
       child: Padding(
         padding: const EdgeInsets.all(10),
         child: Wrap(

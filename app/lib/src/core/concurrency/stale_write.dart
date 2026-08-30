@@ -13,7 +13,13 @@ class StaleWriteException implements Exception {
 
 String? utcIsoOrNull(DateTime? value) {
   if (value == null) return null;
-  return value.toUtc().toIso8601String();
+  // Truncate to milliseconds to match Postgres assert_fresh_updated_at.
+  final utc = value.toUtc();
+  final truncated = DateTime.fromMillisecondsSinceEpoch(
+    utc.millisecondsSinceEpoch,
+    isUtc: true,
+  );
+  return truncated.toIso8601String();
 }
 
 bool sameUpdatedAt(DateTime? current, DateTime? expected) {
@@ -65,7 +71,13 @@ String mutationFailureMessageAr(
   }
   final message = _errorMessage(error);
   if (message != null && _containsArabic(message)) return message;
-  return fallback;
+  // Surface PostgREST/DB detail so storefront and similar builders aren't opaque.
+  final details = <String>[
+    if (code != null && code.isNotEmpty) code,
+    if (message != null && message.trim().isNotEmpty) message.trim(),
+  ];
+  if (details.isEmpty) return fallback;
+  return '$fallback (${details.join(': ')})';
 }
 
 String? _errorCode(Object error) {

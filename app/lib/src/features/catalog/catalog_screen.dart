@@ -20,6 +20,7 @@ import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/product_info_chip.dart';
 import '../../core/widgets/shop_loading.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../data/local/catalog_view_mode_store.dart';
 import '../../data/models/product.dart';
 import '../../data/models/product_category.dart';
@@ -65,6 +66,8 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
   Timer? _searchDebounce;
   late final CatalogViewModeStore _viewModeStore;
   CatalogViewMode _viewMode = CatalogViewMode.comfortable;
+  CatalogViewModeScope? _viewModeScope;
+  int _viewModeLoadRevision = 0;
 
   @override
   void initState() {
@@ -73,9 +76,23 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
     _viewModeStore = widget.viewModeStore ?? CatalogViewModeStore();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(_restoreViewModePreference());
       unawaited(_reloadCatalog(refreshMetadata: true));
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final width = MediaQuery.sizeOf(context).width;
+    final scope = CatalogViewModeStore.scopeForWidth(width);
+    if (_viewModeScope == scope) return;
+    _viewModeScope = scope;
+    final revision = ++_viewModeLoadRevision;
+    unawaited(_restoreViewModePreference(
+      width: width,
+      scope: scope,
+      revision: revision,
+    ));
   }
 
   @override
@@ -247,19 +264,28 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
     unawaited(_reloadCatalog());
   }
 
-  Future<void> _restoreViewModePreference() async {
-    final fallback = CatalogViewModeStore.defaultForWidth(
-      MediaQuery.sizeOf(context).width,
+  Future<void> _restoreViewModePreference({
+    required double width,
+    required CatalogViewModeScope scope,
+    required int revision,
+  }) async {
+    final fallback = CatalogViewModeStore.defaultForWidth(width);
+    final restored = await _viewModeStore.load(
+      fallbackMode: fallback,
+      scope: scope,
     );
-    final restored = await _viewModeStore.load(fallbackMode: fallback);
-    if (!mounted) return;
+    if (!mounted ||
+        revision != _viewModeLoadRevision ||
+        _viewModeScope != scope) {
+      return;
+    }
     setState(() => _viewMode = restored);
   }
 
   Future<void> _selectViewMode(CatalogViewMode mode) async {
     if (_viewMode == mode) return;
     setState(() => _viewMode = mode);
-    await _viewModeStore.save(mode);
+    await _viewModeStore.save(mode, scope: _viewModeScope);
   }
 
   @override
@@ -273,170 +299,190 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
       ref,
       () => _reloadCatalog(refreshMetadata: true),
     );
-    return ShopRefreshIndicator(
-      onRefresh: () => _reloadCatalog(refreshMetadata: true),
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            'المنتجات',
-            style: Theme.of(context)
-                .textTheme
-                .headlineSmall
-                ?.copyWith(fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) => Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                SizedBox(
-                  width: constraints.maxWidth >= 620
-                      ? constraints.maxWidth - 174
-                      : constraints.maxWidth,
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      labelText: 'ابحث باسم المنتج أو الشركة',
-                    ),
-                    onChanged: _updateQuery,
-                  ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: initialLoading ? null : _showFilters,
-                  icon: Badge(
-                    isLabelVisible: !filters.isEmpty,
-                    label: Text('${filters.activeCount}'),
-                    child: const Icon(Icons.tune),
-                  ),
-                  label: const Text('فلترة متقدمة'),
-                ),
-                _CatalogViewModeToggle(
-                  mode: _viewMode,
-                  onChanged: _selectViewMode,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          ProductChipWrap(
-            key: const ValueKey('catalog-category-chips'),
-            spacing: 8,
-            runSpacing: 8,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final expanded = AppBreakpoints.isExpanded(constraints.maxWidth);
+        final colorScheme = Theme.of(context).colorScheme;
+        return ShopRefreshIndicator(
+          onRefresh: () => _reloadCatalog(refreshMetadata: true),
+          child: ListView(
+            key: const ValueKey('catalog-scroll-view'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.all(expanded ? AppSpacing.lg : AppSpacing.md),
             children: [
-              FilterChip(
-                label: const Text('الكل'),
-                selected: category == null,
-                onSelected: (_) => _selectCategory(null),
-              ),
-              for (final value in categories)
-                FilterChip(
-                  avatar: CategoryIconView.fromCategory(
-                    _categoryModelByName(value),
-                    size: 18,
-                  ),
-                  label: Text(value),
-                  selected: category == value,
-                  onSelected: (_) => _selectCategory(value),
-                ),
-            ],
-          ),
-          if (!filters.isEmpty) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppTheme.green.withValues(alpha: .08),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Row(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Icon(
-                    Icons.filter_alt_outlined,
-                    color: AppTheme.green,
-                  ),
-                  const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
-                      _filtersSummary(filters),
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'المنتجات',
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'ابحث وقارن أسعار الجملة واختر ما يناسب متجرك.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
                     ),
                   ),
-                  TextButton(
-                    onPressed: _clearFilters,
-                    child: const Text('مسح'),
-                  ),
+                  if (!initialLoading && loadError == null) ...[
+                    const SizedBox(width: AppSpacing.sm),
+                    Container(
+                      key: const ValueKey('catalog-visible-product-count'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.sm,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(AppRadii.pill),
+                      ),
+                      child: Text(
+                        '${products.length}${hasMore ? '+' : ''} منتج',
+                        style:
+                            Theme.of(context).textTheme.labelMedium?.copyWith(
+                                  color: colorScheme.onPrimaryContainer,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
-            ),
-          ],
-          if (pageSource == CatalogPageSource.offlineSnapshot) ...[
-            const SizedBox(height: 10),
-            Card(
-              color: Theme.of(context).colorScheme.tertiaryContainer,
-              child: ListTile(
-                leading: const Icon(Icons.offline_bolt_outlined),
-                title: const Text('عرض نسخة محفوظة محدودة'),
-                subtitle: Text(
-                  'تعذر الوصول للخادم. البحث والفلترة يعملان داخل آخر '
-                  '$offlineSnapshotCount منتج محفوظ على هذا الجهاز '
-                  '(الحد الأقصى ${CatalogRepository.offlineSnapshotLimit}).',
-                ),
+              const SizedBox(height: AppSpacing.md),
+              _CatalogToolbar(
+                expanded: expanded,
+                initialLoading: initialLoading,
+                filters: filters,
+                mode: _viewMode,
+                onQueryChanged: _updateQuery,
+                onShowFilters: _showFilters,
+                onViewModeChanged: _selectViewMode,
               ),
-            ),
-          ],
-          const SizedBox(height: 14),
-          if (initialLoading)
-            const ShopLoading.section(
-              message: 'جارٍ تحميل المنتجات...',
-            )
-          else if (loadError != null)
-            EmptyState(
-              key: const Key('catalog-load-error'),
-              title: 'تعذر تحميل المنتجات',
-              message:
-                  'تعذر الوصول إلى بيانات المنتجات ولا توجد نسخة محفوظة لهذا الحساب.',
-              icon: Icons.cloud_off_outlined,
-              action: FilledButton.icon(
-                key: const Key('catalog-retry-button'),
-                onPressed: () => _reloadCatalog(refreshMetadata: true),
-                icon: const Icon(Icons.refresh),
-                label: const Text('إعادة المحاولة'),
+              const SizedBox(height: AppSpacing.sm),
+              ProductChipWrap(
+                key: const ValueKey('catalog-category-chips'),
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilterChip(
+                    label: const Text('الكل'),
+                    selected: category == null,
+                    onSelected: (_) => _selectCategory(null),
+                  ),
+                  for (final value in categories)
+                    FilterChip(
+                      avatar: CategoryIconView.fromCategory(
+                        _categoryModelByName(value),
+                        size: 18,
+                      ),
+                      label: Text(value),
+                      selected: category == value,
+                      onSelected: (_) => _selectCategory(value),
+                    ),
+                ],
               ),
-            )
-          else if (products.isEmpty)
-            const EmptyState(
-              title: 'لا توجد منتجات',
-              message: 'جرّب بحثاً آخر أو اختر تصنيفاً مختلفاً.',
-              icon: Icons.search_off,
-            )
-          else ...[
-            _CatalogProductsLayout(
-              products: products,
-              mode: _viewMode,
-            ),
-            if (hasMore)
-              Padding(
-                padding: const EdgeInsets.only(top: 4, bottom: 20),
-                child: FilledButton.tonalIcon(
-                  key: const ValueKey('catalog-load-more'),
-                  onPressed: loadingMore ? null : _loadMore,
-                  icon: loadingMore
-                      ? const ShopLoading.compact()
-                      : const Icon(Icons.expand_more),
-                  label: Text(
-                    loadingMore
-                        ? 'جارٍ تحميل منتجات إضافية...'
-                        : 'تحميل المزيد',
+              if (!filters.isEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary.withValues(alpha: .08),
+                    borderRadius: BorderRadius.circular(AppRadii.medium),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.filter_alt_outlined,
+                        color: colorScheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _filtersSummary(filters),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _clearFilters,
+                        child: const Text('مسح'),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-          ],
-        ],
-      ),
+              ],
+              if (pageSource == CatalogPageSource.offlineSnapshot) ...[
+                const SizedBox(height: 10),
+                Card(
+                  color: colorScheme.tertiaryContainer,
+                  child: ListTile(
+                    leading: const Icon(Icons.offline_bolt_outlined),
+                    title: const Text('عرض نسخة محفوظة محدودة'),
+                    subtitle: Text(
+                      'تعذر الوصول للخادم. البحث والفلترة يعملان داخل آخر '
+                      '$offlineSnapshotCount منتج محفوظ على هذا الجهاز '
+                      '(الحد الأقصى ${CatalogRepository.offlineSnapshotLimit}).',
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              if (initialLoading)
+                _CatalogInitialSkeleton(expanded: expanded)
+              else if (loadError != null)
+                EmptyState(
+                  key: const Key('catalog-load-error'),
+                  title: 'تعذر تحميل المنتجات',
+                  message:
+                      'تعذر الوصول إلى بيانات المنتجات ولا توجد نسخة محفوظة لهذا الحساب.',
+                  icon: Icons.cloud_off_outlined,
+                  action: FilledButton.icon(
+                    key: const Key('catalog-retry-button'),
+                    onPressed: () => _reloadCatalog(refreshMetadata: true),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('إعادة المحاولة'),
+                  ),
+                )
+              else if (products.isEmpty)
+                const EmptyState(
+                  title: 'لا توجد منتجات',
+                  message: 'جرّب بحثاً آخر أو اختر تصنيفاً مختلفاً.',
+                  icon: Icons.search_off,
+                )
+              else ...[
+                _CatalogProductsLayout(
+                  products: products,
+                  mode: _viewMode,
+                ),
+                if (hasMore)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4, bottom: 20),
+                    child: FilledButton.tonalIcon(
+                      key: const ValueKey('catalog-load-more'),
+                      onPressed: loadingMore ? null : _loadMore,
+                      icon: loadingMore
+                          ? const ShopLoading.compact()
+                          : const Icon(Icons.expand_more),
+                      label: Text(
+                        loadingMore
+                            ? 'جارٍ تحميل منتجات إضافية...'
+                            : 'تحميل المزيد',
+                      ),
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -696,6 +742,248 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
   }
 }
 
+class _CatalogInitialSkeleton extends StatelessWidget {
+  const _CatalogInitialSkeleton({required this.expanded});
+
+  final bool expanded;
+
+  @override
+  Widget build(BuildContext context) {
+    return ShopSkeleton(
+      key: const ValueKey('catalog-initial-skeleton'),
+      semanticLabel: 'جارٍ تحميل المنتجات',
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (!expanded) {
+            return Column(
+              children: [
+                for (var index = 0; index < 3; index++)
+                  _CatalogSkeletonListCard(index: index),
+              ],
+            );
+          }
+
+          final crossAxisCount = switch (constraints.maxWidth) {
+            >= 1120 => 4,
+            >= 820 => 3,
+            _ => 2,
+          };
+          final childAspectRatio = switch (constraints.maxWidth) {
+            >= 1120 => .72,
+            >= 820 => .69,
+            _ => .66,
+          };
+          return GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              mainAxisSpacing: AppSpacing.sm,
+              crossAxisSpacing: AppSpacing.sm,
+              childAspectRatio: childAspectRatio,
+            ),
+            itemCount: crossAxisCount * 2,
+            itemBuilder: (context, index) =>
+                _CatalogSkeletonGridCard(index: index),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CatalogSkeletonListCard extends StatelessWidget {
+  const _CatalogSkeletonListCard({required this.index});
+
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: ValueKey('catalog-skeleton-card-$index'),
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: const Padding(
+        padding: EdgeInsets.all(AppSpacing.sm),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ShopSkeletonBox(
+              width: 92,
+              height: 126,
+              borderRadius: AppRadii.medium,
+            ),
+            SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ShopSkeletonBox(height: 17, borderRadius: 7),
+                  SizedBox(height: AppSpacing.xs),
+                  FractionallySizedBox(
+                    widthFactor: .72,
+                    alignment: AlignmentDirectional.centerStart,
+                    child: ShopSkeletonBox(height: 12, borderRadius: 6),
+                  ),
+                  SizedBox(height: 10),
+                  Row(
+                    children: [
+                      ShopSkeletonBox(
+                        width: 68,
+                        height: 22,
+                        borderRadius: AppRadii.pill,
+                      ),
+                      SizedBox(width: 6),
+                      ShopSkeletonBox(
+                        width: 52,
+                        height: 22,
+                        borderRadius: AppRadii.pill,
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: AppSpacing.sm),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: ShopSkeletonBox(
+                          height: 32,
+                          borderRadius: AppRadii.small,
+                        ),
+                      ),
+                      SizedBox(width: AppSpacing.xs),
+                      ShopSkeletonBox(
+                        width: 40,
+                        height: 36,
+                        borderRadius: AppRadii.small,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CatalogSkeletonGridCard extends StatelessWidget {
+  const _CatalogSkeletonGridCard({required this.index});
+
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: ValueKey('catalog-skeleton-grid-card-$index'),
+      clipBehavior: Clip.antiAlias,
+      child: const Padding(
+        padding: EdgeInsets.all(AppSpacing.sm),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: ShopSkeletonBox(
+                height: 1,
+                borderRadius: AppRadii.medium,
+              ),
+            ),
+            SizedBox(height: AppSpacing.sm),
+            ShopSkeletonBox(height: 17, borderRadius: 7),
+            SizedBox(height: AppSpacing.xs),
+            FractionallySizedBox(
+              widthFactor: .64,
+              alignment: AlignmentDirectional.centerStart,
+              child: ShopSkeletonBox(height: 12, borderRadius: 6),
+            ),
+            SizedBox(height: AppSpacing.sm),
+            ShopSkeletonBox(
+              height: 34,
+              borderRadius: AppRadii.small,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CatalogToolbar extends StatelessWidget {
+  const _CatalogToolbar({
+    required this.expanded,
+    required this.initialLoading,
+    required this.filters,
+    required this.mode,
+    required this.onQueryChanged,
+    required this.onShowFilters,
+    required this.onViewModeChanged,
+  });
+
+  final bool expanded;
+  final bool initialLoading;
+  final CatalogFilters filters;
+  final CatalogViewMode mode;
+  final ValueChanged<String> onQueryChanged;
+  final VoidCallback onShowFilters;
+  final ValueChanged<CatalogViewMode> onViewModeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final search = TextField(
+      key: const ValueKey('catalog-search-field'),
+      decoration: const InputDecoration(
+        prefixIcon: Icon(Icons.search),
+        labelText: 'ابحث باسم المنتج أو الشركة',
+      ),
+      onChanged: onQueryChanged,
+    );
+    final filterButton = OutlinedButton.icon(
+      key: const ValueKey('catalog-filter-button'),
+      onPressed: initialLoading ? null : onShowFilters,
+      icon: Badge(
+        isLabelVisible: !filters.isEmpty,
+        label: Text('${filters.activeCount}'),
+        child: const Icon(Icons.tune),
+      ),
+      label: const Text('فلترة متقدمة'),
+    );
+    final viewMode = _CatalogViewModeToggle(
+      mode: mode,
+      onChanged: onViewModeChanged,
+    );
+
+    if (expanded) {
+      return Row(
+        key: const ValueKey('catalog-toolbar-desktop'),
+        children: [
+          Expanded(child: search),
+          const SizedBox(width: AppSpacing.sm),
+          filterButton,
+          const SizedBox(width: AppSpacing.xs),
+          viewMode,
+        ],
+      );
+    }
+
+    return Column(
+      key: const ValueKey('catalog-toolbar-mobile'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        search,
+        const SizedBox(height: AppSpacing.xs),
+        Row(
+          children: [
+            Expanded(child: filterButton),
+            const SizedBox(width: AppSpacing.xs),
+            viewMode,
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 class _CatalogViewModeToggle extends StatelessWidget {
   const _CatalogViewModeToggle({
     required this.mode,
@@ -816,9 +1104,14 @@ class _CatalogProductsLayout extends StatelessWidget {
           builder: (context, constraints) {
             final width = constraints.maxWidth;
             final crossAxisCount = switch (width) {
-              >= 1400 => 4,
-              >= 1000 => 3,
+              >= 1120 => 4,
+              >= 820 => 3,
               _ => 2,
+            };
+            final childAspectRatio = switch (width) {
+              >= 1120 => .72,
+              >= 820 => .69,
+              _ => .66,
             };
             return GridView.builder(
               key: const ValueKey('catalog-grid-view'),
@@ -828,7 +1121,7 @@ class _CatalogProductsLayout extends StatelessWidget {
                 crossAxisCount: crossAxisCount,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                childAspectRatio: .66,
+                childAspectRatio: childAspectRatio,
               ),
               itemCount: products.length,
               itemBuilder: (context, index) => ProductGridCard(
@@ -850,6 +1143,7 @@ class ProductListCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
     final pack = CustomerProductCardCopy.packSize(product);
     return Card(
       key: Key('catalog-product-card-${product.id}'),
@@ -919,38 +1213,17 @@ class ProductListCard extends ConsumerWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: AppTheme.darkGreen.withValues(alpha: .62),
+                        color: scheme.onSurface.withValues(alpha: .62),
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                   const SizedBox(height: 6),
                   ProductChipWrap(children: [
-                    Tooltip(
-                      message: product.isOrderable
-                          ? AddedToCartPromptCopy.orderActionTooltip
-                          : product.customerAvailabilityLabel,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(999),
-                        onTap: product.isOrderable
-                            ? () => addProductToCartThenPrompt(
-                                  context: context,
-                                  ref: ref,
-                                  product: product,
-                                )
-                            : null,
-                        child: ProductInfoChip(
-                          product.customerAvailabilityLabel,
-                          color: product.isOrderable
-                              ? AppTheme.green
-                              : AppTheme.red,
-                        ),
-                      ),
-                    ),
                     if (pack.isNotEmpty)
                       ProductInfoChip(
                         pack,
-                        color: AppTheme.green,
+                        color: scheme.primary,
                       ),
                     ProductInfoChip(
                       'أقل جملة ${product.minOrderQuantity}',
@@ -1000,6 +1273,7 @@ class ProductCompactCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
     final pack = CustomerProductCardCopy.packSize(product);
     return Card(
       key: Key('catalog-compact-card-${product.id}'),
@@ -1045,29 +1319,18 @@ class ProductCompactCard extends ConsumerWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: AppTheme.darkGreen.withValues(alpha: .62),
+                          color: scheme.onSurface.withValues(alpha: .62),
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        ProductInfoChip(
-                          product.customerAvailabilityLabel,
-                          color: product.isOrderable
-                              ? AppTheme.green
-                              : AppTheme.red,
-                        ),
-                        if (pack.isNotEmpty)
-                          ProductInfoChip(
-                            pack,
-                            color: AppTheme.green,
-                          ),
-                      ],
-                    ),
+                    if (pack.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      ProductInfoChip(
+                        pack,
+                        color: scheme.primary,
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1112,6 +1375,7 @@ class ProductGridCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
     final pack = CustomerProductCardCopy.packSize(product);
     return Card(
       key: Key('catalog-grid-card-${product.id}'),
@@ -1164,14 +1428,9 @@ class ProductGridCard extends ConsumerWidget {
                     const SizedBox(height: 4),
                     ProductInfoChip(
                       pack,
-                      color: AppTheme.green,
+                      color: scheme.primary,
                     ),
                   ],
-                  const SizedBox(height: 6),
-                  ProductInfoChip(
-                    product.customerAvailabilityLabel,
-                    color: product.isOrderable ? AppTheme.green : AppTheme.red,
-                  ),
                   const SizedBox(height: 8),
                   WholesalePriceBlock(
                     product: product,

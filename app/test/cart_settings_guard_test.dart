@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:animal_supply_b2b/src/core/widgets/product_image_placeholder.dart';
 import 'package:animal_supply_b2b/src/data/models/admin_models.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
 import 'package:animal_supply_b2b/src/data/models/order.dart';
@@ -168,8 +169,13 @@ void main() {
     expect(submitButton.onPressed, isNull);
   });
 
-  testWidgets('checkout groups editable fields above order review',
+  testWidgets('checkout uses compact address picker and product images',
       (tester) async {
+    tester.view.physicalSize = const Size(338, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -197,17 +203,25 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('بيانات التسليم'), findsOneWidget);
-    expect(find.text('مراجعة الطلب'), findsOneWidget);
+    expect(find.text('بيانات التسليم'), findsNothing);
+    expect(find.text('مراجعة الطلب'), findsNothing);
+    expect(find.byKey(const Key('checkout-mobile-layout')), findsOneWidget);
+    expect(find.byKey(const Key('checkout-desktop-layout')), findsNothing);
     expect(find.byKey(const Key('checkout-editable-fields')), findsOneWidget);
-    expect(find.byKey(const Key('checkout-delivery-address')), findsOneWidget);
+    expect(find.byKey(const Key('checkout-address-selector')), findsOneWidget);
+    expect(find.byKey(const Key('checkout-delivery-address')), findsNothing);
     expect(find.byKey(const Key('checkout-customer-note')), findsOneWidget);
+    expect(
+      find.byKey(const Key('checkout-product-image-product-1')),
+      findsOneWidget,
+    );
+    expect(find.text('طرابلس - حي الأندلس - شارع الاختبار'), findsOneWidget);
     expect(find.text('علف اختبار'), findsOneWidget);
 
     final editableY =
         tester.getTopLeft(find.byKey(const Key('checkout-editable-fields'))).dy;
     final addressY = tester
-        .getTopLeft(find.byKey(const Key('checkout-delivery-address')))
+        .getTopLeft(find.byKey(const Key('checkout-address-selector')))
         .dy;
     final noteY =
         tester.getTopLeft(find.byKey(const Key('checkout-customer-note'))).dy;
@@ -217,11 +231,43 @@ void main() {
     expect(addressY, lessThan(noteY));
     expect(noteY, lessThan(productY));
 
+    final noteField = tester.widget<TextField>(
+      find.byKey(const Key('checkout-customer-note')),
+    );
+    expect(noteField.decoration?.filled, isTrue);
+    expect(
+      noteField.decoration?.fillColor,
+      Theme.of(
+        tester.element(find.byKey(const Key('checkout-customer-note'))),
+      ).colorScheme.secondaryContainer,
+    );
+
+    await tester.tap(find.byKey(const Key('checkout-address-selector')));
+    await tester.pumpAndSettle();
+    expect(find.text('اختر عنوان التسليم'), findsOneWidget);
+    expect(
+      find.byKey(const Key('checkout-address-registered-option')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('checkout-address-custom-option')));
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('checkout-delivery-address')),
+      'مصراتة - شارع طرابلس',
+    );
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(const Key('checkout-address-apply')));
+    await tester.tap(find.byKey(const Key('checkout-address-apply')));
+    await tester.pumpAndSettle();
+    expect(find.text('مصراتة - شارع طرابلس'), findsOneWidget);
+
     await tester.drag(find.byType(ListView), const Offset(0, -1200));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('checkout-totals-card')), findsOneWidget);
     expect(find.text('الإجمالي التقديري'), findsOneWidget);
+    expect(find.text('الإجمالي الفرعي التقديري'), findsNothing);
     expect(find.text('إرسال الطلب'), findsOneWidget);
 
     final totalsY =
@@ -229,6 +275,153 @@ void main() {
     final submitY =
         tester.getTopLeft(find.byKey(const Key('checkout-submit-button'))).dy;
     expect(totalsY, lessThan(submitY));
+  });
+
+  testWidgets('cart uses capped desktop columns with a persistent summary',
+      (tester) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          cartControllerProvider.overrideWith(
+            (ref) => CartController(
+              ref,
+              ownerProfileId: null,
+              initialItems: const [item],
+            ),
+          ),
+          appSettingsProvider.overrideWith(
+            (ref) async => const AppSettingsData(
+              deliveryFee: 12,
+              handlingFee: 3,
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Scaffold(body: CartScreen()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('cart-desktop-layout')), findsOneWidget);
+    expect(find.byKey(const Key('cart-mobile-layout')), findsNothing);
+    expect(find.byKey(const Key('cart-desktop-items')), findsOneWidget);
+    expect(find.byKey(const Key('cart-desktop-summary')), findsOneWidget);
+
+    final layout = tester.getRect(find.byKey(const Key('cart-desktop-layout')));
+    final itemsRect =
+        tester.getRect(find.byKey(const Key('cart-desktop-items')));
+    final summaryRect =
+        tester.getRect(find.byKey(const Key('cart-desktop-summary')));
+    expect(layout.width, lessThanOrEqualTo(1280));
+    expect(summaryRect.right, lessThan(itemsRect.left));
+    expect(summaryRect.width, closeTo(360, 1));
+    expect(find.byKey(const Key('cart-summary-total')), findsOneWidget);
+    expect(find.text('الإجمالي الفرعي'), findsOneWidget);
+
+    final thumbnail = tester.widget<ProductImagePlaceholder>(
+      find.byKey(const Key('cart-product-image-product-1')),
+    );
+    expect(thumbnail.expand, isTrue);
+    expect(thumbnail.fit, BoxFit.contain);
+
+    expect(
+      tester.getSize(find.byKey(const Key('cart-remove-button'))),
+      const Size.square(44),
+    );
+    expect(
+      tester.getSize(find.byTooltip('تقليل الكمية')),
+      const Size.square(44),
+    );
+    expect(
+      tester.getSize(find.byTooltip('زيادة الكمية')),
+      const Size.square(44),
+    );
+    expect(
+      tester.getSize(find.byKey(const Key('cart-checkout-button'))).height,
+      greaterThanOrEqualTo(44),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('checkout uses capped desktop review and sticky summary columns',
+      (tester) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (ref) => _CustomerAuthController(),
+          ),
+          cartControllerProvider.overrideWith(
+            (ref) => CartController(
+              ref,
+              ownerProfileId: 'profile-1',
+              initialItems: const [item],
+            ),
+          ),
+          appSettingsProvider.overrideWith(
+            (ref) async => const AppSettingsData(
+              deliveryFee: 12,
+              handlingFee: 3,
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: CheckoutScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('checkout-desktop-layout')), findsOneWidget);
+    expect(find.byKey(const Key('checkout-mobile-layout')), findsNothing);
+    expect(find.byKey(const Key('checkout-desktop-main')), findsOneWidget);
+    expect(find.byKey(const Key('checkout-desktop-summary')), findsOneWidget);
+    expect(find.byKey(const Key('checkout-address-selector')), findsOneWidget);
+    expect(find.byKey(const Key('checkout-customer-note')), findsOneWidget);
+    expect(find.byKey(const Key('checkout-products-card')), findsOneWidget);
+
+    final layout =
+        tester.getRect(find.byKey(const Key('checkout-desktop-layout')));
+    final main = tester.getRect(find.byKey(const Key('checkout-desktop-main')));
+    final summary =
+        tester.getRect(find.byKey(const Key('checkout-desktop-summary')));
+    expect(layout.width, lessThanOrEqualTo(1280));
+    expect(summary.right, lessThan(main.left));
+    expect(summary.width, closeTo(380, 1));
+    expect(find.text('ملخص الطلب'), findsOneWidget);
+    expect(find.text('الإجمالي الفرعي'), findsOneWidget);
+
+    final thumbnail = tester.widget<ProductImagePlaceholder>(
+      find.byKey(const Key('checkout-product-image-product-1')),
+    );
+    expect(thumbnail.expand, isTrue);
+    expect(thumbnail.fit, BoxFit.contain);
+    expect(
+      tester.getSize(find.byKey(const Key('checkout-product-image-product-1'))),
+      const Size.square(64),
+    );
+    expect(
+      tester.getSize(find.byKey(const Key('checkout-submit-button'))).height,
+      greaterThanOrEqualTo(44),
+    );
+    expect(tester.takeException(), isNull);
   });
 }
 
@@ -241,6 +434,9 @@ class _CustomerAuthController extends AuthController {
         role: 'customer',
         businessName: 'متجر الاختبار',
         customerId: 'customer-1',
+        city: 'طرابلس',
+        area: 'حي الأندلس',
+        address: 'شارع الاختبار',
         accountStatus: 'active',
       ),
     );

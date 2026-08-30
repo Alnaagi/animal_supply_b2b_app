@@ -27,6 +27,7 @@ class AdminReportExportRequest {
     required this.datasets,
     required this.demoData,
     this.shopName = AppConfig.shopName,
+    this.logoBytes,
   });
 
   final AdminReportData report;
@@ -34,6 +35,7 @@ class AdminReportExportRequest {
   final Set<AdminReportExportDataset> datasets;
   final bool demoData;
   final String shopName;
+  final Uint8List? logoBytes;
 
   String get brandedShopName {
     final trimmed = shopName.trim();
@@ -336,6 +338,8 @@ class AdminReportPdfExport {
     pw.Context context,
   ) {
     final compact = context.pageNumber > 1;
+    final hasLogo =
+        request.logoBytes != null && request.logoBytes!.isNotEmpty;
     return pw.Container(
       width: double.infinity,
       margin: const pw.EdgeInsets.only(bottom: 12),
@@ -345,37 +349,62 @@ class AdminReportPdfExport {
         color: _darkGreen,
         borderRadius: pw.BorderRadius.all(pw.Radius.circular(12)),
       ),
-      child: pw.Column(
-        mainAxisSize: pw.MainAxisSize.min,
-        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: pw.CrossAxisAlignment.center,
         children: [
-          pw.Text(
-            request.brandedShopName,
-            style: pw.TextStyle(
-              font: font,
-              fontSize: compact ? 13 : 16,
-              color: _white,
-              fontFallback: [pw.Font.helvetica()],
+          pw.Expanded(
+            child: pw.Column(
+              mainAxisSize: pw.MainAxisSize.min,
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Text(
+                  request.brandedShopName,
+                  style: pw.TextStyle(
+                    font: font,
+                    fontSize: compact ? 13 : 16,
+                    color: _white,
+                    fontFallback: [pw.Font.helvetica()],
+                  ),
+                  textAlign: pw.TextAlign.right,
+                  textDirection: pw.TextDirection.rtl,
+                ),
+                if (!compact) ...[
+                  pw.SizedBox(height: 3),
+                  pw.Text(
+                    'التقارير التشغيلية',
+                    style:
+                        pw.TextStyle(font: font, fontSize: 11, color: _sand),
+                    textAlign: pw.TextAlign.right,
+                    textDirection: pw.TextDirection.rtl,
+                  ),
+                ],
+                pw.SizedBox(height: 3),
+                _pdfMixedText(
+                  font,
+                  request.periodLabel,
+                  fontSize: 10,
+                  color: _sand,
+                ),
+              ],
             ),
-            textAlign: pw.TextAlign.right,
-            textDirection: pw.TextDirection.rtl,
           ),
-          if (!compact) ...[
-            pw.SizedBox(height: 3),
-            pw.Text(
-              'التقارير التشغيلية',
-              style: pw.TextStyle(font: font, fontSize: 11, color: _sand),
-              textAlign: pw.TextAlign.right,
-              textDirection: pw.TextDirection.rtl,
+          if (hasLogo) ...[
+            pw.SizedBox(width: 12),
+            pw.Container(
+              width: compact ? 32 : 44,
+              height: compact ? 32 : 44,
+              decoration: const pw.BoxDecoration(
+                color: _white,
+                borderRadius: pw.BorderRadius.all(pw.Radius.circular(8)),
+              ),
+              padding: const pw.EdgeInsets.all(3),
+              child: pw.Image(
+                pw.MemoryImage(request.logoBytes!),
+                fit: pw.BoxFit.contain,
+              ),
             ),
           ],
-          pw.SizedBox(height: 3),
-          _pdfMixedText(
-            font,
-            request.periodLabel,
-            fontSize: 10,
-            color: _sand,
-          ),
         ],
       ),
     );

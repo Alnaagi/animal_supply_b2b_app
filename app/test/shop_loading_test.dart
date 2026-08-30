@@ -3,6 +3,7 @@ import 'package:animal_supply_b2b/src/core/config/shop_branding.dart';
 import 'package:animal_supply_b2b/src/core/config/shop_branding_cache.dart';
 import 'package:animal_supply_b2b/src/core/localization/arabic_copy.dart';
 import 'package:animal_supply_b2b/src/core/theme/app_theme.dart';
+import 'package:animal_supply_b2b/src/core/widgets/branded_auth_loading.dart';
 import 'package:animal_supply_b2b/src/core/widgets/shop_loading.dart';
 import 'package:animal_supply_b2b/src/core/widgets/shop_refresh_indicator.dart';
 import 'package:flutter/material.dart';
@@ -76,6 +77,43 @@ void main() {
     expect(find.byKey(const Key('shop-loading-compact')), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.byType(CustomPaint), findsWidgets);
+  });
+
+  testWidgets('loading motion stops when reduced motion is requested',
+      (tester) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(
+              disableAnimations: true,
+              accessibleNavigation: true,
+            ),
+            child: Scaffold(
+              body: Column(
+                children: [
+                  ShopLoading.compact(),
+                  Expanded(
+                    child: BrandedAuthLoading(
+                      message: 'جارٍ تجهيز الحساب...',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byKey(const Key('shop-paw-spinner-motion')), findsWidgets);
+    expect(
+      find.byKey(const Key('branded-auth-loading-motion')),
+      findsOneWidget,
+    );
+    expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
   test('pull-to-refresh copy follows drag, release, then refresh', () {

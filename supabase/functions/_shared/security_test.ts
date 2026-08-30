@@ -12,24 +12,23 @@ import {
   validateRateLimitSalt,
 } from "./security.ts";
 
-Deno.test("adminSetPassword enforces strong admin-set passwords", () => {
-  const value = "Strong-Password-42!";
-  if (adminSetPassword(value) !== value) {
-    throw new Error("The admin-chosen password was not returned unchanged.");
+Deno.test("adminSetPassword allows simple customer passwords", () => {
+  for (const value of ["secret", "123456", "abcDEF", "  store1  "]) {
+    const expected = value.trim();
+    if (adminSetPassword(value) !== expected) {
+      throw new Error(`Expected simple customer password ${expected}.`);
+    }
   }
 });
 
-Deno.test("adminSetPassword rejects weak or oversized values", () => {
+Deno.test("adminSetPassword rejects empty, short, or oversized values", () => {
   for (
     const value of [
       null,
       "",
+      "   ",
       "a",
       "short",
-      "alllowercase42!",
-      "ALLUPPERCASE42!",
-      "NoNumberHere!",
-      "NoSymbolHere42",
       `A1!${"a".repeat(126)}`,
     ]
   ) {

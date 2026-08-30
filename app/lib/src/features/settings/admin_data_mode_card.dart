@@ -35,12 +35,15 @@ class AdminDataModeCard extends ConsumerWidget {
     final preferLocalDemo = ref.watch(appRuntimeModeProvider);
     final demoMode = AppConfig.isDemoMode || preferLocalDemo;
     final canUseProduction = AppConfig.hasInitializedRemoteBackend;
+    final canSwitchDemo = !AppConfig.isProduction && canUseProduction;
     final visibility = visibilityOverride ??
         AdminDataResetVisibility(
           demoMode: demoMode,
           productionBackendLive: AppConfig.remoteBackendEnabled,
         );
-    final demoSwitchOn = canUseProduction ? preferLocalDemo : true;
+    final demoSwitchOn = AppConfig.isProduction
+        ? false
+        : (canUseProduction ? preferLocalDemo : true);
 
     return Card(
       key: const Key('admin-data-mode-card'),
@@ -82,7 +85,7 @@ class AdminDataModeCard extends ConsumerWidget {
               key: const Key('admin-demo-mode-switch'),
               contentPadding: EdgeInsets.zero,
               value: demoSwitchOn,
-              onChanged: canUseProduction
+              onChanged: canSwitchDemo
                   ? (value) => _onDemoSwitchChanged(
                         context,
                         ref,
@@ -96,14 +99,16 @@ class AdminDataModeCard extends ConsumerWidget {
                 style: TextStyle(fontWeight: FontWeight.w800),
               ),
               subtitle: Text(
-                !canUseProduction
-                    ? 'هذه النسخة مبنية للتجربة المحلية أو أن الخادم غير مهيأ. '
-                        'لتجربة الإنتاج أعد البناء بـ APP_ENV=production مع '
-                        'إعدادات Supabase العامة الصحيحة، دون اختصارات غير آمنة.'
-                    : visibility.demoMode
-                        ? 'مفعل: الكتالوج والطلبات والإعدادات هنا محلية للتجربة، '
-                            'وليست عمليات حقيقية.'
-                        : 'متوقف: تعرض الشاشات بيانات الخادم حسب صلاحيات حسابك.',
+                AppConfig.isProduction
+                    ? 'وضع الإنتاج نشط. البيانات المعروضة متصلة بخادم التشغيل.'
+                    : !canUseProduction
+                        ? 'هذه النسخة مبنية للتجربة المحلية أو أن الخادم غير مهيأ. '
+                            'لتجربة الإنتاج أعد البناء بـ APP_ENV=production مع '
+                            'إعدادات Supabase العامة الصحيحة، دون اختصارات غير آمنة.'
+                        : visibility.demoMode
+                            ? 'مفعل: الكتالوج والطلبات والإعدادات هنا محلية للتجربة، '
+                                'وليست عمليات حقيقية.'
+                            : 'متوقف: تعرض الشاشات بيانات الخادم حسب صلاحيات حسابك.',
               ),
             ),
             if (visibility.showDemoLocalReset) ...[
@@ -173,6 +178,14 @@ class AdminDataModeCard extends ConsumerWidget {
     required bool currentlyDemo,
     required bool canUseProduction,
   }) async {
+    if (AppConfig.isProduction) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('الوضع التجريبي غير متاح في نسخة الإنتاج.'),
+        ),
+      );
+      return;
+    }
     if (enableDemo == currentlyDemo) return;
     if (!enableDemo && !canUseProduction) {
       ScaffoldMessenger.of(context).showSnackBar(

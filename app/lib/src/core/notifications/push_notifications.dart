@@ -80,7 +80,9 @@ class PushNotificationNavigation {
   final String? type;
 
   bool get hasDestination =>
-      orderId?.isNotEmpty == true || productId?.isNotEmpty == true;
+      orderId?.isNotEmpty == true ||
+      productId?.isNotEmpty == true ||
+      type == 'cart_reminder';
 
   factory PushNotificationNavigation.fromData(Map<String, dynamic> data) {
     return PushNotificationNavigation(
@@ -91,6 +93,9 @@ class PushNotificationNavigation {
   }
 
   String? locationFor(AppUser user) {
+    if (type == 'cart_reminder') {
+      return '/cart';
+    }
     final order = orderId;
     if (order != null && order.isNotEmpty) {
       return Uri(

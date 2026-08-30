@@ -59,6 +59,12 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
       _status == RefreshIndicatorStatus.snap ||
       _status == RefreshIndicatorStatus.refresh;
 
+  bool get _reduceMotion {
+    final media = MediaQuery.maybeOf(context);
+    return media?.disableAnimations == true ||
+        media?.accessibleNavigation == true;
+  }
+
   bool get _shouldShowOverlay {
     final status = _status;
     if (status == RefreshIndicatorStatus.drag ||
@@ -104,6 +110,10 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
     double next, {
     required Duration duration,
   }) {
+    if (_reduceMotion) {
+      _pull.value = next.clamp(0.0, ShopRefreshIndicator.maxPull);
+      return Future<void>.value();
+    }
     if ((next - _pull.value).abs() < 0.003 && !_pull.isAnimating) {
       return Future<void>.value();
     }
@@ -135,7 +145,13 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
           1,
           duration: const Duration(milliseconds: 280),
         );
-        _spin.repeat();
+        if (_reduceMotion) {
+          _spin
+            ..stop()
+            ..value = 0;
+        } else {
+          _spin.repeat();
+        }
       case RefreshIndicatorStatus.canceled:
       case RefreshIndicatorStatus.done:
       case null:
@@ -207,6 +223,7 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
   @override
   Widget build(BuildContext context) {
     final rtl = Directionality.of(context) == TextDirection.rtl;
+    final reduceMotion = _reduceMotion;
     return Stack(
       children: [
         NotificationListener<ScrollNotification>(
@@ -240,6 +257,7 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
                     spin: _spin.value,
                     spinning: _spinning,
                     rtl: rtl,
+                    reduceMotion: reduceMotion,
                     message: ShopRefreshIndicator.messageFor(_status),
                   );
                 },
@@ -257,6 +275,7 @@ class _ShopPullRefreshHud extends StatelessWidget {
     required this.spin,
     required this.spinning,
     required this.rtl,
+    required this.reduceMotion,
     required this.message,
   });
 
@@ -264,10 +283,12 @@ class _ShopPullRefreshHud extends StatelessWidget {
   final double spin;
   final bool spinning;
   final bool rtl;
+  final bool reduceMotion;
   final String message;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final appear = pull.clamp(0.0, 1.0);
     final drop = 10.0 + (appear * 16.0);
     final scale = 0.88 + (appear * 0.12);
@@ -286,7 +307,9 @@ class _ShopPullRefreshHud extends StatelessWidget {
                 spin: spin,
                 spinning: spinning,
                 rtl: rtl,
+                reduceMotion: reduceMotion,
                 message: message,
+                color: scheme.primary,
               ),
             ),
           ),
@@ -302,14 +325,18 @@ class _FrostedRefreshHud extends StatelessWidget {
     required this.spin,
     required this.spinning,
     required this.rtl,
+    required this.reduceMotion,
     required this.message,
+    required this.color,
   });
 
   final double pull;
   final double spin;
   final bool spinning;
   final bool rtl;
+  final bool reduceMotion;
   final String message;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
@@ -322,12 +349,12 @@ class _FrostedRefreshHud extends StatelessWidget {
             color: Colors.white.withValues(alpha: 0.72),
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
-              color: AppTheme.green.withValues(alpha: 0.22),
+              color: color.withValues(alpha: 0.22),
               width: 1.2,
             ),
             boxShadow: [
               BoxShadow(
-                color: AppTheme.darkGreen.withValues(alpha: 0.10),
+                color: color.withValues(alpha: 0.10),
                 blurRadius: 18,
                 offset: const Offset(0, 6),
               ),
@@ -347,12 +374,13 @@ class _FrostedRefreshHud extends StatelessWidget {
                       spin: spin,
                       spinning: spinning,
                       rtl: rtl,
+                      color: color,
                     ),
                   ),
                 ),
                 const SizedBox(width: 10),
                 AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
+                  duration: reduceMotion ? Duration.zero : AppMotion.quick,
                   switchInCurve: Curves.easeOut,
                   switchOutCurve: Curves.easeIn,
                   child: Text(
@@ -360,7 +388,10 @@ class _FrostedRefreshHud extends StatelessWidget {
                     key: ValueKey(message),
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: AppTheme.darkGreen.withValues(alpha: 0.94),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.94),
                       fontWeight: FontWeight.w800,
                       fontSize: 13,
                       height: 1.2,
@@ -382,19 +413,19 @@ class _RefreshRingPainter extends CustomPainter {
     required this.spin,
     required this.spinning,
     required this.rtl,
+    required this.color,
   });
 
   final double pull;
   final double spin;
   final bool spinning;
   final bool rtl;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width * 0.34;
-    const color = AppTheme.green;
-
     final sweep =
         spinning ? 1.55 * math.pi : lerpDouble(0.85, 1.35, pull)! * math.pi;
     final start =
@@ -427,6 +458,7 @@ class _RefreshRingPainter extends CustomPainter {
     return oldDelegate.pull != pull ||
         oldDelegate.spin != spin ||
         oldDelegate.rtl != rtl ||
-        oldDelegate.spinning != spinning;
+        oldDelegate.spinning != spinning ||
+        oldDelegate.color != color;
   }
 }

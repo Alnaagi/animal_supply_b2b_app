@@ -25,6 +25,7 @@ Future<BannerCropResult?> showBannerImageCropDialog(
   BuildContext context, {
   required Uint8List imageBytes,
   required String sourceFileName,
+  double aspectRatio = kBannerCropAspectRatio,
 }) {
   return showDialog<BannerCropResult>(
     context: context,
@@ -32,6 +33,7 @@ Future<BannerCropResult?> showBannerImageCropDialog(
     builder: (context) => BannerImageCropDialog(
       imageBytes: imageBytes,
       sourceFileName: sourceFileName,
+      aspectRatio: aspectRatio,
     ),
   );
 }
@@ -41,17 +43,22 @@ class BannerImageCropDialog extends StatefulWidget {
     super.key,
     required this.imageBytes,
     required this.sourceFileName,
+    this.aspectRatio = kBannerCropAspectRatio,
   });
 
   final Uint8List imageBytes;
   final String sourceFileName;
+  final double aspectRatio;
 
   @override
   State<BannerImageCropDialog> createState() => _BannerImageCropDialogState();
 }
 
+enum _CropMode { stretch, crop }
+
 class _BannerImageCropDialogState extends State<BannerImageCropDialog> {
   final TransformationController _transform = TransformationController();
+  _CropMode _mode = _CropMode.stretch;
   img.Image? _decoded;
   Size? _viewportSize;
   bool _exporting = false;
@@ -77,7 +84,10 @@ class _BannerImageCropDialogState extends State<BannerImageCropDialog> {
     super.dispose();
   }
 
+  bool _isContain = false;
+
   void _fitCover() {
+    _isContain = false;
     final decoded = _decoded;
     final viewport = _viewportSize;
     if (decoded == null || viewport == null || viewport.isEmpty) return;
@@ -96,10 +106,43 @@ class _BannerImageCropDialogState extends State<BannerImageCropDialog> {
     setState(() => _error = null);
   }
 
+  void _fitContain() {
+    _isContain = true;
+    final decoded = _decoded;
+    final viewport = _viewportSize;
+    if (decoded == null || viewport == null || viewport.isEmpty) return;
+
+    final imageWidth = decoded.width.toDouble();
+    final imageHeight = decoded.height.toDouble();
+    final scale = math.min(
+      viewport.width / imageWidth,
+      viewport.height / imageHeight,
+    );
+    final dx = (viewport.width - imageWidth * scale) / 2;
+    final dy = (viewport.height - imageHeight * scale) / 2;
+    _transform.value = Matrix4.identity()
+      ..translateByDouble(dx, dy, 0, 1)
+      ..scaleByDouble(scale, scale, 1, 1);
+    setState(() => _error = null);
+  }
+
+  void _toggleFit() {
+    if (_mode == _CropMode.stretch) {
+      setState(() => _mode = _CropMode.crop);
+      _fitCover();
+      return;
+    }
+    if (_isContain) {
+      _fitCover();
+    } else {
+      _fitContain();
+    }
+  }
+
   Future<void> _export() async {
     final decoded = _decoded;
     final viewport = _viewportSize;
-    if (_exporting || decoded == null || viewport == null || viewport.isEmpty) {
+    if (_exporting || decoded == null) {
       return;
     }
 
@@ -109,11 +152,21 @@ class _BannerImageCropDialogState extends State<BannerImageCropDialog> {
     });
 
     try {
-      final encoded = _exportCroppedJpeg(
-        source: decoded,
-        viewport: viewport,
-        transform: _transform.value,
-      );
+      final Uint8List encoded;
+      if (_mode == _CropMode.stretch || viewport == null || viewport.isEmpty) {
+        encoded = _exportStretchedJpeg(
+          source: decoded,
+          aspectRatio: widget.aspectRatio,
+        );
+      } else {
+        encoded = _exportCroppedJpeg(
+          source: decoded,
+          viewport: viewport,
+          transform: _transform.value,
+          aspectRatio: widget.aspectRatio,
+        );
+      }
+
       if (!mounted) return;
       Navigator.of(context).pop(
         BannerCropResult(
@@ -139,18 +192,46 @@ class _BannerImageCropDialogState extends State<BannerImageCropDialog> {
       title: const Text('قص الصورة'),
       content: SizedBox(
         width: 720,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             Text(
-              'حرّك وكبّر الصورة لتظهر بشكل جيد في شريط البانر لدى العملاء. '
-              'الإطار ثابت بنسبة عرض البانر.',
+              'يمكنك تمديد الصورة لتناسب إطار البانر بالكامل وعرض كامل الصورة، أو استخدام القص الحر لتحديد جزء معين.',
               style: theme.textTheme.bodyMedium?.copyWith(height: 1.35),
+            ),
+            const SizedBox(height: 10),
+            SegmentedButton<_CropMode>(
+              key: const ValueKey('banner-crop-mode-toggle'),
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(
+                  value: _CropMode.stretch,
+                  label: Text('تمديد للإطار (كامل الصورة)'),
+                  icon: Icon(Icons.fit_screen_outlined, size: 18),
+                ),
+                ButtonSegment(
+                  value: _CropMode.crop,
+                  label: Text('قص حر'),
+                  icon: Icon(Icons.crop_outlined, size: 18),
+                ),
+              ],
+              selected: {_mode},
+              onSelectionChanged: _exporting
+                  ? null
+                  : (selection) {
+                      setState(() {
+                        _mode = selection.single;
+                        if (_mode == _CropMode.crop) {
+                          _fitCover();
+                        }
+                      });
+                    },
             ),
             const SizedBox(height: 12),
             AspectRatio(
-              aspectRatio: kBannerCropAspectRatio,
+              aspectRatio: widget.aspectRatio,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: ColoredBox(
@@ -179,6 +260,31 @@ class _BannerImageCropDialogState extends State<BannerImageCropDialog> {
                                   _fitCover();
                                 }
                               });
+                            }
+                            if (_mode == _CropMode.stretch) {
+                              return Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Image.memory(
+                                    widget.imageBytes,
+                                    fit: BoxFit.fill,
+                                    filterQuality: FilterQuality.medium,
+                                    gaplessPlayback: true,
+                                    width: double.infinity,
+                                    height: double.infinity,
+                                  ),
+                                  if (_exporting)
+                                    const ColoredBox(
+                                      color: Color(0x66000000),
+                                      child: Center(
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.5,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              );
                             }
                             return Stack(
                               fit: StackFit.expand,
@@ -232,7 +338,9 @@ class _BannerImageCropDialogState extends State<BannerImageCropDialog> {
             ),
             const SizedBox(height: 8),
             Text(
-              'الإطار أعلاه يطابق نسبة شريط البانر في الصفحة الرئيسية (حاسوب وجوال).',
+              _mode == _CropMode.stretch
+                  ? 'وضع التمديد: تظهر الصورة كاملة متناسبة مع حجم البانر بدون اقتصاص أي جزء.'
+                  : 'وضع القص: حرّك وكبّر الصورة لتحديد الجزء المراد عرضه داخل إطار البانر.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: Colors.grey.shade700,
                 height: 1.35,
@@ -251,6 +359,7 @@ class _BannerImageCropDialogState extends State<BannerImageCropDialog> {
           ],
         ),
       ),
+    ),
       actions: [
         TextButton(
           key: const ValueKey('banner-crop-cancel'),
@@ -259,7 +368,7 @@ class _BannerImageCropDialogState extends State<BannerImageCropDialog> {
         ),
         OutlinedButton.icon(
           key: const ValueKey('banner-crop-fit'),
-          onPressed: _exporting || decoded == null ? null : _fitCover,
+          onPressed: _exporting || decoded == null ? null : _toggleFit,
           icon: const Icon(Icons.fit_screen_outlined, size: 18),
           label: const Text('ملاءمة'),
         ),
@@ -291,10 +400,30 @@ String _bannerJpegName(String sourceFileName) {
   return '$name.jpg';
 }
 
+Uint8List _exportStretchedJpeg({
+  required img.Image source,
+  required double aspectRatio,
+}) {
+  final targetWidth = aspectRatio >= 1.5 ? 1600 : 1080;
+  final targetHeight = (targetWidth / aspectRatio).round().clamp(1, 4000);
+  final resized = img.copyResize(
+    source,
+    width: targetWidth,
+    height: targetHeight,
+    interpolation: img.Interpolation.cubic,
+  );
+  final encoded = img.encodeJpg(resized, quality: 88);
+  if (encoded.isEmpty) {
+    throw StateError('Unable to encode banner JPEG');
+  }
+  return Uint8List.fromList(encoded);
+}
+
 Uint8List _exportCroppedJpeg({
   required img.Image source,
   required Size viewport,
   required Matrix4 transform,
+  required double aspectRatio,
 }) {
   final inverted = Matrix4.inverted(transform);
   final topLeft = MatrixUtils.transformPoint(inverted, Offset.zero);
@@ -320,7 +449,7 @@ Uint8List _exportCroppedJpeg({
 
   if (width < 2 || height < 2) {
     // Fallback: cover-centered crop at banner aspect.
-    const targetAspect = kBannerCropAspectRatio;
+    final targetAspect = aspectRatio;
     if (source.width / source.height >= targetAspect) {
       height = source.height;
       width = (height * targetAspect).round().clamp(1, source.width);

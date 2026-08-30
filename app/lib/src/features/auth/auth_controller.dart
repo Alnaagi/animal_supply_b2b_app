@@ -295,7 +295,7 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   Future<bool> _activateLocalDemoOverlayIfNeeded() async {
-    if (AppConfig.isProduction) return false;
+    if (AppConfig.isProduction || !AppConfig.allowsDemoCredentials) return false;
     if (!AppConfig.hasInitializedRemoteBackend) return true;
     if (!AppRuntimeMode.preferLocalDemo) {
       final result = await AppRuntimeMode.setPreferLocalDemo(
@@ -312,6 +312,13 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   Future<void> _loginDemo(String normalized, String password) async {
+    if (!AppConfig.allowsDemoCredentials) {
+      state = AuthState(
+        error: AppConfig.configurationMessageAr ??
+            'الوضع التجريبي غير متاح في هذه النسخة.',
+      );
+      return;
+    }
     state = AuthState(
       loading: true,
       notice: AppConfig.configurationMessageAr,

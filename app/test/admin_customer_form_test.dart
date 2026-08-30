@@ -136,11 +136,11 @@ void main() {
 
     await tester.enterText(
       find.byKey(const ValueKey('admin-customer-password-field')),
-      'test',
+      'secret',
     );
     await tester.enterText(
       find.byKey(const ValueKey('admin-customer-password-confirm-field')),
-      'other',
+      'other1',
     );
     await tester.tap(find.byKey(const ValueKey('admin-customer-form-save')));
     await tester.pump();
@@ -158,6 +158,70 @@ void main() {
       contains('غير متطابقتين'),
     );
   });
+
+  testWidgets(
+    'password shorter than 6 chars stays in the dialog with Arabic guidance',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(720, 1100));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            adminRepositoryProvider.overrideWithValue(
+              AdminRepository(
+                demoCustomers: const [
+                  BusinessCustomer(
+                    id: 'customer-form',
+                    businessName: 'متجر النموذج',
+                    username: 'form-shop',
+                    contactPerson: 'أحمد سالم',
+                    phone: '+218910000010',
+                    city: 'طرابلس',
+                    area: 'الاندلس',
+                  ),
+                ],
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Directionality(
+              textDirection: TextDirection.rtl,
+              child: AdminCustomersScreen(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('admin-customer-card-customer-form')),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-customer-password-field')),
+        'test',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-customer-password-confirm-field')),
+        'test',
+      );
+      await tester.tap(find.byKey(const ValueKey('admin-customer-form-save')));
+      await tester.pump();
+
+      expect(find.text('تعديل عميل'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('admin-customer-password-field')),
+            )
+            .decoration
+            ?.errorText,
+        contains('6 أحرف'),
+      );
+    },
+  );
 
   testWidgets(
     'invalid username shows error on the field and keeps the create dialog open',
@@ -289,7 +353,7 @@ void main() {
     },
   );
 
-  testWidgets('short matching password test is accepted on edit',
+  testWidgets('simple matching password is accepted on edit',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(720, 1100));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -340,23 +404,28 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(
+      find.textContaining('6 أحرف على الأقل بلا قيود إضافية'),
+      findsWidgets,
+    );
+
     await tester.enterText(
       find.byKey(const ValueKey('admin-customer-password-field')),
-      'test',
+      'secret',
     );
     await tester.enterText(
       find.byKey(const ValueKey('admin-customer-password-confirm-field')),
-      'test',
+      'secret',
     );
     await tester.tap(find.byKey(const ValueKey('admin-customer-form-save')));
     await tester.pumpAndSettle();
 
     expect(find.text('تعديل عميل'), findsNothing);
     expect(passwordCalls, 1);
-    expect(sentPassword, 'test');
+    expect(sentPassword, 'secret');
     expect(find.text('حساب تجريبي محلي'), findsOneWidget);
     expect(find.byKey(const Key('admin-invite-preview')), findsOneWidget);
-    expect(find.textContaining('كلمة المرور: test'), findsWidgets);
+    expect(find.textContaining('كلمة المرور: secret'), findsWidgets);
   });
 
   testWidgets(

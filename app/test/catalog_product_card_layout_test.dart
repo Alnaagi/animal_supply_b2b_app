@@ -56,7 +56,8 @@ void main() {
     expect(find.text('سعر الجملة'), findsOneWidget);
     final wholesaleLabel = tester.widget<Text>(find.text('سعر الجملة'));
     expect(wholesaleLabel.style?.color, AppTheme.darkGreen);
-    expect(find.textContaining('بيع الوحدة المقترح'), findsOneWidget);
+    expect(find.textContaining(CustomerProductCardCopy.retail), findsOneWidget);
+    expect(find.textContaining('متوفر'), findsNothing);
     expect(find.text(CustomerProductCardCopy.addToCart), findsOneWidget);
 
     final iconSize = tester.getSize(find.byIcon(Icons.inventory_2));

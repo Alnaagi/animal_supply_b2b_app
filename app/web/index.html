@@ -34,15 +34,31 @@
   <title>المتجر</title>
   <link rel="manifest" href="manifest.json">
   <script>
-    (function restoreShopDocumentTitle() {
+    (function restoreShopBranding() {
       try {
         var name = localStorage.getItem('shop_branding.v1.name');
-        if (!name) return;
-        name = String(name).trim();
-        if (!name) return;
-        document.title = name;
-        var appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
-        if (appleTitle) appleTitle.setAttribute('content', name);
+        if (name) {
+          name = String(name).trim();
+          if (name) {
+            document.title = name;
+            var appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+            if (appleTitle) appleTitle.setAttribute('content', name);
+          }
+        }
+        var logo = localStorage.getItem('shop_branding.v1.logo');
+        if (logo) {
+          logo = String(logo).trim();
+          if (logo) {
+            var favicons = document.querySelectorAll('link[rel*="icon"]');
+            for (var i = 0; i < favicons.length; i++) {
+              favicons[i].setAttribute('href', logo);
+            }
+            var appleIcons = document.querySelectorAll('link[rel="apple-touch-icon"]');
+            for (var j = 0; j < appleIcons.length; j++) {
+              appleIcons[j].setAttribute('href', logo);
+            }
+          }
+        }
       } catch (e) {}
     })();
   </script>

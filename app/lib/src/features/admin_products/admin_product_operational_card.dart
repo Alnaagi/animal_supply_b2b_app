@@ -41,6 +41,7 @@ class AdminProductOperationalCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final imageSize = compact ? 88.0 : 112.0;
     final stockColor = !product.stockTrackingEnabled
@@ -49,7 +50,7 @@ class AdminProductOperationalCard extends StatelessWidget {
             ? AppTheme.red
             : product.lowStock
                 ? AppTheme.orange
-                : AppTheme.green;
+                : AppTheme.success;
     final visibilityLabel = product.isArchived
         ? 'مؤرشف'
         : product.active
@@ -57,7 +58,7 @@ class AdminProductOperationalCard extends StatelessWidget {
             : 'مخفي';
     final visibilityColor = product.isArchived || !product.active
         ? Colors.blueGrey
-        : AppTheme.green;
+        : scheme.primary;
 
     return Card(
       key: ValueKey('admin-product-card-${product.id}'),
@@ -67,8 +68,8 @@ class AdminProductOperationalCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         side: BorderSide(
           color: selected
-              ? AppTheme.green.withValues(alpha: .55)
-              : AppTheme.green.withValues(alpha: .12),
+              ? scheme.primary.withValues(alpha: .55)
+              : scheme.primary.withValues(alpha: .12),
           width: selected ? 2 : 1,
         ),
       ),
@@ -186,7 +187,7 @@ class AdminProductOperationalCard extends StatelessWidget {
                               Text(
                                 lyd(product.price),
                                 style: textTheme.titleMedium?.copyWith(
-                                  color: AppTheme.darkGreen,
+                                  color: scheme.onSurface,
                                   fontWeight: FontWeight.w900,
                                 ),
                               ),

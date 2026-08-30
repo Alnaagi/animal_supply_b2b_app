@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_config.dart';
+
 /// Local runtime overlay on top of compile-time [APP_ENV].
 ///
 /// An explicit demo build still cannot silently attach to production just
@@ -15,7 +17,11 @@ class AppRuntimeMode {
   static bool _preferLocalDemo = false;
   static bool _loaded = false;
 
-  static bool get preferLocalDemo => _preferLocalDemo;
+  static bool get preferLocalDemo =>
+      !AppConfig.isProduction &&
+      !kReleaseMode &&
+      !AppConfig.hasSupabase &&
+      _preferLocalDemo;
   static bool get loaded => _loaded;
 
   static Future<void> load({SharedPreferences? prefs}) async {
@@ -33,6 +39,15 @@ class AppRuntimeMode {
     required bool productionBackendAvailable,
     SharedPreferences? prefs,
   }) async {
+    if ((AppConfig.isProduction || AppConfig.hasSupabase || kReleaseMode) &&
+        preferDemo) {
+      return const AppRuntimeSwitchResult(
+        applied: false,
+        preferLocalDemo: false,
+        messageAr: 'الوضع التجريبي غير متاح عند تفعيل خادم الإنتاج.',
+      );
+    }
+
     if (!preferDemo && !productionBackendAvailable) {
       return const AppRuntimeSwitchResult(
         applied: false,

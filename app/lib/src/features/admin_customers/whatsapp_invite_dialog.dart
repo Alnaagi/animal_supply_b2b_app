@@ -260,7 +260,10 @@ class _WhatsAppInviteDialogState extends State<WhatsAppInviteDialog> {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: Row(children: [
-                      const Icon(Icons.phone_android, color: AppTheme.green),
+                      Icon(
+                        Icons.phone_android,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(

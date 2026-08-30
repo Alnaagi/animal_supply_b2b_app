@@ -23,6 +23,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../core/widgets/status_chip.dart';
 import '../../data/export/order_invoice_pdf.dart';
@@ -164,7 +165,10 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
         ),
       ],
       child: initialLoading
-          ? const ShopLoading.page()
+          ? const ShopSkeleton(
+              semanticLabel: 'جارٍ تحميل الطلبات...',
+              child: ShopOrderListSkeleton(),
+            )
           : loadError != null && orders.isEmpty
               ? _AdminOrdersError(onRetry: _manualRefresh)
               : ShopRefreshIndicator(
@@ -1066,9 +1070,12 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
   }
 
   Future<void> _printInvoiceAsync(Order order) async {
+    final branding = ref.read(shopBrandingProvider);
+    final logoBytes = await fetchShopLogoBytes(branding.logoUrl);
     final bytes = await OrderInvoicePdf.build(
       order: order,
-      shopName: ref.read(shopBrandingProvider).shopName,
+      shopName: branding.shopName,
+      logoBytes: logoBytes,
       demoData: AppConfig.isDemoMode,
     );
     final opened = kIsWeb &&
@@ -1411,7 +1418,6 @@ class _OrdersLiveStatus extends StatelessWidget {
 
 class _OrdersStatusPill extends StatelessWidget {
   const _OrdersStatusPill({
-    super.key,
     required this.icon,
     required this.label,
     this.highlighted = false,
@@ -3446,15 +3452,15 @@ class _WhatsAppOrderSendBarState extends State<_WhatsAppOrderSendBar> {
 
   Color get _fill {
     if (!widget.enabled) {
-      return AppTheme.green.withValues(alpha: .45);
+      return AppTheme.whatsapp.withValues(alpha: .45);
     }
     if (_pressed) {
-      return AppTheme.darkGreen;
+      return Color.lerp(AppTheme.whatsapp, Colors.black, .28)!;
     }
     if (_hovered) {
-      return const Color(0xff127a57);
+      return Color.lerp(AppTheme.whatsapp, Colors.black, .12)!;
     }
-    return AppTheme.green;
+    return AppTheme.whatsapp;
   }
 
   @override
@@ -3468,7 +3474,8 @@ class _WhatsAppOrderSendBarState extends State<_WhatsAppOrderSendBar> {
         boxShadow: enabled
             ? [
                 BoxShadow(
-                  color: AppTheme.green.withValues(alpha: _hovered ? .32 : .18),
+                  color:
+                      AppTheme.whatsapp.withValues(alpha: _hovered ? .32 : .18),
                   blurRadius: _hovered ? 18 : 12,
                   offset: const Offset(0, 6),
                 ),

@@ -66,6 +66,20 @@ void main() {
     expect(find.text(AddedToCartPromptCopy.checkout), findsOneWidget);
     expect(find.byKey(const Key('added-to-cart-continue')), findsOneWidget);
     expect(find.byKey(const Key('added-to-cart-checkout')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('added-to-cart-continue')),
+        matching: find.byIcon(Icons.add_shopping_cart_rounded),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('added-to-cart-checkout')),
+        matching: find.byIcon(Icons.shopping_cart_checkout_rounded),
+      ),
+      findsOneWidget,
+    );
     expect(_cartOf(tester), isEmpty);
   });
 
@@ -131,7 +145,8 @@ void main() {
       (tester) async {
     final router = await _pumpCatalogCard(tester, product: _orderableProduct);
 
-    await tester.tap(find.byTooltip(AddedToCartPromptCopy.orderActionTooltip));
+    await tester
+        .tap(find.byTooltip('إضافة ${_orderableProduct.name} إلى السلة'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('زيادة الكمية'));
     await tester.pumpAndSettle();
@@ -175,9 +190,6 @@ void main() {
           .onTap,
       isNull,
     );
-    await tester.tap(find.text('غير متوفر حالياً'));
-    await tester.pumpAndSettle();
-
     expect(find.text(AddedToCartPromptCopy.title), findsNothing);
     expect(find.byType(QuantitySelector), findsNothing);
     expect(_cartOf(tester), isEmpty);

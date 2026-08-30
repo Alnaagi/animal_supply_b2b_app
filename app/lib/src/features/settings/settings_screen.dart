@@ -9,10 +9,9 @@ import '../../core/config/app_config.dart';
 import '../../core/config/shop_branding.dart';
 import '../../core/config/shop_branding_cache.dart';
 import '../../core/refresh/screen_reload.dart';
-import '../../core/theme/app_theme.dart';
 import '../../core/updates/update_link.dart';
 import '../../core/widgets/shop_brand_logo.dart';
-import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../../data/repositories/product_images_repository.dart';
@@ -67,7 +66,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         future: _settingsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const ShopLoading.page();
+            return const ShopSkeleton(
+              semanticLabel: 'جارٍ تحميل الإعدادات...',
+              child: ShopSettingsSkeleton(),
+            );
           }
           if (snapshot.hasError) {
             return _SettingsLoadError(
@@ -94,8 +96,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               key: const Key('store-settings-logo-preview'),
                               logoUrl: settings.shopLogoUrl,
                               size: 64,
-                              backgroundColor: const Color(0xffe3f3eb),
-                              fallbackIconColor: AppTheme.green,
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.primaryContainer,
+                              fallbackIconColor:
+                                  Theme.of(context).colorScheme.primary,
                             ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -175,8 +179,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     logoUrl: logoUrl,
                     logoBytes: logoPreviewBytes,
                     size: 72,
-                    backgroundColor: const Color(0xffe3f3eb),
-                    fallbackIconColor: AppTheme.green,
+                    backgroundColor:
+                        Theme.of(context).colorScheme.primaryContainer,
+                    fallbackIconColor:
+                        Theme.of(context).colorScheme.primary,
                   ),
                 ),
                 const SizedBox(height: 8),

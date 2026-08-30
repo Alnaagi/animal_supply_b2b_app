@@ -249,7 +249,10 @@ class _AdminQuickDiscountSheetState extends State<_AdminQuickDiscountSheet> {
             ),
             const SizedBox(height: 12),
             Card(
-              color: AppTheme.green.withValues(alpha: .08),
+              color: Theme.of(context)
+                  .colorScheme
+                  .primary
+                  .withValues(alpha: .08),
               child: Padding(
                 padding: const EdgeInsets.all(12),
                 child: Column(
@@ -443,7 +446,7 @@ class _AdminQuickStockSheetState extends State<_AdminQuickStockSheet> {
                       ? AppTheme.red
                       : preview.lowStock
                           ? AppTheme.orange
-                          : AppTheme.green,
+                          : AppTheme.success,
             ),
           ),
           const SizedBox(height: 14),
@@ -548,7 +551,7 @@ class _AdminBulkDiscountSheetState extends State<_AdminBulkDiscountSheet> {
           ),
         ) ??
         false;
-    if (!confirmed || !context.mounted) return;
+    if (!confirmed || !mounted) return;
     Navigator.pop(context, percent);
   }
 
@@ -666,7 +669,7 @@ class _AdminBulkPriceSheetState extends State<_AdminBulkPriceSheet> {
           ),
         ) ??
         false;
-    if (!confirmed || !context.mounted) return;
+    if (!confirmed || !mounted) return;
     Navigator.pop(context, (mode: mode, percent: signed));
   }
 

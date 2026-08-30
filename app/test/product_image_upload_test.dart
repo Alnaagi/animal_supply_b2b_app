@@ -637,10 +637,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('قص الصورة'), findsOneWidget);
+    expect(find.text('تمديد للإطار (كامل الصورة)'), findsOneWidget);
+    expect(find.text('قص حر'), findsOneWidget);
     expect(find.text('ملاءمة'), findsOneWidget);
     expect(find.text('حفظ القص'), findsOneWidget);
     expect(find.text('إلغاء'), findsOneWidget);
     expect(kBannerCropAspectRatio, closeTo(1600 / 620, 0.0001));
+
+    // Switch to crop mode
+    await tester.tap(find.text('قص حر'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('banner-crop-viewer')), findsOneWidget);
+
+    // Switch back to stretch mode
+    await tester.tap(find.text('تمديد للإطار (كامل الصورة)'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('banner-crop-viewer')), findsNothing);
   });
 }
 

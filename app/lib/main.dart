@@ -14,10 +14,12 @@ import 'src/core/notifications/push_notifications.dart';
 import 'src/core/refresh/stale_tab_reloader.dart';
 import 'src/core/routing/app_router.dart';
 import 'src/core/routing/deep_link_service.dart';
-import 'src/core/theme/app_theme.dart';
 import 'src/core/updates/app_update_gate.dart';
 import 'src/data/repositories/notifications_repository.dart';
+import 'src/data/models/storefront_config.dart';
+import 'src/data/repositories/storefront_repository.dart';
 import 'src/features/auth/auth_controller.dart';
+import 'src/features/storefront/storefront_theme_scope.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -142,6 +144,9 @@ class _AnimalSupplyAppState extends ConsumerState<AnimalSupplyApp> {
   Widget build(BuildContext context) {
     final router = ref.watch(appRouterProvider);
     final shopName = ref.watch(shopBrandingProvider).shopName;
+    final publishedStorefront =
+        ref.watch(publishedStorefrontConfigProvider).valueOrNull ??
+            StorefrontDefaults.bundled;
     applyShopDocumentTitle(shopName);
     return MaterialApp.router(
       title: shopName,
@@ -154,7 +159,9 @@ class _AnimalSupplyAppState extends ConsumerState<AnimalSupplyApp> {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      theme: AppTheme.light,
+      // The published storefront palette is the app-wide visual source of
+      // truth. Route-level draft scopes still override this for admin previews.
+      theme: storefrontThemeData(publishedStorefront),
       routerConfig: router,
       builder: (context, child) => Directionality(
         textDirection: TextDirection.rtl,

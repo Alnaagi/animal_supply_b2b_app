@@ -11,6 +11,7 @@ import '../../core/support/customer_invite_copy.dart';
 import '../../core/support/customer_last_active_copy.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/local/customer_invite_template_store.dart';
 import '../../data/models/admin_models.dart';
@@ -156,7 +157,10 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
             tooltip: 'عميل جديد'),
       ],
       child: loadingInitial
-          ? const ShopLoading.page()
+          ? const ShopSkeleton(
+              semanticLabel: 'جارٍ تحميل العملاء...',
+              child: ShopCustomerListSkeleton(),
+            )
           : loadError != null
               ? _CustomerLoadError(
                   onRetry: () => unawaited(_refreshCustomers()),
@@ -749,9 +753,9 @@ class _AdminCustomersScreenState extends ConsumerState<AdminCustomersScreen> {
                                   labelText:
                                       isNew ? 'كلمة المرور' : 'كلمة مرور جديدة',
                                   helperText: isNew
-                                      ? 'اختياري. إن تُركت فارغة يولّد الخادم كلمة مرور مؤقتة. لا تُوضع في الرابط.'
-                                      : 'اتركه فارغاً للإبقاء على كلمة المرور الحالية. تُحفظ في الخادم فقط، وليس في الرابط.',
-                                  helperMaxLines: 3,
+                                      ? 'اختياري. عند الإدخال: 6 أحرف على الأقل بلا قيود إضافية. إن تُركت فارغة يولّد الخادم كلمة مرور مؤقتة. لا تُوضع في الرابط.'
+                                      : 'اتركه فارغاً للإبقاء على كلمة المرور الحالية. عند التغيير: 6 أحرف على الأقل بلا قيود إضافية. تُحفظ في الخادم فقط، وليس في الرابط.',
+                                  helperMaxLines: 4,
                                   prefixIcon: const Icon(Icons.lock_outline),
                                   suffixIcon: IconButton(
                                     onPressed: () => setDialogState(
@@ -1141,7 +1145,7 @@ class _AdminCustomerCard extends StatelessWidget {
     final avatarColor = customer.accountStatus == 'archived'
         ? Colors.grey
         : customer.active
-            ? AppTheme.green
+            ? Theme.of(context).colorScheme.primary
             : AppTheme.red;
     final avatarIcon = customer.accountStatus == 'archived'
         ? Icons.archive_outlined
@@ -1304,7 +1308,7 @@ class _CustomerDetailChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: AppTheme.softGray,
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
@@ -1457,7 +1461,7 @@ class _CustomerFormSection extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
-        color: AppTheme.softGray,
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -1465,14 +1469,18 @@ class _CustomerFormSection extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 20, color: AppTheme.darkGreen),
+              Icon(
+                icon,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    color: AppTheme.darkGreen,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
               ),
@@ -1492,6 +1500,9 @@ String? _adminCustomerPasswordError(String password, String confirmation) {
   }
   if (password.isEmpty) {
     return 'أدخل كلمة المرور أو اترك الحقلين فارغين.';
+  }
+  if (password.length < 6) {
+    return 'استخدموا كلمة مرور من 6 أحرف على الأقل.';
   }
   if (password.length > 128) {
     return 'يجب ألا تتجاوز كلمة المرور 128 حرفاً.';
@@ -1520,7 +1531,9 @@ String _customerActionErrorAr(Object error) {
         : detail.toLowerCase().contains('phone')
             ? 'رقم الهاتف غير صالح. استخدموا رقماً محلياً أو دولياً واضحاً.'
             : 'بيانات العميل غير مكتملة أو غير صالحة.',
-    'PASSWORD_TOO_SHORT' => 'كلمة المرور غير مقبولة. استخدموا 1 إلى 128 حرفاً.',
+    'PASSWORD_TOO_SHORT' ||
+    'PASSWORD_POLICY_FAILED' =>
+      'كلمة المرور غير مقبولة. استخدموا 6 إلى 128 حرفاً بلا قيود إضافية.',
     _ => '',
   };
   if (mapped.isNotEmpty) {
@@ -1541,7 +1554,7 @@ String _customerActionErrorAr(Object error) {
     return 'تعذر إكمال العملية ($code).';
   }
   if (error.toString().toLowerCase().contains('password')) {
-    return 'كلمة المرور غير مقبولة. استخدموا 1 إلى 128 حرفاً.';
+    return 'كلمة المرور غير مقبولة. استخدموا 6 إلى 128 حرفاً بلا قيود إضافية.';
   }
   return 'تعذر إكمال العملية. تحقق من الاتصال وحاول مجدداً.';
 }

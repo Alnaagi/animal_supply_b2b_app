@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../config/app_config.dart';
 import '../../data/local/local_auth_session_store.dart';
 import '../../data/models/app_user.dart';
 import '../../features/admin_archive/admin_archive_screen.dart';
@@ -28,6 +29,8 @@ import '../../features/download/app_download_screen.dart';
 import '../../features/orders/orders_screen.dart';
 import '../../features/offers/offers_screen.dart';
 import '../../features/profile/profile_screen.dart';
+import '../../features/admin_storefront/admin_storefront_preview_screen.dart';
+import '../../features/admin_storefront/admin_storefront_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/support/support_screen.dart';
 
@@ -72,7 +75,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       }
 
       final user = auth.user;
-      if (user == null) {
+      if (user == null || (user.isDemo && !AppConfig.allowsDemoCredentials)) {
         if (isPublicLocation) return null;
         final safeDestination = nextLocation ?? requestedLocation;
         return safeDestination == null
@@ -144,52 +147,62 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/auth-loading',
-        builder: (context, state) => const AuthBootstrapScreen(),
+        builder: (context, state) => AuthBootstrapScreen(
+          destination: state.uri.queryParameters['next'],
+        ),
       ),
       GoRoute(
         path: '/change-password',
         builder: (context, state) => const ChangePasswordScreen(),
       ),
       GoRoute(
-        path: '/product/:id',
-        builder: (context, state) => ProductDetailsScreen(
-          productId: state.pathParameters['id']!,
-        ),
-      ),
-      GoRoute(
-        path: '/checkout',
-        builder: (context, state) => const CheckoutScreen(),
-      ),
-      GoRoute(
         path: '/order-success',
         redirect: (context, state) => '/orders',
       ),
-      GoRoute(
-        path: '/offers',
-        builder: (context, state) => const OffersScreen(),
-      ),
-      GoRoute(
-        path: '/support',
-        builder: (context, state) => const SupportScreen(),
-      ),
       StatefulShellRoute.indexedStack(
-        builder: (context, state, shell) => CustomerShell(shell: shell),
+        builder: (context, state, shell) => CustomerShell(
+          shell: shell,
+          currentLocation: state.uri.path,
+        ),
         branches: [
-          StatefulShellBranch(routes: [
-            GoRoute(
-                path: '/home',
-                builder: (context, state) => const CustomerHomeScreen()),
-          ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-                path: '/catalog',
-                builder: (context, state) => CatalogScreen(
-                    initialCategory: state.uri.queryParameters['category'])),
-          ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-                path: '/cart', builder: (context, state) => const CartScreen()),
-          ]),
+          StatefulShellBranch(
+            initialLocation: '/home',
+            routes: [
+              GoRoute(
+                  path: '/home',
+                  builder: (context, state) => const CustomerHomeScreen()),
+              GoRoute(
+                  path: '/offers',
+                  builder: (context, state) => const OffersScreen()),
+            ],
+          ),
+          StatefulShellBranch(
+            initialLocation: '/catalog',
+            routes: [
+              GoRoute(
+                  path: '/catalog',
+                  builder: (context, state) => CatalogScreen(
+                      initialCategory: state.uri.queryParameters['category'])),
+              GoRoute(
+                path: '/product/:id',
+                builder: (context, state) => ProductDetailsScreen(
+                  productId: state.pathParameters['id']!,
+                ),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            initialLocation: '/cart',
+            routes: [
+              GoRoute(
+                  path: '/cart',
+                  builder: (context, state) => const CartScreen()),
+              GoRoute(
+                path: '/checkout',
+                builder: (context, state) => const CheckoutScreen(),
+              ),
+            ],
+          ),
           StatefulShellBranch(routes: [
             GoRoute(
                 path: '/orders',
@@ -198,11 +211,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                       showSuccessState: _validatedSuccessParam(state.uri),
                     )),
           ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-                path: '/profile',
-                builder: (context, state) => const ProfileScreen()),
-          ]),
+          StatefulShellBranch(
+            initialLocation: '/profile',
+            routes: [
+              GoRoute(
+                  path: '/profile',
+                  builder: (context, state) => const ProfileScreen()),
+              GoRoute(
+                path: '/support',
+                builder: (context, state) => const SupportScreen(),
+              ),
+            ],
+          ),
         ],
       ),
       GoRoute(
@@ -241,6 +261,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
           path: '/admin/settings',
           builder: (context, state) => const SettingsScreen()),
+      GoRoute(
+          path: '/admin/storefront',
+          builder: (context, state) => const AdminStorefrontScreen()),
+      GoRoute(
+          path: '/admin/storefront/preview',
+          builder: (context, state) => const AdminStorefrontPreviewScreen()),
     ],
   );
 });
@@ -284,7 +310,8 @@ bool _isProductLocation(String location) {
       segments.last.isNotEmpty;
 }
 
-bool _isAdminLocation(String location) => const {
+bool _isAdminLocation(String location) =>
+    const {
       '/admin',
       '/admin/customers',
       '/admin/products',
@@ -294,13 +321,17 @@ bool _isAdminLocation(String location) => const {
       '/admin/notifications',
       '/admin/reports',
       '/admin/settings',
-    }.contains(location);
+      '/admin/storefront',
+    }.contains(location) ||
+    location == '/admin/storefront/preview';
 
 bool _isAdminOnlyLocation(String location) =>
     location == '/admin/banners' ||
     location == '/admin/notifications' ||
     location == '/admin/reports' ||
-    location == '/admin/settings';
+    location == '/admin/settings' ||
+    location == '/admin/storefront' ||
+    location == '/admin/storefront/preview';
 
 String _locationWithNext(String path, String next) => Uri(
       path: path,
@@ -431,7 +462,9 @@ class _RouteNotFoundScreen extends StatelessWidget {
 
 String _fallbackLocationForRole(AuthState auth) {
   final user = auth.user;
-  if (user == null) return '/login';
+  if (user == null || (user.isDemo && !AppConfig.allowsDemoCredentials)) {
+    return '/login';
+  }
   return user.isCustomer ? '/home' : '/admin';
 }
 

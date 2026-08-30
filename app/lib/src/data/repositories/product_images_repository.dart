@@ -124,6 +124,57 @@ class ProductImagesRepository {
   }) =>
       _uploadPicked(picked, folder: folder, onProgress: onProgress);
 
+  /// Extracts `banners/{uid}/{file}` from a public product-images URL.
+  /// Returns null for external/CDN URLs so unrelated assets are never deleted.
+  static String? bannerStoragePathFromPublicUrl(String rawUrl) {
+    final uri = Uri.tryParse(rawUrl.trim());
+    if (uri == null || uri.scheme.toLowerCase() != 'https') return null;
+    const marker = '/object/public/$bucketName/';
+    final full = uri.path;
+    final markerIndex = full.indexOf(marker);
+    if (markerIndex < 0) return null;
+    final path =
+        Uri.decodeComponent(full.substring(markerIndex + marker.length));
+    if (!path.startsWith('$bannersFolder/')) return null;
+    final segments = path.split('/');
+    if (segments.length != 3) return null;
+    if (!RegExp(r'^[0-9a-f-]{36}$').hasMatch(segments[1])) return null;
+    if (!RegExp(r'^[A-Za-z0-9-]+\.(jpg|jpeg|png|webp)$')
+        .hasMatch(segments[2])) {
+      return null;
+    }
+    return path;
+  }
+
+  Future<void> removeByStoragePath(String path) async {
+    final storage = _storage;
+    if (storage == null) {
+      throw const ProductImageUploadException(
+        code: 'BACKEND_REQUIRED',
+        message: 'حذف صورة التخزين يحتاج ربط Supabase الإنتاجي.',
+      );
+    }
+    final normalized = path.trim();
+    if (bannerStoragePathFromPublicUrl(
+          storage.publicUrl(normalized),
+        ) !=
+        normalized) {
+      // Only allow deleting paths that match the banners object pattern.
+      final segments = normalized.split('/');
+      if (segments.length != 3 ||
+          segments[0] != bannersFolder ||
+          !RegExp(r'^[0-9a-f-]{36}$').hasMatch(segments[1]) ||
+          !RegExp(r'^[A-Za-z0-9-]+\.(jpg|jpeg|png|webp)$')
+              .hasMatch(segments[2])) {
+        throw const ProductImageUploadException(
+          code: 'INVALID_PATH',
+          message: 'مسار صورة البانر غير صالح للحذف.',
+        );
+      }
+    }
+    await storage.remove(normalized);
+  }
+
   Future<ProductImageUploadResult?> _pickAndUpload({
     required String folder,
     ProductImageUploadProgress? onProgress,

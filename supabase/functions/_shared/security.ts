@@ -138,8 +138,9 @@ export function validateInviteBaseUrl(baseUrl: string | undefined): string {
   return url.toString();
 }
 
+/** Admin-chosen customer passwords (create/reset). Not for staff/self-service. */
 export function adminSetPassword(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0) {
+  if (typeof value !== "string" || value.trim().length === 0) {
     throw new HttpError(
       422,
       "PASSWORD_POLICY_FAILED",
@@ -147,28 +148,17 @@ export function adminSetPassword(value: unknown): string {
       { field: "password" },
     );
   }
-  if (value.length < 10 || value.length > 128) {
+  // Callers trim before invoke; reject whitespace-only if raw value is passed.
+  const password = value.trim();
+  if (password.length < 6 || password.length > 128) {
     throw new HttpError(
       422,
       "PASSWORD_POLICY_FAILED",
-      "The password must contain 10-128 characters.",
-      { field: "password", minLength: 10, maxLength: 128 },
+      "The password must contain 6-128 characters.",
+      { field: "password", minLength: 6, maxLength: 128 },
     );
   }
-  if (
-    !/[A-Z]/.test(value) ||
-    !/[a-z]/.test(value) ||
-    !/[0-9]/.test(value) ||
-    !/[^A-Za-z0-9]/.test(value)
-  ) {
-    throw new HttpError(
-      422,
-      "PASSWORD_POLICY_FAILED",
-      "The password must contain uppercase, lowercase, number, and symbol characters.",
-      { field: "password" },
-    );
-  }
-  return value;
+  return password;
 }
 
 export function strongPassword(value: unknown): string {

@@ -1,4 +1,6 @@
+import 'package:animal_supply_b2b/src/core/widgets/customer_product_summary.dart';
 import 'package:animal_supply_b2b/src/core/theme/app_theme.dart';
+import 'package:animal_supply_b2b/src/core/utils/formatters.dart';
 import 'package:animal_supply_b2b/src/core/widgets/category_icon_view.dart';
 import 'package:animal_supply_b2b/src/data/models/admin_models.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
@@ -23,7 +25,7 @@ void main() {
 
   testWidgets('customer home shows greeting, categories, and product rows',
       (tester) async {
-    tester.view.physicalSize = const Size(390, 844);
+    tester.view.physicalSize = const Size(338, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -65,6 +67,23 @@ void main() {
     // Greeting header
     expect(find.text('مرحباً، متجر الاختبار'), findsOneWidget);
     expect(find.text('طرابلس - حي الأندلس'), findsOneWidget);
+    expect(
+      find.byKey(const Key('customer-home-greeting-card')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('customer-home-shop-logo')), findsNothing);
+    expect(
+      find.text('أسعار الجملة والمنتجات المختارة لتجهيز متجرك'),
+      findsNothing,
+    );
+    expect(
+      tester.getSize(find.byKey(const Key('customer-home-search'))),
+      const Size.square(44),
+    );
+    expect(
+      tester.getSize(find.byKey(const Key('customer-home-notifications'))),
+      const Size.square(44),
+    );
 
     // Sections
     expect(find.text('التصنيفات'), findsOneWidget);
@@ -81,9 +100,11 @@ void main() {
 
     // Product name visible
     expect(find.text('علف دجاج جملة'), findsWidgets);
+    expect(find.text(CustomerProductCardCopy.retail), findsWidgets);
+    expect(find.text(lyd(48)), findsWidgets);
+    expect(find.text('متوفر للطلب'), findsNothing);
 
-    // Dismiss any overflow errors from test rendering constraints.
-    tester.takeException();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('offers row shows when discountPercent > 0', (tester) async {
@@ -127,7 +148,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('🔥 العروض'), findsOneWidget);
+    expect(find.text('العروض'), findsOneWidget);
     expect(find.textContaining('خصم'), findsWidgets);
     expect(find.byKey(const Key('customer-home-discounted')), findsOneWidget);
     // Dismiss any overflow errors from rendering; the widget tree is tested above.
@@ -174,7 +195,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('🔥 العروض'), findsNothing);
+    expect(find.text('العروض'), findsNothing);
     tester.takeException();
   });
 }

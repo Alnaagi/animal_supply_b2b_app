@@ -1,88 +1,25 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models/product.dart';
-import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 
 /// Shared Arabic labels and compact facts for customer product cards.
 abstract final class CustomerProductCardCopy {
   static const addToCart = 'للسلة';
   static const wholesale = 'سعر الجملة';
+  static const retail = 'سعر البيع للتاجر';
+  static const retailUnitHint = 'للوحدة • مرجع للبيع للتاجر';
 
   static String brand(Product product) => product.brand.trim();
 
   static String packSize(Product product) =>
       product.effectivePackageSize.trim();
 
-  static String compactAvailability(Product product) {
-    if (!product.isOrderable) return 'غير متوفر';
-    if (product.stockTrackingEnabled && product.showStockQuantityToCustomers) {
-      return 'متوفر ${product.orderableStockQuantity}';
-    }
-    return 'متوفر';
-  }
-
-  static String suggestedUnitPrice(double price) => 'بيع الوحدة ${lyd(price)}';
+  static String suggestedUnitPrice(double price) =>
+      'بيع للتاجر: ${lyd(price)}';
 
   static String suggestedUnitPriceCatalog(double price) =>
-      'بيع الوحدة المقترح: ${lyd(price)}';
-}
-
-class CompactAvailabilityChip extends StatelessWidget {
-  const CompactAvailabilityChip({
-    required this.product,
-    this.compact = false,
-    super.key,
-  });
-
-  final Product product;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final available = product.isOrderable;
-    final color = available ? AppTheme.green : AppTheme.red;
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 7 : 8,
-        vertical: compact ? 3 : 4,
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .94),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: .28)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: .10),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 5),
-          Text(
-            CustomerProductCardCopy.compactAvailability(product),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: color,
-              fontSize: compact ? 10 : 11,
-              height: 1.1,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+      '${CustomerProductCardCopy.retail}: ${lyd(price)}';
 }
 
 class ProductMetaLine extends StatelessWidget {
@@ -99,6 +36,9 @@ class ProductMetaLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = scheme.onSurface;
+    final primary = scheme.primary;
     final brand = CustomerProductCardCopy.brand(product);
     final pack = CustomerProductCardCopy.packSize(product);
     if (brand.isEmpty && pack.isEmpty) return const SizedBox.shrink();
@@ -113,7 +53,7 @@ class ProductMetaLine extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: AppTheme.darkGreen.withValues(alpha: .62),
+                color: text.withValues(alpha: .62),
                 fontWeight: FontWeight.w700,
                 fontSize: 11,
                 height: 1.15,
@@ -125,7 +65,7 @@ class ProductMetaLine extends StatelessWidget {
           Text(
             '·',
             style: TextStyle(
-              color: AppTheme.darkGreen.withValues(alpha: .35),
+              color: text.withValues(alpha: .35),
               fontWeight: FontWeight.w900,
             ),
           ),
@@ -137,15 +77,15 @@ class ProductMetaLine extends StatelessWidget {
               key: packKey,
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: AppTheme.green.withValues(alpha: .10),
+                color: primary.withValues(alpha: .10),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
                 pack,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppTheme.green,
+                style: TextStyle(
+                  color: primary,
                   fontWeight: FontWeight.w800,
                   fontSize: 10.5,
                   height: 1.15,
@@ -176,6 +116,8 @@ class WholesalePriceBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = scheme.onSurface;
     final suggested = product.retailUnitPrice;
     final basePrice = product.effectivePrice ?? product.basePrice;
     final hasDiscount = product.hasProductDiscount;
@@ -188,7 +130,7 @@ class WholesalePriceBlock extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: AppTheme.darkGreen,
+              color: text,
               fontSize: compact ? 10 : 11,
               fontWeight: FontWeight.w800,
               height: 1.1,
@@ -202,7 +144,7 @@ class WholesalePriceBlock extends StatelessWidget {
           textAlign: TextAlign.start,
           textDirection: TextDirection.rtl,
           style: TextStyle(
-            color: hasDiscount ? const Color(0xff00897b) : AppTheme.darkGreen,
+            color: hasDiscount ? scheme.secondary : text,
             fontWeight: FontWeight.w900,
             fontSize: compact ? 15.5 : 16,
             height: 1.15,
@@ -233,7 +175,7 @@ class WholesalePriceBlock extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: AppTheme.darkGreen.withValues(alpha: .55),
+              color: text.withValues(alpha: .55),
               fontSize: compact ? 10.5 : 11,
               fontWeight: FontWeight.w600,
               height: 1.15,
@@ -257,13 +199,14 @@ class DiscountBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 6 : 8,
         vertical: compact ? 3 : 4,
       ),
       decoration: BoxDecoration(
-        color: const Color(0xff00897b),
+      color: scheme.secondary,
         borderRadius: BorderRadius.circular(99),
       ),
       child: Text(
@@ -297,6 +240,8 @@ class AddToCartPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final primary = scheme.primary;
     final radius = BorderRadius.circular(14);
     final child = Material(
       color: Colors.transparent,
@@ -304,8 +249,11 @@ class AddToCartPill extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: radius,
           gradient: enabled
-              ? const LinearGradient(
-                  colors: [Color(0xff1fa275), Color(0xff12805a)],
+              ? LinearGradient(
+                  colors: [
+                    primary,
+                    Color.lerp(primary, scheme.onPrimary, .18) ?? primary,
+                  ],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                 )
@@ -314,7 +262,7 @@ class AddToCartPill extends StatelessWidget {
           boxShadow: enabled
               ? [
                   BoxShadow(
-                    color: AppTheme.green.withValues(alpha: .30),
+                    color: primary.withValues(alpha: .30),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),

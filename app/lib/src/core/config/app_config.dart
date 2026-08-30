@@ -148,19 +148,29 @@ class AppConfig {
   static bool get hasInitializedRemoteBackend =>
       (isProduction || isStaging) && _supabaseInitialized;
 
-  /// Demo remains available for an explicit demo build, a labelled local
-  /// overlay on a production/staging build, and as a fallback for an
-  /// unconfigured non-production build.
-  static bool get isDemoMode =>
-      AppRuntimeMode.preferLocalDemo ||
-      environment == AppEnvironment.demo ||
-      (environment == AppEnvironment.staging && !_supabaseInitialized);
+  /// Demo remains available ONLY for an explicit demo build when Supabase is NOT initialized.
+  /// If Supabase is active or initialized, or if running in production or release build,
+  /// demo mode is strictly disabled.
+  static bool get isDemoMode {
+    if (isProduction || _supabaseInitialized) {
+      return false;
+    }
+    return AppRuntimeMode.preferLocalDemo ||
+        environment == AppEnvironment.demo ||
+        (environment == AppEnvironment.staging && !_supabaseInitialized);
+  }
 
-  /// Staging review builds may still use labelled local demo logins
-  /// (`admin` / `admin`) even when public Supabase is initialized.
-  /// Production never accepts those pairs unless the labelled overlay is on.
-  static bool get allowsDemoCredentials =>
-      isDemoMode || environment == AppEnvironment.staging;
+  /// Demo credentials and quick login pills are strictly prohibited when Supabase is configured
+  /// or initialized, and in production/release builds.
+  static bool get allowsDemoCredentials {
+    if (isProduction ||
+        kReleaseMode ||
+        _supabaseInitialized ||
+        hasValidSupabaseCredentials) {
+      return false;
+    }
+    return isDemoMode;
+  }
   static bool get remoteBackendEnabled =>
       hasInitializedRemoteBackend && !AppRuntimeMode.preferLocalDemo;
   static bool get hasValidCustomerLoginDomain =>
@@ -235,5 +245,10 @@ class AppConfig {
               'راجع إعدادات النشر ثم أعد المحاولة.'
           : 'تعذر تهيئة الاتصال بالخادم. تعمل هذه النسخة في الوضع التجريبي.';
     }
+  }
+
+  @visibleForTesting
+  static void debugSetSupabaseInitialized(bool initialized) {
+    _supabaseInitialized = initialized;
   }
 }

@@ -12,7 +12,7 @@ abstract final class AddedToCartPromptCopy {
   static const title = 'كم تبي تطلب؟';
   static const body = 'حدد الكمية، بعدين تكمّل تسوّق أو تتم الطلب من السلة.';
   static const quantityLabel = 'الكمية';
-  static const continueShopping = 'متابعة التسوق';
+  static const continueShopping = 'إضافة إلى السلة ومتابعة التسوق';
   static const checkout = 'إتمام الطلب';
   static const orderActionTooltip = 'للطلب';
 
@@ -181,16 +181,18 @@ class _AddedToCartPromptSheetState
                 style: const TextStyle(color: Colors.grey, fontSize: 12),
               ),
               const SizedBox(height: 20),
-              FilledButton(
+              FilledButton.icon(
                 key: const Key('added-to-cart-checkout'),
                 onPressed: () => _commitAndRun(widget.onCheckout),
-                child: const Text(AddedToCartPromptCopy.checkout),
+                icon: const Icon(Icons.shopping_cart_checkout_rounded),
+                label: const Text(AddedToCartPromptCopy.checkout),
               ),
-              const SizedBox(height: 8),
-              OutlinedButton(
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
                 key: const Key('added-to-cart-continue'),
                 onPressed: () => _commitAndRun(widget.onContinueShopping),
-                child: const Text(AddedToCartPromptCopy.continueShopping),
+                icon: const Icon(Icons.add_shopping_cart_rounded),
+                label: const Text(AddedToCartPromptCopy.continueShopping),
               ),
             ],
           ),
