@@ -4,6 +4,7 @@
   if (!global || global.animalSupplyPwaInstall) return;
 
   const SHOP_NAME_KEY = 'shop_branding.v1.name';
+  const SHOP_LOGO_KEY = 'shop_branding.v1.logo';
   const DISMISS_UNTIL_KEY = 'animal-supply-pwa-install-dismiss-until';
   const DISMISS_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
   const DISPLAY_MODE_QUERY = '(display-mode: standalone)';
@@ -48,6 +49,13 @@
     const navigator = global.navigator ?? {};
     const userAgent = String(navigator.userAgent ?? '');
     const platform = String(navigator.platform ?? '');
+    const isAndroid = /Android/i.test(userAgent);
+    const isAndroidChrome =
+      isAndroid &&
+      /Chrome\/[\d.]+/i.test(userAgent) &&
+      !/(EdgA|OPR|SamsungBrowser|DuckDuckGo|YaBrowser|Vivaldi)/i.test(
+        userAgent,
+      );
     const isIpadDesktopMode =
       platform === 'MacIntel' && Number(navigator.maxTouchPoints ?? 0) > 1;
     const isIos = /iPad|iPhone|iPod/i.test(userAgent) || isIpadDesktopMode;
@@ -55,6 +63,8 @@
       /Safari/i.test(userAgent) &&
       !/(CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo)/i.test(userAgent);
     return {
+      isAndroid,
+      isAndroidChrome,
       isIos,
       isIosSafari: isIos && isSafari,
       isMacSafari: !isIos && /Macintosh|Mac OS X/i.test(userAgent) && isSafari,
@@ -71,6 +81,16 @@
     const title = String(global.document?.title ?? '').trim();
     if (title) return title;
     return 'المتجر';
+  }
+
+  function shopLogoUrl() {
+    try {
+      const stored = String(global.localStorage?.getItem(SHOP_LOGO_KEY) ?? '').trim();
+      if (stored) return stored;
+    } catch (_) {
+      // Storage can be disabled in private or restricted browser contexts.
+    }
+    return 'icons/Icon-192.png';
   }
 
   function storedDismissalActive() {
@@ -121,11 +141,14 @@
     const platform = platformInfo();
     const installed = isStandalone();
     const dismissed = storedDismissalActive();
+    const canPrompt = !platform.isAndroid && deferredPrompt !== null;
     return {
       appReady,
-      canPrompt: deferredPrompt !== null,
+      canPrompt,
       dismissed,
       installed,
+      isAndroid: platform.isAndroid,
+      isAndroidChrome: platform.isAndroidChrome,
       isIos: platform.isIos,
       isIosSafari: platform.isIosSafari,
       isMacSafari: platform.isMacSafari,
@@ -134,7 +157,7 @@
         !installed &&
         !dismissed &&
         routeAllowsOffer() &&
-        (deferredPrompt !== null || fallbackReady),
+        (canPrompt || fallbackReady),
     };
   }
 
@@ -345,35 +368,69 @@
     const panel = createElement('section', 'animal-supply-pwa-install-dialog');
     const heading = createElement('div', 'animal-supply-pwa-install-heading');
     const icon = createElement('img', 'animal-supply-pwa-install-icon');
-    icon.src = 'icons/Icon-192.png';
+    icon.src = shopLogoUrl();
     icon.alt = '';
     icon.setAttribute('aria-hidden', 'true');
     const shopName = shopDisplayName();
+    const titleText = state.isAndroid
+      ? `أضف ${shopName} إلى هاتفك`
+      : state.isIos
+        ? `أضف ${shopName} إلى جهازك`
+        : `ثبّت تطبيق ${shopName}`;
     const title = createElement(
       'h2',
       'animal-supply-pwa-install-title',
-      `ثبّت تطبيق ${shopName}`,
+      titleText,
     );
     title.id = 'pwa-install-title';
     heading.append(icon, title);
 
+    const descriptionText = state.isAndroid
+      ? 'احفظ المتجر على الشاشة الرئيسية كتطبيق ويب فقط. لن يتم تنزيل أو تثبيت أي ملف APK.'
+      : state.isIos
+        ? `احفظ ${shopName} على الشاشة الرئيسية لفتحه بسرعة كتطبيق ويب.`
+        : state.canPrompt
+          ? 'أضف المتجر إلى جهازك لفتحه بسرعة من الشاشة الرئيسية واستخدامه كتطبيق ويب مستقل.'
+          : `يمكنك تثبيت ${shopName} وفتحه من جهازك كتطبيق ويب مستقل.`;
     const description = createElement(
       'p',
       'animal-supply-pwa-install-copy',
-      state.canPrompt
-        ? 'أضف المتجر إلى جهازك لفتحه بسرعة من الشاشة الرئيسية واستخدامه كتطبيق ويب مستقل.'
-        : `يمكنك تثبيت ${shopName} وفتحه من جهازك كتطبيق ويب مستقل.`,
+      descriptionText,
     );
     description.id = 'pwa-install-description';
 
     panel.append(heading, description);
 
-    if (state.isIosSafari && !state.canPrompt) {
+    if (state.isAndroidChrome) {
+      panel.append(
+        createElement(
+          'p',
+          'animal-supply-pwa-install-steps',
+          'على Android في Chrome: اضغط قائمة ⋮، ثم اختر «إضافة إلى الشاشة الرئيسية»، وبعدها أكّد إضافة الاختصار.',
+        ),
+      );
+    } else if (state.isAndroid) {
+      panel.append(
+        createElement(
+          'p',
+          'animal-supply-pwa-install-steps',
+          'افتح هذا الموقع في Chrome، ثم اضغط قائمة ⋮ واختر «إضافة إلى الشاشة الرئيسية».',
+        ),
+      );
+    } else if (state.isIosSafari && !state.canPrompt) {
       panel.append(
         createElement(
           'p',
           'animal-supply-pwa-install-steps',
           'على iPhone أو iPad: اضغط زر المشاركة، ثم اختر «إضافة إلى الشاشة الرئيسية»، وبعدها اضغط «إضافة».',
+        ),
+      );
+    } else if (state.isIos && !state.canPrompt) {
+      panel.append(
+        createElement(
+          'p',
+          'animal-supply-pwa-install-steps',
+          'على iPhone أو iPad: افتح هذا الموقع في Safari أولاً، ثم اضغط زر المشاركة واختر «إضافة إلى الشاشة الرئيسية».',
         ),
       );
     } else if (state.isMacSafari && !state.canPrompt) {
@@ -472,7 +529,12 @@
   }
 
   async function promptInstall() {
-    if (promptInFlight || deferredPrompt === null || isStandalone()) {
+    if (
+      platformInfo().isAndroid ||
+      promptInFlight ||
+      deferredPrompt === null ||
+      isStandalone()
+    ) {
       return { outcome: 'unavailable' };
     }
 
@@ -522,6 +584,13 @@
   }
 
   global.addEventListener?.('beforeinstallprompt', (event) => {
+    if (platformInfo().isAndroid) {
+      event.preventDefault();
+      deferredPrompt = null;
+      notifyStateChanged();
+      scheduleOffer();
+      return;
+    }
     if (isStandalone()) return;
     event.preventDefault();
     deferredPrompt = event;

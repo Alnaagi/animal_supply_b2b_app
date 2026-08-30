@@ -40,6 +40,12 @@ void main() {
       expect(card, findsOneWidget);
       expect(menu, findsOneWidget);
       expect(Directionality.of(tester.element(card)), TextDirection.rtl);
+      final cardRect = tester.getRect(card);
+      final menuRect = tester.getRect(menu);
+      expect(menuRect.width, greaterThanOrEqualTo(44));
+      expect(menuRect.height, greaterThanOrEqualTo(44));
+      expect(menuRect.left, greaterThanOrEqualTo(cardRect.left + 4));
+      expect(menuRect.right, lessThanOrEqualTo(cardRect.right - 4));
       expect(tester.takeException(), isNull);
 
       await tester.tap(menu);

@@ -1,3 +1,5 @@
 String? readCachedShopDocumentTitleImpl() => null;
+String? readCachedShopLogoImpl() => null;
 
-void applyShopDocumentTitleImpl(String shopName) {}
+void applyShopWebBrandingImpl(String shopName, String? logoUrl) {}
+

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/product_image_placeholder.dart';
 import '../../data/models/admin_order_pricing.dart';
@@ -46,7 +45,8 @@ class _AdminOrderPricingSheet extends StatefulWidget {
   final bool demoData;
 
   @override
-  State<_AdminOrderPricingSheet> createState() => _AdminOrderPricingSheetState();
+  State<_AdminOrderPricingSheet> createState() =>
+      _AdminOrderPricingSheetState();
 }
 
 class _AdminOrderPricingSheetState extends State<_AdminOrderPricingSheet> {
@@ -134,7 +134,7 @@ class _AdminOrderPricingSheetState extends State<_AdminOrderPricingSheet> {
     return InputDecoration(
       labelText: label,
       suffixText: suffixText,
-      prefixIcon: Icon(icon, size: 20, color: AppTheme.green),
+      prefixIcon: Icon(icon, size: 20, color: scheme.primary),
       filled: true,
       fillColor: scheme.surface,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
@@ -142,7 +142,7 @@ class _AdminOrderPricingSheetState extends State<_AdminOrderPricingSheet> {
       enabledBorder: border,
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: AppTheme.green, width: 1.6),
+        borderSide: BorderSide(color: scheme.primary, width: 1.6),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
@@ -400,7 +400,7 @@ class _PricingSectionCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 18, color: AppTheme.green),
+              Icon(icon, size: 18, color: scheme.primary),
               const SizedBox(width: 6),
               Text(
                 title,
@@ -431,10 +431,10 @@ class _PricingSummaryCard extends StatelessWidget {
       key: const ValueKey('admin-order-pricing-summary-section'),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppTheme.green.withValues(alpha: .08),
+        color: scheme.primary.withValues(alpha: .08),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: AppTheme.green.withValues(alpha: .28),
+          color: scheme.primary.withValues(alpha: .28),
         ),
       ),
       child: Column(
@@ -503,7 +503,9 @@ class _SummaryRow extends StatelessWidget {
           Icon(
             icon,
             size: 16,
-            color: bold ? AppTheme.green : Theme.of(context).colorScheme.onSurfaceVariant,
+            color: bold
+                ? Theme.of(context).colorScheme.primary
+                : Theme.of(context).colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 6),
           Expanded(

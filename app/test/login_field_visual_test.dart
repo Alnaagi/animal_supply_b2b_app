@@ -39,11 +39,20 @@ void main() {
     final focusedBorder = decoration.focusedBorder! as OutlineInputBorder;
     final errorBorder = decoration.errorBorder! as OutlineInputBorder;
 
+    final expectedFill = Color.alphaBlend(
+      AppTheme.green.withValues(alpha: 0.04),
+      AppTheme.light.colorScheme.surface,
+    );
+    final expectedBorder = Color.alphaBlend(
+      AppTheme.green.withValues(alpha: 0.18),
+      AppTheme.light.colorScheme.outlineVariant,
+    );
+
     expect(decoration.filled, isTrue);
-    expect(decoration.fillColor, const Color(0xfff5f9f7));
+    expect(decoration.fillColor, expectedFill);
     expect(decoration.helperMaxLines, 2);
     expect(decoration.prefixIconColor, AppTheme.green);
-    expect(enabledBorder.borderSide.color, const Color(0xffbdd2ca));
+    expect(enabledBorder.borderSide.color, expectedBorder);
     expect(enabledBorder.borderSide.width, 1.25);
     expect(enabledBorder.borderRadius.topLeft.x, 16);
     expect(focusedBorder.borderSide.color, AppTheme.green);
@@ -64,7 +73,8 @@ void main() {
     expect(find.text('اسم المستخدم أو البريد'), findsNothing);
     expect(
       tester.getTopLeft(find.byKey(const Key('login-username-field'))).dy,
-      lessThan(tester.getTopLeft(find.byKey(const Key('login-password-field'))).dy),
+      lessThan(
+          tester.getTopLeft(find.byKey(const Key('login-password-field'))).dy),
     );
     expect(
       Directionality.of(

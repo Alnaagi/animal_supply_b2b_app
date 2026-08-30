@@ -78,6 +78,7 @@ class _PushPermissionCardState extends ConsumerState<PushPermissionCard> {
     return FutureBuilder<PushNotificationPermissionState>(
       future: _statusFuture,
       builder: (context, snapshot) {
+        final scheme = Theme.of(context).colorScheme;
         final loading = snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData;
         final state =
@@ -85,6 +86,7 @@ class _PushPermissionCardState extends ConsumerState<PushPermissionCard> {
         final presentation = _presentationFor(
           state,
           loading: loading,
+          primary: scheme.primary,
           browserPermission:
               ref.read(browserLocalNotificationsProvider).permission(),
         );
@@ -98,52 +100,91 @@ class _PushPermissionCardState extends ConsumerState<PushPermissionCard> {
                     state != PushNotificationPermissionState.authorized &&
                     state != PushNotificationPermissionState.provisional) ||
                 browserCanRequest);
-        return Card(
+        return Material(
           key: const Key('push-permission-card'),
-          color: presentation.color.withValues(alpha: .08),
+          color: Colors.white,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+            side: BorderSide(
+              color: presentation.color.withValues(alpha: .18),
+            ),
+          ),
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(presentation.icon, color: presentation.color),
-                    const SizedBox(width: 8),
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: presentation.color.withValues(alpha: .1),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        presentation.icon,
+                        color: presentation.color,
+                        size: 22,
+                      ),
+                    ),
+                    const SizedBox(width: 11),
                     Expanded(
-                      child: Text(
-                        presentation.title,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 17,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            presentation.title,
+                            style: TextStyle(
+                              color: scheme.onSurface,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 15,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            presentation.message,
+                            style: TextStyle(
+                              color: scheme.onSurface.withValues(alpha: .68),
+                              fontSize: 12.25,
+                              height: 1.45,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Text(presentation.message),
                 if (canRequest || snapshot.hasError) ...[
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    key: const Key('enable-push-notifications-button'),
-                    onPressed: _requesting
-                        ? null
-                        : snapshot.hasError
-                            ? () => setState(_refresh)
-                            : _requestPermission,
-                    icon: _requesting
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Icon(
-                            snapshot.hasError
-                                ? Icons.refresh
-                                : Icons.notifications_active_outlined,
-                          ),
-                    label: Text(
-                      snapshot.hasError ? 'إعادة المحاولة' : 'تفعيل الإشعارات',
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: FilledButton.tonalIcon(
+                      key: const Key('enable-push-notifications-button'),
+                      onPressed: _requesting
+                          ? null
+                          : snapshot.hasError
+                              ? () => setState(_refresh)
+                              : _requestPermission,
+                      icon: _requesting
+                          ? const SizedBox.square(
+                              dimension: 17,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              snapshot.hasError
+                                  ? Icons.refresh
+                                  : Icons.notifications_active_outlined,
+                              size: 18,
+                            ),
+                      label: Text(
+                        snapshot.hasError
+                            ? 'إعادة المحاولة'
+                            : 'تفعيل الإشعارات',
+                      ),
                     ),
                   ),
                 ],
@@ -158,32 +199,33 @@ class _PushPermissionCardState extends ConsumerState<PushPermissionCard> {
   _PushPermissionPresentation _presentationFor(
     PushNotificationPermissionState state, {
     required bool loading,
+    required Color primary,
     required BrowserNotificationPermission browserPermission,
   }) {
     if (loading) {
-      return const _PushPermissionPresentation(
+      return _PushPermissionPresentation(
         title: 'جاري فحص حالة الإشعارات',
         message: 'لحظة واحدة…',
         icon: Icons.notifications_outlined,
-        color: AppTheme.green,
+        color: primary,
       );
     }
     return switch (state) {
       PushNotificationPermissionState.authorized =>
-        const _PushPermissionPresentation(
+        _PushPermissionPresentation(
           title: 'الإشعارات الفورية مفعلة',
           message:
               'سيصل هذا الجهاز تحديث حالة الطلب والإعلانات الموجهة المهمة.',
           icon: Icons.notifications_active,
-          color: AppTheme.green,
+          color: primary,
         ),
       PushNotificationPermissionState.provisional =>
-        const _PushPermissionPresentation(
+        _PushPermissionPresentation(
           title: 'الإشعارات مفعلة بهدوء',
           message:
               'قد تظهر بدون صوت حسب إعدادات الجهاز. يمكنك تعديلها من إعدادات النظام.',
           icon: Icons.notifications_paused_outlined,
-          color: AppTheme.green,
+          color: primary,
         ),
       PushNotificationPermissionState.notDetermined =>
         const _PushPermissionPresentation(
@@ -219,7 +261,7 @@ class _PushPermissionCardState extends ConsumerState<PushPermissionCard> {
               ? Icons.notifications_active
               : Icons.notifications_none,
           color: browserPermission == BrowserNotificationPermission.granted
-              ? AppTheme.green
+              ? primary
               : AppTheme.orange,
         ),
     };

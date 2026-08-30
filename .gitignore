@@ -30,3 +30,5 @@ supabase/.temp/
 .DS_Store
 *.log
 *.swp
+output/
+tmp/

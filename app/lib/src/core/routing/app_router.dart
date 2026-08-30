@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../config/app_config.dart';
 import '../../data/local/local_auth_session_store.dart';
 import '../../data/models/app_user.dart';
 import '../../features/admin_archive/admin_archive_screen.dart';
@@ -26,8 +27,12 @@ import '../../features/customer_home/customer_home_screen.dart';
 import '../../features/customer_home/customer_shell.dart';
 import '../../features/download/app_download_screen.dart';
 import '../../features/orders/orders_screen.dart';
+import '../../features/offers/offers_screen.dart';
 import '../../features/profile/profile_screen.dart';
+import '../../features/admin_storefront/admin_storefront_preview_screen.dart';
+import '../../features/admin_storefront/admin_storefront_screen.dart';
 import '../../features/settings/settings_screen.dart';
+import '../../features/support/support_screen.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   final refresh = ValueNotifier<int>(0);
@@ -57,6 +62,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final requestedLocation = _safeNextLocation(state.uri.toString());
       final resumeLocation =
           nextLocation ?? _safeNextLocation(auth.restoredRoute);
+      if (location == '/order-success/') return '/orders';
 
       if (auth.bootstrapping) {
         // Keep an incoming invite URI intact while the saved session is
@@ -69,7 +75,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       }
 
       final user = auth.user;
-      if (user == null) {
+      if (user == null || (user.isDemo && !AppConfig.allowsDemoCredentials)) {
         if (isPublicLocation) return null;
         final safeDestination = nextLocation ?? requestedLocation;
         return safeDestination == null
@@ -114,9 +120,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       _rememberAuthenticatedRoute(state.uri);
       return null;
     },
-    errorBuilder: (context, state) => _RouteNotFoundScreen(
-      requestedLocation: state.uri.path,
-    ),
+    errorBuilder: (context, state) {
+      final fallback =
+          _fallbackLocationForRole(ref.read(authControllerProvider));
+      return _RouteNotFoundScreen(
+        requestedLocation: state.uri.path,
+        fallbackLocation: fallback,
+      );
+    },
     routes: [
       GoRoute(
         path: '/',
@@ -136,51 +147,82 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/auth-loading',
-        builder: (context, state) => const AuthBootstrapScreen(),
+        builder: (context, state) => AuthBootstrapScreen(
+          destination: state.uri.queryParameters['next'],
+        ),
       ),
       GoRoute(
         path: '/change-password',
         builder: (context, state) => const ChangePasswordScreen(),
       ),
       GoRoute(
-        path: '/product/:id',
-        builder: (context, state) => ProductDetailsScreen(
-          productId: state.pathParameters['id']!,
-        ),
-      ),
-      GoRoute(
-        path: '/checkout',
-        builder: (context, state) => const CheckoutScreen(),
+        path: '/order-success',
+        redirect: (context, state) => '/orders',
       ),
       StatefulShellRoute.indexedStack(
-        builder: (context, state, shell) => CustomerShell(shell: shell),
+        builder: (context, state, shell) => CustomerShell(
+          shell: shell,
+          currentLocation: state.uri.path,
+        ),
         branches: [
-          StatefulShellBranch(routes: [
-            GoRoute(
-                path: '/home',
-                builder: (context, state) => const CustomerHomeScreen()),
-          ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-                path: '/catalog',
-                builder: (context, state) => CatalogScreen(
-                    initialCategory: state.uri.queryParameters['category'])),
-          ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-                path: '/cart', builder: (context, state) => const CartScreen()),
-          ]),
+          StatefulShellBranch(
+            initialLocation: '/home',
+            routes: [
+              GoRoute(
+                  path: '/home',
+                  builder: (context, state) => const CustomerHomeScreen()),
+              GoRoute(
+                  path: '/offers',
+                  builder: (context, state) => const OffersScreen()),
+            ],
+          ),
+          StatefulShellBranch(
+            initialLocation: '/catalog',
+            routes: [
+              GoRoute(
+                  path: '/catalog',
+                  builder: (context, state) => CatalogScreen(
+                      initialCategory: state.uri.queryParameters['category'])),
+              GoRoute(
+                path: '/product/:id',
+                builder: (context, state) => ProductDetailsScreen(
+                  productId: state.pathParameters['id']!,
+                ),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            initialLocation: '/cart',
+            routes: [
+              GoRoute(
+                  path: '/cart',
+                  builder: (context, state) => const CartScreen()),
+              GoRoute(
+                path: '/checkout',
+                builder: (context, state) => const CheckoutScreen(),
+              ),
+            ],
+          ),
           StatefulShellBranch(routes: [
             GoRoute(
                 path: '/orders',
                 builder: (context, state) => OrdersScreen(
-                    highlightedOrderId: state.uri.queryParameters['order'])),
+                      highlightedOrderId: _validatedOrderIdParam(state.uri),
+                      showSuccessState: _validatedSuccessParam(state.uri),
+                    )),
           ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-                path: '/profile',
-                builder: (context, state) => const ProfileScreen()),
-          ]),
+          StatefulShellBranch(
+            initialLocation: '/profile',
+            routes: [
+              GoRoute(
+                  path: '/profile',
+                  builder: (context, state) => const ProfileScreen()),
+              GoRoute(
+                path: '/support',
+                builder: (context, state) => const SupportScreen(),
+              ),
+            ],
+          ),
         ],
       ),
       GoRoute(
@@ -219,6 +261,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
           path: '/admin/settings',
           builder: (context, state) => const SettingsScreen()),
+      GoRoute(
+          path: '/admin/storefront',
+          builder: (context, state) => const AdminStorefrontScreen()),
+      GoRoute(
+          path: '/admin/storefront/preview',
+          builder: (context, state) => const AdminStorefrontPreviewScreen()),
     ],
   );
 });
@@ -248,6 +296,8 @@ bool _isCustomerLocation(String location) {
       _isProductLocation(location) ||
       location == '/cart' ||
       location == '/checkout' ||
+      location == '/offers' ||
+      location == '/support' ||
       location == '/orders' ||
       location == '/profile';
 }
@@ -260,7 +310,8 @@ bool _isProductLocation(String location) {
       segments.last.isNotEmpty;
 }
 
-bool _isAdminLocation(String location) => const {
+bool _isAdminLocation(String location) =>
+    const {
       '/admin',
       '/admin/customers',
       '/admin/products',
@@ -270,13 +321,17 @@ bool _isAdminLocation(String location) => const {
       '/admin/notifications',
       '/admin/reports',
       '/admin/settings',
-    }.contains(location);
+      '/admin/storefront',
+    }.contains(location) ||
+    location == '/admin/storefront/preview';
 
 bool _isAdminOnlyLocation(String location) =>
     location == '/admin/banners' ||
     location == '/admin/notifications' ||
     location == '/admin/reports' ||
-    location == '/admin/settings';
+    location == '/admin/settings' ||
+    location == '/admin/storefront' ||
+    location == '/admin/storefront/preview';
 
 String _locationWithNext(String path, String next) => Uri(
       path: path,
@@ -320,7 +375,13 @@ String? _safeNextLocation(String? raw) {
 
   if (uri.path == '/catalog') copyNonEmpty('category');
   if (uri.path == '/orders' || uri.path == '/admin/orders') {
-    copyNonEmpty('order');
+    final order = uri.queryParameters['order']?.trim();
+    if (_isValidOrderIdentifier(order)) {
+      query['order'] = order!;
+    }
+  }
+  if (uri.path == '/orders' && uri.queryParameters['success'] == '1') {
+    query['success'] = '1';
   }
   if (uri.path == '/admin/orders' && uri.queryParameters['period'] == 'today') {
     query['period'] = 'today';
@@ -347,9 +408,13 @@ String _authorizedDestination(AppUser user, String requested) {
 }
 
 class _RouteNotFoundScreen extends StatelessWidget {
-  const _RouteNotFoundScreen({required this.requestedLocation});
+  const _RouteNotFoundScreen({
+    required this.requestedLocation,
+    required this.fallbackLocation,
+  });
 
   final String requestedLocation;
+  final String fallbackLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -382,7 +447,7 @@ class _RouteNotFoundScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 FilledButton.icon(
-                  onPressed: () => context.go('/'),
+                  onPressed: () => context.go(fallbackLocation),
                   icon: const Icon(Icons.home_outlined),
                   label: const Text('العودة للصفحة الرئيسية'),
                 ),
@@ -393,4 +458,28 @@ class _RouteNotFoundScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+String _fallbackLocationForRole(AuthState auth) {
+  final user = auth.user;
+  if (user == null || (user.isDemo && !AppConfig.allowsDemoCredentials)) {
+    return '/login';
+  }
+  return user.isCustomer ? '/home' : '/admin';
+}
+
+String? _validatedOrderIdParam(Uri uri) {
+  final value = uri.queryParameters['order']?.trim();
+  if (!_isValidOrderIdentifier(value)) return null;
+  return value;
+}
+
+bool _validatedSuccessParam(Uri uri) {
+  return uri.queryParameters['success'] == '1' &&
+      _validatedOrderIdParam(uri) != null;
+}
+
+bool _isValidOrderIdentifier(String? value) {
+  if (value == null || value.isEmpty || value.length > 128) return false;
+  return RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value);
 }

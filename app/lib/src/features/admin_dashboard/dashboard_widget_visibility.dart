@@ -42,8 +42,7 @@ class DashboardWidgetVisibility {
 
   String encode() {
     return jsonEncode({
-      for (final id in DashboardWidgetId.values)
-        id.storageKey: isVisible(id),
+      for (final id in DashboardWidgetId.values) id.storageKey: isVisible(id),
     });
   }
 

@@ -531,8 +531,7 @@ class _RetryGateway implements OrdersRemoteGateway {
   }
 
   @override
-  Future<OrdersFunctionResponse> updateOrderPricing(
-      Map<String, dynamic> body) {
+  Future<OrdersFunctionResponse> updateOrderPricing(Map<String, dynamic> body) {
     throw UnimplementedError();
   }
 }

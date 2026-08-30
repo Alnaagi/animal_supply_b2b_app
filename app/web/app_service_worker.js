@@ -7,6 +7,36 @@ const NETWORK_TIMEOUT_MS = 12000;
 const CACHE_BATCH_SIZE = 6;
 
 let shellPreparation;
+let cartReminderTimers = [];
+
+function clearCartReminderTimers() {
+  for (const timerId of cartReminderTimers) {
+    clearTimeout(timerId);
+  }
+  cartReminderTimers = [];
+}
+
+function scheduleCartReminder(data) {
+  const delayMs = Number(data?.delayMs);
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return;
+
+  const timerId = setTimeout(async () => {
+    try {
+      await showOsTrayNotification({
+        title: data?.title || 'لديك منتجات في سلة المشتريات 🛒',
+        body:
+          data?.body ||
+          'تذكير: لم تكتمل عملية طلبك لدى شركة الباشق. اضغط هنا لمراجعة السلة وإتمام الطلب.',
+        tag: data?.tag || 'cart-abandoned-reminder',
+        target: safeNotificationTarget(data?.target || '/cart?from_push=1'),
+      });
+    } catch (err) {
+      console.warn('Failed to show scheduled cart reminder.', err);
+    }
+  }, delayMs);
+
+  cartReminderTimers.push(timerId);
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
@@ -20,6 +50,14 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SHOW_OS_NOTIFICATION') {
     event.waitUntil(showOsTrayNotification(event.data));
+    return;
+  }
+  if (event.data?.type === 'SCHEDULE_CART_REMINDER') {
+    scheduleCartReminder(event.data);
+    return;
+  }
+  if (event.data?.type === 'CANCEL_CART_REMINDERS') {
+    clearCartReminderTimers();
     return;
   }
   if (event.data?.type !== 'CACHE_APP_SHELL') return;
@@ -360,6 +398,9 @@ function pushNotificationTarget(rawData) {
     rawData.recipient_role ?? rawData.role,
   );
   const type = normalizedPushValue(rawData.type, 64);
+  if (type === 'cart_reminder') {
+    return '/cart?from_push=1';
+  }
   const adminLike =
     role === 'admin' ||
     role === 'staff' ||

@@ -8,7 +8,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/connectivity/connectivity_provider.dart';
 import '../../core/refresh/screen_reload.dart';
 import '../../core/utils/formatters.dart';
-import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../data/local/local_cache.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/order.dart';
@@ -154,7 +154,10 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
         future: _dashboardFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const ShopLoading.page();
+            return const ShopSkeleton(
+              semanticLabel: 'جارٍ تحميل لوحة التحكم...',
+              child: ShopDashboardSkeleton(),
+            );
           }
           if (snapshot.hasError) {
             return _AdminDashboardLoadError(
@@ -206,7 +209,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           label: 'العملاء',
                           value: '${stats.totalCustomers}',
                           icon: Icons.groups,
-                          color: AppTheme.green,
+                          color: Theme.of(context).colorScheme.primary,
                           onTap: () => context.go('/admin/customers')),
                     if (visibility.isVisible(DashboardWidgetId.activeCustomers))
                       _StatCard(
@@ -214,7 +217,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           label: 'نشطين',
                           value: '${stats.activeCustomers}',
                           icon: Icons.verified_user,
-                          color: AppTheme.darkGreen,
+                          color: Theme.of(context).colorScheme.onSurface,
                           onTap: () => context.go('/admin/customers')),
                     if (visibility
                         .isVisible(DashboardWidgetId.pendingOrdersStat))
@@ -236,9 +239,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                           value: '${stats.todayOrders}',
                           icon: Icons.today_outlined,
                           color: AppTheme.brown,
-                          onTap: () => unawaited(
-                              _openAdminOrders(
-                                  location: '/admin/orders?period=today'))),
+                          onTap: () => unawaited(_openAdminOrders(
+                              location: '/admin/orders?period=today'))),
                     if (visibility.isVisible(DashboardWidgetId.lowStockStat))
                       _StatCard(
                           width: cardWidth,
@@ -386,7 +388,8 @@ class _DashboardLayoutSheet extends ConsumerWidget {
                 const SizedBox(height: 6),
                 const Text(
                   'أخفِ البطاقات غير المطلوبة. يُحفظ الاختيار على هذا الجهاز.',
-                  style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                      color: Colors.grey, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 14),
                 const Text(
@@ -600,7 +603,11 @@ class _PendingKpiOutlineState extends State<_PendingKpiOutline>
       animation: _strength,
       builder: (context, child) {
         final t = _strength.value;
-        final color = Color.lerp(AppTheme.green, AppTheme.orange, t)!;
+        final color = Color.lerp(
+          Theme.of(context).colorScheme.primary,
+          AppTheme.orange,
+          t,
+        )!;
         return Semantics(
           container: true,
           liveRegion: true,
@@ -661,9 +668,11 @@ class _FullnessCard extends StatelessWidget {
                       child: CircularProgressIndicator(
                         value: progress,
                         strokeWidth: 8,
-                        color: AppTheme.green,
-                        backgroundColor:
-                            AppTheme.green.withValues(alpha: 0.14),
+                        color: Theme.of(context).colorScheme.primary,
+                        backgroundColor: Theme.of(context)
+                            .colorScheme
+                            .primaryContainer
+                            .withValues(alpha: 0.6),
                       ),
                     ),
                     Text(
@@ -682,13 +691,16 @@ class _FullnessCard extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: AppTheme.green.withValues(alpha: 0.12),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
                     estimate.isDemoEstimate ? 'تجريبي' : 'تقدير محلي',
-                    style: const TextStyle(
-                      color: AppTheme.darkGreen,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
                       fontWeight: FontWeight.w800,
                       fontSize: 12,
                     ),
@@ -724,7 +736,7 @@ class _Panel extends StatelessWidget {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              Icon(icon, color: AppTheme.green),
+              Icon(icon, color: Theme.of(context).colorScheme.primary),
               const SizedBox(width: 8),
               Text(title,
                   style: const TextStyle(

@@ -17,13 +17,17 @@ import '../../core/notifications/local_alert_coordinator.dart';
 import '../../core/notifications/new_order_alert_sound.dart';
 import '../../core/notifications/new_order_alert_sound_prefs.dart';
 import '../../core/support/customer_contact.dart';
+import '../../core/support/invite_delivery.dart';
+import '../../core/support/order_whatsapp_copy.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../core/widgets/status_chip.dart';
-import '../../data/export/admin_order_invoice.dart';
+import '../../data/export/order_invoice_pdf.dart';
+import '../../data/local/admin_order_whatsapp_template_store.dart';
 import '../../data/local/admin_order_workflow_store.dart';
 import '../../data/local/admin_orders_filter_store.dart';
 import '../../data/models/admin_order_pricing.dart';
@@ -33,6 +37,7 @@ import '../../data/repositories/orders_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
 import 'admin_order_pricing_sheet.dart';
 import 'admin_order_sound_settings.dart';
+import 'admin_order_whatsapp_message_dialog.dart';
 
 class AdminOrdersScreen extends ConsumerStatefulWidget {
   const AdminOrdersScreen({
@@ -151,8 +156,19 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     final compactLayout = MediaQuery.sizeOf(context).width < 600;
     return AdminShell(
       title: 'إدارة الطلبات',
+      actions: [
+        IconButton(
+          key: const ValueKey('admin-orders-whatsapp-template-gear'),
+          tooltip: 'قالب رسائل واتساب للطلبات',
+          onPressed: () => unawaited(_showWhatsappTemplateSettings()),
+          icon: const Icon(Icons.settings_outlined),
+        ),
+      ],
       child: initialLoading
-          ? const ShopLoading.page()
+          ? const ShopSkeleton(
+              semanticLabel: 'جارٍ تحميل الطلبات...',
+              child: ShopOrderListSkeleton(),
+            )
           : loadError != null && orders.isEmpty
               ? _AdminOrdersError(onRetry: _manualRefresh)
               : ShopRefreshIndicator(
@@ -180,7 +196,8 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                         alertToneLabel: alertToneLabel,
                         onRefresh: () => unawaited(_manualRefresh()),
                         onToggleSound: () => unawaited(_toggleSound()),
-                        onPickAlertSound: () => unawaited(_showAlertSoundPicker()),
+                        onPickAlertSound: () =>
+                            unawaited(_showAlertSoundPicker()),
                       ),
                       const SizedBox(height: 12),
                       _AdminOrdersFilterPanel(
@@ -214,9 +231,12 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                             onSelectStatus: (status, note) => unawaited(
                               _applyStatus(order, status, note: note),
                             ),
-                            onCopy: () => _copySummary(order),
+                            onCopy: () => unawaited(_copySummary(order)),
                             onPrint: () => _printInvoice(order),
-                            onSendWhatsapp: () => unawaited(_sendWhatsapp(order)),
+                            onSendWhatsapp: () =>
+                                unawaited(_sendWhatsapp(order)),
+                            onEditWhatsapp: () =>
+                                unawaited(_editOrderWhatsappMessage(order)),
                             onCopyText: _copyText,
                             onContactWhatsapp: () =>
                                 unawaited(_openCustomerWhatsapp(order)),
@@ -319,9 +339,9 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     });
     if (alreadyApplied) return;
     await _reload(showFullLoading: true);
-    final highlightedId = widget.highlightedOrderId?.trim() ?? '';
-    if (highlightedId.isNotEmpty) {
-      _scrollOrderIntoView(highlightedId);
+    final highlightedOrderId = _resolveHighlightedOrderId(orders);
+    if (highlightedOrderId != null) {
+      _scrollOrderIntoView(highlightedOrderId);
     }
   }
 
@@ -352,8 +372,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            final canSave =
-                filterDraft.isNotEmpty && workflowDraft.isNotEmpty;
+            final canSave = filterDraft.isNotEmpty && workflowDraft.isNotEmpty;
             return AlertDialog(
               title: const Text('إعدادات الحالات'),
               content: SizedBox(
@@ -411,10 +430,9 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
                         style: TextStyle(fontSize: 13, height: 1.45),
                       ),
                       const SizedBox(height: 8),
-                      for (final status
-                          in AdminOrderWorkflowStore.ordered(
-                            AdminOrderWorkflowStore.allSteps,
-                          ))
+                      for (final status in AdminOrderWorkflowStore.ordered(
+                        AdminOrderWorkflowStore.allSteps,
+                      ))
                         CheckboxListTile(
                           key: ValueKey(
                             'admin-orders-workflow-pref-${status.value}',
@@ -486,8 +504,9 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
       },
     );
     if (saved == null || !mounted) return;
-    final persistedFilter =
-        await ref.read(adminOrdersFilterStoreProvider).save(saved.includedStatuses);
+    final persistedFilter = await ref
+        .read(adminOrdersFilterStoreProvider)
+        .save(saved.includedStatuses);
     final persistedWorkflow = await ref
         .read(adminOrderWorkflowStoreProvider)
         .save(saved.enabledWorkflowSteps);
@@ -566,9 +585,8 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
         pageSize: _pageSize,
       );
       var loaded = page.orders;
-      final highlightedId = widget.highlightedOrderId?.trim() ?? '';
-      if (highlightedId.isNotEmpty &&
-          !loaded.any((order) => order.id == highlightedId)) {
+      final highlightedId = _highlightedLookup();
+      if (highlightedId.isNotEmpty && !_matchesLookup(loaded, highlightedId)) {
         try {
           final highlighted = await repository.orderById(highlightedId);
           if (highlighted != null) {
@@ -619,6 +637,10 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
         hasLoadedOnce = true;
         lastUpdatedAt = DateTime.now();
       });
+      final highlightedOrderId = _resolveHighlightedOrderId(deduplicated);
+      if (highlightedOrderId != null) {
+        _scrollOrderIntoView(highlightedOrderId);
+      }
       if (newOrderIds.isNotEmpty) {
         ref.invalidate(unreadNotificationsCountProvider);
         await _announceNewOrders(newOrderIds);
@@ -646,6 +668,36 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
         );
       }
     }
+  }
+
+  String _highlightedLookup() => widget.highlightedOrderId?.trim() ?? '';
+
+  bool _matchesLookup(List<Order> loaded, String lookup) {
+    final normalizedLookup = normalizePublicOrderReference(lookup);
+    for (final order in loaded) {
+      if (order.id == lookup) return true;
+      if (normalizedLookup != null &&
+          normalizePublicOrderReference(order.orderNumber) ==
+              normalizedLookup) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String? _resolveHighlightedOrderId(List<Order> loaded) {
+    final lookup = _highlightedLookup();
+    if (lookup.isEmpty) return null;
+    final normalizedLookup = normalizePublicOrderReference(lookup);
+    for (final order in loaded) {
+      if (order.id == lookup) return order.id;
+      if (normalizedLookup != null &&
+          normalizePublicOrderReference(order.orderNumber) ==
+              normalizedLookup) {
+        return order.id;
+      }
+    }
+    return null;
   }
 
   Future<void> _loadMore() async {
@@ -925,12 +977,82 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
     }
   }
 
-  Future<void> _copySummary(Order order) async {
-    final summary = ref.read(ordersRepositoryProvider).whatsappSummary(
-          order,
-          order.businessName.isEmpty ? 'عميل B2B' : order.businessName,
+  Future<String> _resolvedWhatsappMessage(Order order) {
+    return ref.read(adminOrderWhatsappTemplateStoreProvider).resolve(
+          order: order,
+          fallbackBusinessName:
+              order.businessName.isEmpty ? 'عميل B2B' : order.businessName,
+          shopName: ref.read(shopBrandingProvider).shopName,
         );
+  }
+
+  Future<void> _copySummary(Order order) async {
+    final summary = await _resolvedWhatsappMessage(order);
     await _copyText(summary, 'تم نسخ ملخص الطلب');
+  }
+
+  Future<void> _showWhatsappTemplateSettings() async {
+    final store = ref.read(adminOrderWhatsappTemplateStoreProvider);
+    final current = await store.loadTemplate();
+    if (!mounted) return;
+    final next = await showDialog<String>(
+      context: context,
+      builder: (context) =>
+          OrderWhatsappTemplateDialog(initialTemplate: current),
+    );
+    if (next == null || !mounted) return;
+    final ok = await store.saveTemplate(next);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'تم حفظ قالب واتساب على هذا الجهاز.'
+              : 'تعذر حفظ القالب. حاولوا مرة أخرى.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editOrderWhatsappMessage(Order order) async {
+    final store = ref.read(adminOrderWhatsappTemplateStoreProvider);
+    final shopName = ref.read(shopBrandingProvider).shopName;
+    final fallback =
+        order.businessName.isEmpty ? 'عميل B2B' : order.businessName;
+    final template = await store.loadTemplate();
+    final override = await store.loadOverride(order.id);
+    final defaultMessage = renderOrderWhatsappTemplate(
+      template: template,
+      order: order,
+      fallbackBusinessName: fallback,
+      shopName: shopName,
+    );
+    if (!mounted) return;
+    final next = await showDialog<String>(
+      context: context,
+      builder: (context) => OrderWhatsappOverrideDialog(
+        orderLabel: order.displayNumber,
+        initialMessage: override ?? defaultMessage,
+        defaultMessage: defaultMessage,
+      ),
+    );
+    if (next == null || !mounted) return;
+    final trimmed = next.trim();
+    final ok = trimmed.isEmpty || trimmed == defaultMessage
+        ? await store.clearOverride(order.id)
+        : await store.saveOverride(order.id, trimmed);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          !ok
+              ? 'تعذر حفظ رسالة واتساب. حاولوا مرة أخرى.'
+              : trimmed.isEmpty || trimmed == defaultMessage
+                  ? 'عادت رسالة هذا الطلب إلى القالب الافتراضي.'
+                  : 'تم حفظ رسالة واتساب لهذا الطلب.',
+        ),
+      ),
+    );
   }
 
   Future<void> _copyText(String value, String message) async {
@@ -944,12 +1066,23 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
   }
 
   void _printInvoice(Order order) {
-    final html = AdminOrderInvoiceHtml.build(
+    unawaited(_printInvoiceAsync(order));
+  }
+
+  Future<void> _printInvoiceAsync(Order order) async {
+    final branding = ref.read(shopBrandingProvider);
+    final logoBytes = await fetchShopLogoBytes(branding.logoUrl);
+    final bytes = await OrderInvoicePdf.build(
       order: order,
-      shopName: ref.read(shopBrandingProvider).shopName,
+      shopName: branding.shopName,
+      logoBytes: logoBytes,
       demoData: AppConfig.isDemoMode,
     );
-    final opened = kIsWeb && printHtmlDocument(html);
+    final opened = kIsWeb &&
+        printPdfDocument(
+          bytes: bytes,
+          title: 'invoice-${order.id}',
+        );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -963,23 +1096,16 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
   }
 
   Future<void> _sendWhatsapp(Order order) async {
-    final summary = ref.read(ordersRepositoryProvider).whatsappSummary(
-          order,
-          order.businessName.isEmpty ? 'عميل B2B' : order.businessName,
-        );
-    final uri = CustomerContact.whatsappUri(
+    final summary = await _resolvedWhatsappMessage(order);
+    if (!mounted) return;
+    final phoneUri = CustomerContact.whatsappUri(
       phone: order.contactPhone,
       text: summary,
     );
-    if (uri == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا يوجد رقم واتساب لهذا العميل.'),
-        ),
-      );
-      return;
-    }
+    final uri = phoneUri ??
+        inviteWhatsappComposeUri(
+          text: summary,
+        );
     try {
       final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!opened && mounted) {
@@ -1292,7 +1418,6 @@ class _OrdersLiveStatus extends StatelessWidget {
 
 class _OrdersStatusPill extends StatelessWidget {
   const _OrdersStatusPill({
-    super.key,
     required this.icon,
     required this.label,
     this.highlighted = false,
@@ -1757,6 +1882,7 @@ class _AdminOrderCard extends StatelessWidget {
     required this.onCopy,
     required this.onPrint,
     required this.onSendWhatsapp,
+    required this.onEditWhatsapp,
     required this.onCopyText,
     required this.onContactWhatsapp,
     required this.onCall,
@@ -1774,6 +1900,7 @@ class _AdminOrderCard extends StatelessWidget {
   final VoidCallback onCopy;
   final VoidCallback onPrint;
   final VoidCallback onSendWhatsapp;
+  final VoidCallback onEditWhatsapp;
   final Future<void> Function(String value, String message) onCopyText;
   final VoidCallback onContactWhatsapp;
   final VoidCallback onCall;
@@ -1808,7 +1935,7 @@ class _AdminOrderCard extends StatelessWidget {
         onExpansionChanged: (expanded) {
           if (expanded) onExpanded();
         },
-        tilePadding: const EdgeInsetsDirectional.fromSTEB(14, 10, 10, 10),
+        tilePadding: const EdgeInsetsDirectional.fromSTEB(12, 8, 6, 8),
         childrenPadding: EdgeInsets.zero,
         iconColor: scheme.primary,
         collapsedIconColor: scheme.onSurfaceVariant,
@@ -1818,6 +1945,20 @@ class _AdminOrderCard extends StatelessWidget {
           key: ValueKey('admin-order-summary-${order.id}'),
           order: order,
           customerName: customerName,
+        ),
+        trailing: _AdminOrderOverflowMenu(
+          order: order,
+          updating: updating,
+          enabledWorkflowSteps: enabledWorkflowSteps,
+          onCopy: onCopy,
+          onPrint: onPrint,
+          onSendWhatsapp: onSendWhatsapp,
+          onEditWhatsapp: onEditWhatsapp,
+          onCopyText: onCopyText,
+          onContactWhatsapp: onContactWhatsapp,
+          onCall: onCall,
+          onEditPricing: onEditPricing,
+          onSelectStatus: onSelectStatus,
         ),
         children: [
           Divider(height: 1, color: scheme.outlineVariant),
@@ -1850,12 +1991,292 @@ class _AdminOrderCard extends StatelessWidget {
                   onCopy: onCopy,
                   onPrint: onPrint,
                   onSendWhatsapp: onSendWhatsapp,
+                  onEditWhatsapp: onEditWhatsapp,
                 ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _AdminOrderOverflowMenu extends StatelessWidget {
+  const _AdminOrderOverflowMenu({
+    required this.order,
+    required this.updating,
+    required this.enabledWorkflowSteps,
+    required this.onCopy,
+    required this.onPrint,
+    required this.onSendWhatsapp,
+    required this.onEditWhatsapp,
+    required this.onCopyText,
+    required this.onContactWhatsapp,
+    required this.onCall,
+    required this.onSelectStatus,
+    this.onEditPricing,
+  });
+
+  final Order order;
+  final bool updating;
+  final Set<OrderStatus> enabledWorkflowSteps;
+  final VoidCallback onCopy;
+  final VoidCallback onPrint;
+  final VoidCallback onSendWhatsapp;
+  final VoidCallback onEditWhatsapp;
+  final Future<void> Function(String value, String message) onCopyText;
+  final VoidCallback onContactWhatsapp;
+  final VoidCallback onCall;
+  final VoidCallback? onEditPricing;
+  final void Function(OrderStatus status, String note) onSelectStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      key: ValueKey('admin-order-menu-${order.id}'),
+      tooltip: 'إجراءات الطلب',
+      enabled: !updating,
+      padding: const EdgeInsets.all(10),
+      splashRadius: 18,
+      iconSize: 22,
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, 4),
+      icon: const Icon(Icons.more_vert),
+      style: IconButton.styleFrom(
+        minimumSize: const Size(44, 44),
+        maximumSize: const Size(44, 44),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: const CircleBorder(),
+      ),
+      onSelected: (value) => unawaited(_handleSelected(context, value)),
+      itemBuilder: (menuContext) {
+        final phone = order.contactPhone.trim();
+        final expanded = _isExpanded(menuContext);
+        final nextStatuses = AdminOrderWorkflowStore.visibleNextStatuses(
+          current: order.status,
+          enabledSteps: enabledWorkflowSteps,
+        );
+        return [
+          PopupMenuItem(
+            key: ValueKey('admin-order-menu-toggle-${order.id}'),
+            value: 'toggle-details',
+            child: _AdminOrderMenuRow(
+              icon: expanded ? Icons.unfold_less : Icons.unfold_more,
+              label: expanded ? 'طي التفاصيل' : 'عرض التفاصيل',
+            ),
+          ),
+          PopupMenuItem(
+            key: ValueKey('admin-order-menu-copy-number-${order.id}'),
+            value: 'copy-number',
+            child: const _AdminOrderMenuRow(
+              icon: Icons.tag,
+              label: 'نسخ رقم الطلب',
+            ),
+          ),
+          PopupMenuItem(
+            key: ValueKey('admin-order-menu-copy-summary-${order.id}'),
+            value: 'copy-summary',
+            child: const _AdminOrderMenuRow(
+              icon: Icons.copy,
+              label: 'نسخ ملخص الطلب',
+            ),
+          ),
+          if (phone.isNotEmpty)
+            PopupMenuItem(
+              key: ValueKey('admin-order-menu-copy-phone-${order.id}'),
+              value: 'copy-phone',
+              child: const _AdminOrderMenuRow(
+                icon: Icons.phone_outlined,
+                label: 'نسخ رقم الهاتف',
+              ),
+            ),
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            key: ValueKey('admin-order-menu-whatsapp-${order.id}'),
+            value: 'whatsapp-order',
+            child: const _AdminOrderMenuRow(
+              icon: FontAwesomeIcons.whatsapp,
+              label: 'إرسال عبر واتساب',
+            ),
+          ),
+          PopupMenuItem(
+            key: ValueKey('admin-order-menu-edit-whatsapp-${order.id}'),
+            value: 'edit-whatsapp',
+            child: const _AdminOrderMenuRow(
+              icon: Icons.edit_outlined,
+              label: 'تعديل رسالة واتساب',
+            ),
+          ),
+          if (phone.isNotEmpty) ...[
+            PopupMenuItem(
+              key: ValueKey('admin-order-menu-whatsapp-customer-${order.id}'),
+              value: 'whatsapp-customer',
+              child: const _AdminOrderMenuRow(
+                icon: Icons.chat_outlined,
+                label: 'واتساب العميل',
+              ),
+            ),
+            PopupMenuItem(
+              key: ValueKey('admin-order-menu-call-${order.id}'),
+              value: 'call',
+              child: const _AdminOrderMenuRow(
+                icon: Icons.call_outlined,
+                label: 'اتصال',
+              ),
+            ),
+          ],
+          PopupMenuItem(
+            key: ValueKey('admin-order-menu-print-${order.id}'),
+            value: 'print',
+            child: const _AdminOrderMenuRow(
+              icon: Icons.print_outlined,
+              label: 'طباعة الفاتورة',
+            ),
+          ),
+          if (onEditPricing != null)
+            PopupMenuItem(
+              key: ValueKey('admin-order-menu-pricing-${order.id}'),
+              value: 'edit-pricing',
+              child: const _AdminOrderMenuRow(
+                icon: Icons.price_change_outlined,
+                label: 'تعديل التسعير',
+              ),
+            ),
+          if (nextStatuses.isNotEmpty) ...[
+            const PopupMenuDivider(),
+            for (final status in nextStatuses)
+              PopupMenuItem(
+                key: ValueKey(
+                  'admin-order-menu-status-${order.id}-${status.value}',
+                ),
+                value: 'status:${status.value}',
+                child: _AdminOrderMenuRow(
+                  icon: status == OrderStatus.cancelled
+                      ? Icons.cancel_outlined
+                      : Icons.arrow_forward,
+                  label: 'إلى ${status.label}',
+                ),
+              ),
+          ],
+        ];
+      },
+    );
+  }
+
+  bool _isExpanded(BuildContext context) {
+    try {
+      return ExpansibleController.of(context).isExpanded;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _handleSelected(BuildContext context, String value) async {
+    final phone = order.contactPhone.trim();
+    switch (value) {
+      case 'toggle-details':
+        try {
+          final controller = ExpansibleController.of(context);
+          if (controller.isExpanded) {
+            controller.collapse();
+          } else {
+            controller.expand();
+          }
+        } catch (_) {}
+        return;
+      case 'copy-number':
+        await onCopyText(order.displayNumber, 'تم نسخ رقم الطلب');
+        return;
+      case 'copy-summary':
+        onCopy();
+        return;
+      case 'copy-phone':
+        if (phone.isNotEmpty) {
+          await onCopyText(phone, 'تم نسخ رقم الهاتف');
+        }
+        return;
+      case 'whatsapp-order':
+        onSendWhatsapp();
+        return;
+      case 'edit-whatsapp':
+        onEditWhatsapp();
+        return;
+      case 'whatsapp-customer':
+        onContactWhatsapp();
+        return;
+      case 'call':
+        onCall();
+        return;
+      case 'print':
+        onPrint();
+        return;
+      case 'edit-pricing':
+        onEditPricing?.call();
+        return;
+    }
+    if (!value.startsWith('status:')) return;
+    final raw = value.substring('status:'.length);
+    final matches = OrderStatus.values.where((item) => item.value == raw);
+    if (matches.isEmpty || !context.mounted) return;
+    final status = matches.first;
+    final confirmed = await _confirmStatusJump(context, status);
+    if (confirmed) onSelectStatus(status, '');
+  }
+
+  Future<bool> _confirmStatusJump(
+    BuildContext context,
+    OrderStatus status,
+  ) async {
+    if (status != OrderStatus.cancelled && status != OrderStatus.delivered) {
+      return true;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          status == OrderStatus.cancelled ? 'تأكيد الإلغاء' : 'تأكيد التسليم',
+        ),
+        content: Text(
+          status == OrderStatus.cancelled
+              ? 'إلغاء الطلب نهائي ولا يمكن التراجع عنه.'
+              : 'تسليم الطلب نهائي ولا يمكن التراجع عنه.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('تراجع'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('تأكيد'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+}
+
+class _AdminOrderMenuRow extends StatelessWidget {
+  const _AdminOrderMenuRow({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 18),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(label),
+        ),
+      ],
     );
   }
 }
@@ -2036,7 +2457,8 @@ class _AdminOrderCustomerDelivery extends StatelessWidget {
             key: ValueKey('admin-order-copy-number-${order.id}'),
             icon: Icons.copy,
             tooltip: 'نسخ رقم الطلب',
-            onPressed: () => onCopyText(order.displayNumber, 'تم نسخ رقم الطلب'),
+            onPressed: () =>
+                onCopyText(order.displayNumber, 'تم نسخ رقم الطلب'),
           ),
         ],
       ),
@@ -2130,8 +2552,7 @@ class _AdminOrderCustomerDelivery extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final enlargedText =
-              MediaQuery.textScalerOf(context).scale(1) >= 1.3;
+          final enlargedText = MediaQuery.textScalerOf(context).scale(1) >= 1.3;
           final customer = _AdminOrderDetailGroup(
             icon: Icons.storefront_outlined,
             title: 'بيانات العميل',
@@ -2733,6 +3154,7 @@ class _AdminOrderActions extends StatefulWidget {
     required this.onCopy,
     required this.onPrint,
     required this.onSendWhatsapp,
+    required this.onEditWhatsapp,
   });
 
   final Order order;
@@ -2742,6 +3164,7 @@ class _AdminOrderActions extends StatefulWidget {
   final VoidCallback onCopy;
   final VoidCallback onPrint;
   final VoidCallback onSendWhatsapp;
+  final VoidCallback onEditWhatsapp;
 
   @override
   State<_AdminOrderActions> createState() => _AdminOrderActionsState();
@@ -2813,14 +3236,11 @@ class _AdminOrderActionsState extends State<_AdminOrderActions> {
         label: const Text('طباعة الفاتورة'),
       ),
     );
-    final whatsappButton = ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 48),
-      child: FilledButton.tonalIcon(
-        key: ValueKey('admin-order-whatsapp-summary-${order.id}'),
-        onPressed: widget.updating ? null : widget.onSendWhatsapp,
-        icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 16),
-        label: const Text('إرسال للعميل عبر واتساب'),
-      ),
+    final whatsappBar = _WhatsAppOrderSendBar(
+      orderId: order.id,
+      enabled: !widget.updating,
+      onSend: widget.onSendWhatsapp,
+      onEdit: widget.onEditWhatsapp,
     );
     final statusActions = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2999,10 +3419,212 @@ class _AdminOrderActionsState extends State<_AdminOrderActions> {
             children: [
               copyButton,
               printButton,
-              whatsappButton,
             ],
           ),
+          const SizedBox(height: 10),
+          whatsappBar,
         ],
+      ),
+    );
+  }
+}
+
+class _WhatsAppOrderSendBar extends StatefulWidget {
+  const _WhatsAppOrderSendBar({
+    required this.orderId,
+    required this.enabled,
+    required this.onSend,
+    required this.onEdit,
+  });
+
+  final String orderId;
+  final bool enabled;
+  final VoidCallback onSend;
+  final VoidCallback onEdit;
+
+  @override
+  State<_WhatsAppOrderSendBar> createState() => _WhatsAppOrderSendBarState();
+}
+
+class _WhatsAppOrderSendBarState extends State<_WhatsAppOrderSendBar> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  Color get _fill {
+    if (!widget.enabled) {
+      return AppTheme.whatsapp.withValues(alpha: .45);
+    }
+    if (_pressed) {
+      return Color.lerp(AppTheme.whatsapp, Colors.black, .28)!;
+    }
+    if (_hovered) {
+      return Color.lerp(AppTheme.whatsapp, Colors.black, .12)!;
+    }
+    return AppTheme.whatsapp;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.enabled;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.easeOut,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: enabled
+            ? [
+                BoxShadow(
+                  color:
+                      AppTheme.whatsapp.withValues(alpha: _hovered ? .32 : .18),
+                  blurRadius: _hovered ? 18 : 12,
+                  offset: const Offset(0, 6),
+                ),
+              ]
+            : const [],
+      ),
+      child: Material(
+        color: _fill,
+        borderRadius: BorderRadius.circular(18),
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 58),
+          child: Row(
+            children: [
+              Expanded(
+                child: MouseRegion(
+                  cursor: enabled
+                      ? SystemMouseCursors.click
+                      : SystemMouseCursors.basic,
+                  onEnter: (_) {
+                    if (enabled) setState(() => _hovered = true);
+                  },
+                  onExit: (_) => setState(() {
+                    _hovered = false;
+                    _pressed = false;
+                  }),
+                  child: GestureDetector(
+                    onTapDown:
+                        enabled ? (_) => setState(() => _pressed = true) : null,
+                    onTapUp: enabled
+                        ? (_) => setState(() => _pressed = false)
+                        : null,
+                    onTapCancel: () => setState(() => _pressed = false),
+                    child: InkWell(
+                      key: ValueKey(
+                        'admin-order-whatsapp-summary-${widget.orderId}',
+                      ),
+                      onTap: enabled ? widget.onSend : null,
+                      overlayColor: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.pressed)) {
+                          return Colors.black.withValues(alpha: .16);
+                        }
+                        if (states.contains(WidgetState.hovered)) {
+                          return Colors.white.withValues(alpha: .10);
+                        }
+                        return Colors.transparent;
+                      }),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 11, 12, 11),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: .18),
+                                borderRadius: BorderRadius.circular(13),
+                              ),
+                              child: const Center(
+                                child: FaIcon(
+                                  FontAwesomeIcons.whatsapp,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'إرسال عبر واتساب',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 14.5,
+                                      height: 1.2,
+                                    ),
+                                  ),
+                                  SizedBox(height: 2),
+                                  Text(
+                                    'يفتح واتساب بالنص جاهزاً للإرسال',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 11,
+                                      height: 1.2,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            const Icon(
+                              Icons.north_east,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Container(
+                width: 1,
+                height: 34,
+                color: Colors.white.withValues(alpha: .28),
+              ),
+              Tooltip(
+                message: 'تعديل رسالة واتساب لهذا الطلب',
+                child: MouseRegion(
+                  cursor: enabled
+                      ? SystemMouseCursors.click
+                      : SystemMouseCursors.basic,
+                  child: InkWell(
+                    key: ValueKey(
+                      'admin-order-whatsapp-gear-${widget.orderId}',
+                    ),
+                    onTap: enabled ? widget.onEdit : null,
+                    overlayColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.pressed) ||
+                          states.contains(WidgetState.hovered)) {
+                        return Colors.white.withValues(alpha: .12);
+                      }
+                      return Colors.transparent;
+                    }),
+                    child: const SizedBox(
+                      width: 52,
+                      height: 58,
+                      child: Icon(
+                        Icons.settings_outlined,
+                        color: Colors.white,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

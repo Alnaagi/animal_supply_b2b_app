@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
@@ -9,7 +9,6 @@ import 'package:uuid/uuid.dart';
 import '../../core/concurrency/stale_write.dart';
 import '../../core/config/app_config.dart';
 import '../../core/refresh/screen_reload.dart';
-import '../../core/theme/app_theme.dart';
 import '../../core/updates/update_link.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/category_icon_view.dart';
@@ -17,12 +16,16 @@ import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/product_info_chip.dart';
 import '../../core/widgets/responsive_field_group.dart';
 import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/product.dart';
 import '../../data/models/product_category.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/product_images_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
+import 'admin_product_discount_helpers.dart';
+import 'admin_product_operational_card.dart';
+import 'admin_product_quick_sheets.dart';
 import 'category_editor_dialog.dart';
 
 class AdminProductsScreen extends ConsumerStatefulWidget {
@@ -69,6 +72,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
   CatalogPageSource pageSource = CatalogPageSource.demo;
   bool _openedCreateForm = false;
   bool _savingProduct = false;
+  _AdminQuickFilter quickFilter = _AdminQuickFilter.all;
+  bool multiSelectMode = false;
+  final Set<String> selectedProductIds = {};
+  final Set<String> busyProductIds = {};
 
   @override
   void initState() {
@@ -146,32 +153,80 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
               onSubmitted: (_) => unawaited(_reloadProducts()),
             ),
             const SizedBox(height: 10),
-            SizedBox(
-              height: 42,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
+            ProductChipWrap(
+              key: const ValueKey('admin-products-quick-filters'),
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final option in _AdminQuickFilter.values)
                   ChoiceChip(
-                    key: const ValueKey('admin-products-category-all'),
-                    label: const Text('الكل'),
-                    selected: category == null,
-                    onSelected: (_) => _selectCategory(null),
+                    key: ValueKey('admin-quick-filter-${option.name}'),
+                    label: Text(option.label),
+                    selected: quickFilter == option,
+                    onSelected: (_) => _selectQuickFilter(option),
                   ),
-                  for (final value in categories) ...[
-                    const SizedBox(width: 8),
-                    ChoiceChip(
-                      key: ValueKey('admin-products-category-$value'),
-                      avatar: CategoryIconView.fromCategory(
-                        _categoryModelByName(value),
-                        size: 18,
-                      ),
-                      label: Text(value),
-                      selected: category == value,
-                      onSelected: (_) => _selectCategory(value),
-                    ),
-                  ],
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  key: const ValueKey('admin-products-multi-select-toggle'),
+                  onPressed: _toggleMultiSelectMode,
+                  icon: Icon(
+                    multiSelectMode
+                        ? Icons.check_box
+                        : Icons.check_box_outline_blank,
+                  ),
+                  label: Text(
+                    multiSelectMode ? 'إلغاء التحديد' : 'تحديد متعدد',
+                  ),
+                ),
+                if (multiSelectMode && selectedProductIds.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    '${selectedProductIds.length} محدد',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
                 ],
+              ],
+            ),
+            if (multiSelectMode && selectedProductIds.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _AdminBulkActionBar(
+                onDiscount: () => unawaited(_bulkApplyDiscount()),
+                onPrices: () => unawaited(_bulkAdjustPrices()),
+                onFeatured: () => unawaited(_bulkSetFeatured(true)),
+                onVisibility: (visible) =>
+                    unawaited(_bulkSetVisibility(visible)),
+                onCategory: () => unawaited(_bulkChangeCategory()),
+                onClear: _clearSelection,
               ),
+            ],
+            const SizedBox(height: 10),
+            ProductChipWrap(
+              key: const ValueKey('admin-products-category-chips'),
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  key: const ValueKey('admin-products-category-all'),
+                  label: const Text('الكل'),
+                  selected: category == null,
+                  onSelected: (_) => _selectCategory(null),
+                ),
+                for (final value in categories)
+                  ChoiceChip(
+                    key: ValueKey('admin-products-category-$value'),
+                    avatar: CategoryIconView.fromCategory(
+                      _categoryModelByName(value),
+                      size: 18,
+                    ),
+                    label: Text(value),
+                    selected: category == value,
+                    onSelected: (_) => _selectCategory(value),
+                  ),
+              ],
             ),
             const SizedBox(height: 10),
             Wrap(
@@ -239,8 +294,12 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
             ],
             const SizedBox(height: 14),
             if (initialLoading)
-              const ShopLoading.section(
-                message: 'جارٍ تحميل المنتجات...',
+              const ShopSkeleton(
+                semanticLabel: 'جارٍ تحميل المنتجات...',
+                child: ShopProductListSkeleton(
+                  itemCount: 4,
+                  padding: EdgeInsets.zero,
+                ),
               )
             else if (loadError != null)
               _ProductLoadError(
@@ -299,6 +358,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
         minimumPrice,
         maximumPrice,
         availability == 'all' ? null : availability,
+        quickFilter == _AdminQuickFilter.all ? null : quickFilter,
       ].where((value) => value != null).length;
 
   List<_AdminProductFilterChipData> _activeFilterChips() {
@@ -338,6 +398,13 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
           label: 'السعر إلى ${lyd(maximumPrice!)}',
           onDeleted: () => _removeProductFilter(() => maximumPrice = null),
         ),
+      if (quickFilter != _AdminQuickFilter.all)
+        _AdminProductFilterChipData(
+          label: quickFilter.label,
+          onDeleted: () => _removeProductFilter(
+            () => quickFilter = _AdminQuickFilter.all,
+          ),
+        ),
     ];
   }
 
@@ -356,8 +423,315 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
       minimumPrice = null;
       maximumPrice = null;
       availability = 'all';
+      quickFilter = _AdminQuickFilter.all;
     });
     unawaited(_reloadProducts());
+  }
+
+  void _selectQuickFilter(_AdminQuickFilter value) {
+    if (quickFilter == value) return;
+    setState(() {
+      quickFilter = value;
+      availability = switch (value) {
+        _AdminQuickFilter.lowStock => 'low_stock',
+        _AdminQuickFilter.outOfStock => 'out_of_stock',
+        _ => 'all',
+      };
+    });
+    unawaited(_reloadProducts());
+  }
+
+  void _toggleMultiSelectMode() {
+    setState(() {
+      multiSelectMode = !multiSelectMode;
+      if (!multiSelectMode) selectedProductIds.clear();
+    });
+  }
+
+  void _clearSelection() {
+    setState(() => selectedProductIds.clear());
+  }
+
+  void _toggleProductSelected(String id) {
+    setState(() {
+      if (selectedProductIds.contains(id)) {
+        selectedProductIds.remove(id);
+      } else {
+        selectedProductIds.add(id);
+      }
+    });
+  }
+
+  List<Product> _applyQuickFilter(List<Product> source) {
+    return switch (quickFilter) {
+      _AdminQuickFilter.offers =>
+        source.where((product) => product.hasProductDiscount).toList(),
+      _AdminQuickFilter.featured =>
+        source.where((product) => product.isFeatured).toList(),
+      _AdminQuickFilter.hidden => source
+          .where((product) => !product.active && !product.isArchived)
+          .toList(),
+      _ => source,
+    };
+  }
+
+  Product? _productById(String id) {
+    for (final product in products) {
+      if (product.id == id) return product;
+    }
+    return null;
+  }
+
+  void _replaceProductLocally(Product next) {
+    setState(() {
+      products = [
+        for (final product in products)
+          if (product.id == next.id) next else product,
+      ];
+    });
+  }
+
+  Future<void> _persistProductPatch(
+    Product before,
+    Product after, {
+    bool showUndo = false,
+    String? undoMessage,
+    Future<void> Function()? onUndo,
+  }) async {
+    if (busyProductIds.contains(before.id)) return;
+    setState(() => busyProductIds.add(before.id));
+    _replaceProductLocally(after);
+    try {
+      final saved =
+          await ref.read(catalogRepositoryProvider).saveProduct(after);
+      _replaceProductLocally(saved);
+      if (!mounted) return;
+      if (showUndo && undoMessage != null && onUndo != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(undoMessage),
+            action: SnackBarAction(
+              label: 'تراجع',
+              onPressed: () => unawaited(onUndo()),
+            ),
+          ),
+        );
+      }
+    } on StaleWriteException catch (error) {
+      _replaceProductLocally(before);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+      await reloadAfterMutation(
+        this,
+        () => _reloadProducts(refreshMetadata: true),
+      );
+    } catch (error) {
+      _replaceProductLocally(before);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            mutationFailureMessageAr(
+              error,
+              fallback: 'تعذر حفظ التغيير. تم التراجع عن التعديل.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => busyProductIds.remove(before.id));
+    }
+  }
+
+  Future<void> _quickEditPrice(Product product) async {
+    final nextPrice = await showAdminQuickPriceSheet(
+      context: context,
+      product: product,
+    );
+    if (nextPrice == null || !mounted) return;
+    final after = product.copyWith(basePrice: nextPrice);
+    await _persistProductPatch(product, after);
+  }
+
+  Future<void> _quickEditDiscount(Product product) async {
+    final percent = await showAdminQuickDiscountSheet(
+      context: context,
+      product: product,
+    );
+    if (percent == null || !mounted) return;
+    final after = percent <= 0
+        ? clearProductDiscount(product)
+        : applyProductDiscount(product, percent);
+    await _persistProductPatch(
+      product,
+      after,
+      showUndo: true,
+      undoMessage: 'تم حفظ التغيير',
+      onUndo: () async {
+        await _persistProductPatch(after, product, showUndo: false);
+      },
+    );
+  }
+
+  Future<void> _quickEditStock(Product product) async {
+    final nextStock = await showAdminQuickStockSheet(
+      context: context,
+      product: product,
+    );
+    if (nextStock == null || !mounted) return;
+    final after = product.copyWith(
+      stockQuantity: nextStock,
+      availableQuantity: product.stockTrackingEnabled
+          ? nextStock - product.reservedQuantity
+          : product.availableQuantity,
+    );
+    await _persistProductPatch(product, after);
+  }
+
+  Future<void> _toggleFeatured(Product product, {bool showUndo = true}) async {
+    final after = product.copyWith(isFeatured: !product.isFeatured);
+    await _persistProductPatch(
+      product,
+      after,
+      showUndo: showUndo,
+      undoMessage: 'تم حفظ التغيير',
+      onUndo: () async {
+        await _toggleFeatured(after, showUndo: false);
+      },
+    );
+  }
+
+  Future<void> _toggleVisibility(Product product,
+      {bool showUndo = true}) async {
+    if (product.isArchived) return;
+    final after = product.copyWith(isActive: !product.active);
+    await _persistProductPatch(
+      product,
+      after,
+      showUndo: showUndo,
+      undoMessage: 'تم حفظ التغيير',
+      onUndo: () async {
+        await _toggleVisibility(after, showUndo: false);
+      },
+    );
+  }
+
+  Future<void> _handleQuickAction(Product product, String action) async {
+    switch (action) {
+      case 'price':
+        await _quickEditPrice(product);
+      case 'discount':
+        await _quickEditDiscount(product);
+      case 'stock':
+        await _quickEditStock(product);
+    }
+  }
+
+  Future<void> _bulkApplyDiscount() async {
+    final ids = selectedProductIds.toList(growable: false);
+    if (ids.isEmpty) return;
+    final percent = await showAdminBulkDiscountSheet(
+      context: context,
+      productCount: ids.length,
+    );
+    if (percent == null || !mounted) return;
+    for (final id in ids) {
+      final product = _productById(id);
+      if (product == null) continue;
+      final after = applyProductDiscount(product, percent);
+      await _persistProductPatch(product, after, showUndo: false);
+    }
+  }
+
+  Future<void> _bulkAdjustPrices() async {
+    final ids = selectedProductIds.toList(growable: false);
+    if (ids.isEmpty) return;
+    final selection = await showAdminBulkPriceSheet(
+      context: context,
+      productCount: ids.length,
+    );
+    if (selection == null || !mounted) return;
+    for (final id in ids) {
+      final product = _productById(id);
+      if (product == null) continue;
+      final next = bulkAdjustedPrice(
+        product.basePrice,
+        percentDelta: selection.percent,
+      );
+      if (next <= 0) continue;
+      final after = product.copyWith(basePrice: next);
+      await _persistProductPatch(product, after, showUndo: false);
+    }
+  }
+
+  Future<void> _bulkSetFeatured(bool featured) async {
+    for (final id in selectedProductIds.toList()) {
+      final product = _productById(id);
+      if (product == null || product.isFeatured == featured) continue;
+      await _persistProductPatch(
+        product,
+        product.copyWith(isFeatured: featured),
+        showUndo: false,
+      );
+    }
+  }
+
+  Future<void> _bulkSetVisibility(bool visible) async {
+    for (final id in selectedProductIds.toList()) {
+      final product = _productById(id);
+      if (product == null || product.isArchived || product.active == visible) {
+        continue;
+      }
+      await _persistProductPatch(
+        product,
+        product.copyWith(isActive: visible),
+        showUndo: false,
+      );
+    }
+  }
+
+  Future<void> _bulkChangeCategory() async {
+    if (categories.isEmpty) return;
+    final selectedCategory = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('تغيير التصنيف'),
+        children: [
+          for (final value in categories)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, value),
+              child: Text(value),
+            ),
+        ],
+      ),
+    );
+    if (selectedCategory == null || !mounted) return;
+    for (final id in selectedProductIds.toList()) {
+      final product = _productById(id);
+      if (product == null || product.category == selectedCategory) continue;
+      await _persistProductPatch(
+        product,
+        product.copyWith(category: selectedCategory, categoryId: null),
+        showUndo: false,
+      );
+    }
+  }
+
+  Future<void> _duplicateProduct(Product product) async {
+    final draftUuid = const Uuid().v4();
+    final copy = product.copyWith(
+      id: 'local-$draftUuid',
+      nameAr: '${product.nameAr} (نسخة)',
+      sku:
+          'COPY-${draftUuid.replaceAll('-', '').substring(0, 8).toUpperCase()}',
+      isFeatured: false,
+      archivedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    );
+    await _showProductForm(copy);
   }
 
   void _selectSort(_AdminProductSort value) {
@@ -401,88 +775,63 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
   }
 
   Widget _buildProductCollection(BuildContext context) {
-    Future<void> onSelected(Product product, String value) =>
-        _handleProductAction(product, value);
-    return switch (viewMode) {
-      _AdminProductViewMode.detailed => Column(
-          key: const ValueKey('admin-products-results'),
-          children: [
-            for (final product in products)
-              Card(
-                key: ValueKey('admin-product-card-${product.id}'),
-                clipBehavior: Clip.antiAlias,
-                child: _AdminProductCard(
-                  product: product,
-                  onTap: () => _showProductForm(product),
-                  onSelected: (value) => onSelected(product, value),
-                ),
-              ),
-          ],
-        ),
-      _AdminProductViewMode.compact => Column(
-          key: const ValueKey('admin-products-results'),
-          children: [
-            for (final product in products)
-              Card(
-                key: ValueKey('admin-product-card-${product.id}'),
-                child: _AdminProductCompactRow(
-                  key: ValueKey('admin-product-compact-${product.id}'),
-                  product: product,
-                  onTap: () => _showProductForm(product),
-                  onSelected: (value) => onSelected(product, value),
-                ),
-              ),
-          ],
-        ),
-      _AdminProductViewMode.grid => LayoutBuilder(
-          key: const ValueKey('admin-products-results'),
-          builder: (context, constraints) {
-            final width = constraints.maxWidth;
-            final columns = width >= 1180
-                ? 4
-                : width >= 850
-                    ? 3
-                    : 2;
-            final childAspectRatio = width < 520 ? .62 : .72;
-            return GridView.builder(
-              padding: EdgeInsets.zero,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: products.length,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: columns,
-                crossAxisSpacing: 10,
-                mainAxisSpacing: 10,
-                childAspectRatio: childAspectRatio,
-              ),
-              itemBuilder: (context, index) {
-                final product = products[index];
-                return Card(
-                  key: ValueKey('admin-product-card-${product.id}'),
-                  margin: EdgeInsets.zero,
-                  clipBehavior: Clip.antiAlias,
-                  child: _AdminProductGridTile(
-                    key: ValueKey('admin-product-grid-${product.id}'),
-                    product: product,
-                    onTap: () => _showProductForm(product),
-                    onSelected: (value) => onSelected(product, value),
-                  ),
-                );
-              },
-            );
-          },
-        ),
-    };
+    return Column(
+      key: const ValueKey('admin-products-results'),
+      children: [
+        for (final product in products)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: AdminProductOperationalCard(
+              product: product,
+              busy: busyProductIds.contains(product.id),
+              multiSelectMode: multiSelectMode,
+              selected: selectedProductIds.contains(product.id),
+              onToggleSelected: () => _toggleProductSelected(product.id),
+              onQuickAction: (action) =>
+                  unawaited(_handleQuickAction(product, action)),
+              onMenuAction: (value) => _handleProductAction(product, value),
+              onFeaturedToggle: () => unawaited(_toggleFeatured(product)),
+              onVisibilityToggle: () => unawaited(_toggleVisibility(product)),
+              onOpenFullEdit: () => unawaited(_showProductForm(product)),
+              compact: viewMode == _AdminProductViewMode.compact,
+            ),
+          ),
+      ],
+    );
   }
 
   Future<void> _handleProductAction(Product product, String value) async {
     if (value == 'edit') {
       await _showProductForm(product);
+    } else if (value == 'change-image') {
+      await _showProductForm(product);
+    } else if (value == 'duplicate') {
+      await _duplicateProduct(product);
+    } else if (value == 'stock-settings') {
+      await _showProductForm(product);
+    } else if (value == 'toggle-featured') {
+      await _toggleFeatured(product);
+    } else if (value == 'toggle-visibility') {
+      await _toggleVisibility(product);
+    } else if (value == 'copy-name') {
+      await _copyProductText(product.name, 'تم نسخ اسم المنتج');
+    } else if (value == 'copy-sku') {
+      await _copyProductText(product.sku, 'تم نسخ رقم الصنف');
     } else if (value == 'archive') {
       await _archiveProduct(product);
     } else if (value == 'restore') {
       await _restoreProduct(product);
     }
+  }
+
+  Future<void> _copyProductText(String value, String message) async {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || !mounted) return;
+    await Clipboard.setData(ClipboardData(text: trimmed));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   void _selectCategory(String? value) {
@@ -598,12 +947,14 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
         brand = resolvedBrand;
         animalType = resolvedAnimalType;
         unitSize = resolvedUnitSize;
-        products = page.products
-            .where(
-              (product) =>
-                  !product.isArchived || product.archivedByCategoryId == null,
-            )
-            .toList(growable: false);
+        products = _applyQuickFilter(
+          page.products
+              .where(
+                (product) =>
+                    !product.isArchived || product.archivedByCategoryId == null,
+              )
+              .toList(growable: false),
+        );
         hasMore = page.hasMore;
         nextOffset = page.nextOffset;
         snapshotAt = page.snapshotAt;
@@ -678,13 +1029,13 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
       );
       if (!mounted || revision != loadRevision) return;
       setState(() {
-        products = _deduplicateAdminProducts([
+        products = _applyQuickFilter(_deduplicateAdminProducts([
           ...products,
           ...page.products.where(
             (product) =>
                 !product.isArchived || product.archivedByCategoryId == null,
           ),
-        ]);
+        ]));
         hasMore = page.hasMore;
         nextOffset = page.nextOffset;
         pageSource = page.source;
@@ -891,8 +1242,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                       return ListTile(
                         key: ValueKey('managed-category-${item.id}'),
                         leading: CircleAvatar(
-                          backgroundColor:
-                              AppTheme.green.withValues(alpha: .12),
+                          backgroundColor: Theme.of(context)
+                              .colorScheme
+                              .primary
+                              .withValues(alpha: .12),
                           child: CategoryIconView.fromCategory(
                             item,
                             size: 22,
@@ -931,8 +1284,8 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                                         return;
                                       }
                                       try {
-                                        managedCategories =
-                                            await repository.productCategories();
+                                        managedCategories = await repository
+                                            .productCategories();
                                       } catch (_) {
                                         managedCategories = [
                                           for (final category
@@ -952,7 +1305,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                                         ),
                                       );
                                       if (!mounted) return;
-                                      ScaffoldMessenger.of(context)
+                                      ScaffoldMessenger.of(this.context)
                                           .showSnackBar(
                                         SnackBar(
                                           content: Text(
@@ -964,89 +1317,93 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                                     icon: const Icon(Icons.edit_outlined),
                                   ),
                                   IconButton(
-                                key: ValueKey(
-                                  'archive-category-${item.id}',
-                                ),
-                                tooltip: 'أرشفة التصنيف ومنتجاته',
-                                onPressed: () async {
-                                  final confirmed =
-                                      await _confirmCategoryArchive(item);
-                                  if (!confirmed ||
-                                      !mounted ||
-                                      !dialogContext.mounted) {
-                                    return;
-                                  }
-                                  setDialogState(
-                                    () => busyCategoryId = item.id,
-                                  );
-                                  try {
-                                    await repository.archiveCategory(item.id);
-                                  } catch (_) {
-                                    if (!mounted || !dialogContext.mounted) {
-                                      return;
-                                    }
-                                    setDialogState(
-                                      () => busyCategoryId = null,
-                                    );
-                                    ScaffoldMessenger.of(this.context)
-                                        .showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'تعذر أرشفة التصنيف. '
-                                          'تحقق من الاتصال وحاول مجدداً.',
+                                    key: ValueKey(
+                                      'archive-category-${item.id}',
+                                    ),
+                                    tooltip: 'أرشفة التصنيف ومنتجاته',
+                                    onPressed: () async {
+                                      final confirmed =
+                                          await _confirmCategoryArchive(item);
+                                      if (!confirmed ||
+                                          !mounted ||
+                                          !dialogContext.mounted) {
+                                        return;
+                                      }
+                                      setDialogState(
+                                        () => busyCategoryId = item.id,
+                                      );
+                                      try {
+                                        await repository
+                                            .archiveCategory(item.id);
+                                      } catch (_) {
+                                        if (!mounted ||
+                                            !dialogContext.mounted) {
+                                          return;
+                                        }
+                                        setDialogState(
+                                          () => busyCategoryId = null,
+                                        );
+                                        ScaffoldMessenger.of(this.context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'تعذر أرشفة التصنيف. '
+                                              'تحقق من الاتصال وحاول مجدداً.',
+                                            ),
+                                          ),
+                                        );
+                                        return;
+                                      }
+                                      var categoryRefreshFailed = false;
+                                      try {
+                                        managedCategories = await repository
+                                            .productCategories();
+                                      } catch (_) {
+                                        categoryRefreshFailed = true;
+                                        managedCategories = managedCategories
+                                            .where(
+                                              (category) =>
+                                                  category.id != item.id,
+                                            )
+                                            .toList(growable: false);
+                                      }
+                                      if (!mounted || !dialogContext.mounted) {
+                                        return;
+                                      }
+                                      if (category == item.name) {
+                                        setState(() => category = null);
+                                      }
+                                      setDialogState(
+                                        () => busyCategoryId = null,
+                                      );
+                                      await reloadAfterMutation(
+                                        this,
+                                        () => _reloadProducts(
+                                          refreshMetadata: true,
                                         ),
-                                      ),
-                                    );
-                                    return;
-                                  }
-                                  var categoryRefreshFailed = false;
-                                  try {
-                                    managedCategories =
-                                        await repository.productCategories();
-                                  } catch (_) {
-                                    categoryRefreshFailed = true;
-                                    managedCategories = managedCategories
-                                        .where(
-                                          (category) => category.id != item.id,
-                                        )
-                                        .toList(growable: false);
-                                  }
-                                  if (!mounted || !dialogContext.mounted) {
-                                    return;
-                                  }
-                                  if (category == item.name) {
-                                    setState(() => category = null);
-                                  }
-                                  setDialogState(
-                                    () => busyCategoryId = null,
-                                  );
-                                  await reloadAfterMutation(
-                                    this,
-                                    () => _reloadProducts(
-                                      refreshMetadata: true,
+                                      );
+                                      if (!mounted) return;
+                                      final refreshNotice = categoryRefreshFailed
+                                          ? ' تمت الأرشفة، لكن تعذر تحديث قائمة '
+                                              'التصنيفات بالكامل الآن.'
+                                          : '';
+                                      ScaffoldMessenger.of(this.context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'تمت أرشفة «${item.name}» ومنتجاته. '
+                                            'يمكنك استعادتها من الأرشيف.'
+                                            '$refreshNotice',
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    icon: Icon(
+                                      Icons.archive_outlined,
+                                      color:
+                                          Theme.of(context).colorScheme.error,
                                     ),
-                                  );
-                                  if (!mounted) return;
-                                  final refreshNotice = categoryRefreshFailed
-                                      ? ' تمت الأرشفة، لكن تعذر تحديث قائمة '
-                                          'التصنيفات بالكامل الآن.'
-                                      : '';
-                                  ScaffoldMessenger.of(this.context)
-                                      .showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        'تمت أرشفة «${item.name}» ومنتجاته. '
-                                        'يمكنك استعادتها من الأرشيف.'
-                                        '$refreshNotice',
-                                      ),
-                                    ),
-                                  );
-                                },
-                                icon: Icon(
-                                  Icons.archive_outlined,
-                                  color: Theme.of(context).colorScheme.error,
-                                ),
-                              ),
+                                  ),
                                 ],
                               ),
                       );
@@ -1156,6 +1513,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
         text: product?.basePrice.toStringAsFixed(2) ?? '');
     final retailPrice = TextEditingController(
         text: product?.retailUnitPrice?.toStringAsFixed(2) ?? '');
+    final discountPct = TextEditingController(
+        text: (product?.discountPercent ?? 0) > 0
+            ? (product!.discountPercent!).toStringAsFixed(0)
+            : '');
     final bulkMinimum =
         TextEditingController(text: product?.minOrderQty.toString() ?? '1');
     final stock = TextEditingController(
@@ -1174,6 +1535,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
         product?.showStockQuantityToCustomers ?? false;
     var active =
         product?.isArchived == true ? false : product?.isActive ?? true;
+    var featured = product?.isFeatured ?? false;
     var hideWhenOutOfStock = product?.hideWhenOutOfStock ?? false;
     var fieldErrors = <_ProductFormField, String>{};
     final reservedQuantity = product?.reservedQuantity ?? 0;
@@ -1181,6 +1543,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     final companyFocus = FocusNode();
     final priceFocus = FocusNode();
     final retailPriceFocus = FocusNode();
+    final discountPctFocus = FocusNode();
     final bulkMinimumFocus = FocusNode();
     final unitsPerBoxFocus = FocusNode();
     final stockFocus = FocusNode();
@@ -1192,6 +1555,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
     final companyKey = GlobalKey();
     final priceKey = GlobalKey();
     final retailPriceKey = GlobalKey();
+    final discountPctKey = GlobalKey();
     final bulkMinimumKey = GlobalKey();
     final unitsPerBoxKey = GlobalKey();
     final stockKey = GlobalKey();
@@ -1206,6 +1570,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
         _ProductFormField.company: companyKey,
         _ProductFormField.price: priceKey,
         _ProductFormField.retailPrice: retailPriceKey,
+        _ProductFormField.discountPercent: discountPctKey,
         _ProductFormField.bulkMinimum: bulkMinimumKey,
         _ProductFormField.unitsPerBox: unitsPerBoxKey,
         _ProductFormField.stock: stockKey,
@@ -1218,6 +1583,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
         _ProductFormField.company: companyFocus,
         _ProductFormField.price: priceFocus,
         _ProductFormField.retailPrice: retailPriceFocus,
+        _ProductFormField.discountPercent: discountPctFocus,
         _ProductFormField.bulkMinimum: bulkMinimumFocus,
         _ProductFormField.unitsPerBox: unitsPerBoxFocus,
         _ProductFormField.stock: stockFocus,
@@ -1296,12 +1662,20 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
               width: 620,
               child: ScrollbarTheme(
                 data: ScrollbarThemeData(
-                  thumbColor: WidgetStateProperty.all(AppTheme.green),
+                  thumbColor: WidgetStateProperty.all(
+                    Theme.of(context).colorScheme.primary,
+                  ),
                   trackColor: WidgetStateProperty.all(
-                    AppTheme.green.withValues(alpha: 0.10),
+                    Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.10),
                   ),
                   trackBorderColor: WidgetStateProperty.all(
-                    AppTheme.green.withValues(alpha: 0.18),
+                    Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.18),
                   ),
                   radius: const Radius.circular(999),
                   thickness: WidgetStateProperty.all(8),
@@ -1347,16 +1721,16 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          const Row(
-                            key: ValueKey('product-form-scroll-hint'),
+                          Row(
+                            key: const ValueKey('product-form-scroll-hint'),
                             children: [
                               Icon(
                                 Icons.keyboard_arrow_down,
                                 size: 18,
-                                color: AppTheme.green,
+                                color: Theme.of(context).colorScheme.primary,
                               ),
-                              SizedBox(width: 4),
-                              Expanded(
+                              const SizedBox(width: 4),
+                              const Expanded(
                                 child: Text(
                                   'مرّر لأسفل لعرض بقية الحقول والخيارات',
                                   style: TextStyle(
@@ -1512,6 +1886,32 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                             ],
                           ),
                           const SizedBox(height: 12),
+                          KeyedSubtree(
+                            key: discountPctKey,
+                            child: TextField(
+                              key: const ValueKey('product-discount-pct-field'),
+                              controller: discountPct,
+                              focusNode: discountPctFocus,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                decimal: true,
+                              ),
+                              onChanged: (_) => setDialogState(() {
+                                fieldErrors.remove(
+                                  _ProductFormField.discountPercent,
+                                );
+                              }),
+                              decoration: InputDecoration(
+                                labelText: 'خصم المنتج (%)',
+                                helperText: 'أدخل 0 إذا لم يكن هناك خصم. '
+                                    'السعر المعروض للعميل = سعر الجملة × (1 − الخصم/100).',
+                                helperMaxLines: 2,
+                                errorText: fieldErrors[
+                                    _ProductFormField.discountPercent],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
                           ResponsiveFieldGroup(
                             children: [
                               KeyedSubtree(
@@ -1652,6 +2052,19 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                                       active = value;
                                     }),
                           ),
+                          const SizedBox(height: 4),
+                          SwitchListTile.adaptive(
+                            key: const ValueKey('product-featured-switch'),
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('منتج مميز'),
+                            subtitle: const Text(
+                              'يظهر ضمن قسم المنتجات المميزة في الصفحة الرئيسية للعملاء.',
+                            ),
+                            value: featured,
+                            onChanged: (value) => setDialogState(() {
+                              featured = value;
+                            }),
+                          ),
                           if (stockTrackingEnabled) ...[
                             const SizedBox(height: 4),
                             SwitchListTile.adaptive(
@@ -1691,6 +2104,10 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                         final parsedPrice = _parseLocalizedDouble(price.text);
                         final parsedRetailPrice =
                             _parseLocalizedDouble(retailPrice.text);
+                        final parsedDiscountPct =
+                            discountPct.text.trim().isEmpty
+                                ? 0.0
+                                : _parseLocalizedDouble(discountPct.text);
                         final parsedBulkMinimum =
                             _parseLocalizedInt(bulkMinimum.text);
                         final parsedStock = _parseLocalizedInt(stock.text);
@@ -1727,6 +2144,13 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                             parsedRetailPrice <= 0) {
                           errors[_ProductFormField.retailPrice] =
                               'أدخل سعر بيع وحدة مقترحاً صحيحاً أكبر من صفر.';
+                        }
+                        if (parsedDiscountPct == null ||
+                            !parsedDiscountPct.isFinite ||
+                            parsedDiscountPct < 0 ||
+                            parsedDiscountPct > 100) {
+                          errors[_ProductFormField.discountPercent] =
+                              'أدخل نسبة خصم بين 0 و 100، أو اتركها فارغة لعدم وجود خصم.';
                         }
                         if (parsedBulkMinimum == null ||
                             parsedBulkMinimum < 1 ||
@@ -1783,7 +2207,9 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                             effectivePrice: null,
                             retailUnitPrice: parsedRetailPrice,
                             oldPrice: product?.oldPrice,
-                            discountPercent: product?.discountPercent,
+                            discountPercent: parsedDiscountPct == 0
+                                ? null
+                                : parsedDiscountPct,
                             stockQuantity: resolvedStock,
                             availableQuantity:
                                 stockTrackingEnabled && product != null
@@ -1804,7 +2230,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
                             imageAttribution: product?.imageAttribution,
                             sourceUrl: product?.sourceUrl,
                             isActive: active,
-                            isFeatured: product?.isFeatured ?? false,
+                            isFeatured: featured,
                             isTopSelling: product?.isTopSelling ?? false,
                             archivedAt: product?.archivedAt,
                             createdAt: product?.createdAt,
@@ -1829,6 +2255,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
       company,
       price,
       retailPrice,
+      discountPct,
       bulkMinimum,
       stock,
       unitsPerBox,
@@ -1841,6 +2268,7 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
       companyFocus,
       priceFocus,
       retailPriceFocus,
+      discountPctFocus,
       bulkMinimumFocus,
       unitsPerBoxFocus,
       stockFocus,
@@ -2008,6 +2436,7 @@ enum _ProductFormField {
   company,
   price,
   retailPrice,
+  discountPercent,
   bulkMinimum,
   unitsPerBox,
   stock,
@@ -2034,6 +2463,19 @@ int? _parseLocalizedInt(String value) {
   final normalized = _normalizeLocalizedNumber(value);
   if (normalized.contains('.')) return null;
   return int.tryParse(normalized);
+}
+
+enum _AdminQuickFilter {
+  all('الكل'),
+  offers('🔥 العروض'),
+  featured('⭐ المميزة'),
+  lowStock('⚠️ مخزون منخفض'),
+  outOfStock('نفد المخزون'),
+  hidden('مخفي');
+
+  const _AdminQuickFilter(this.label);
+
+  final String label;
 }
 
 enum _AdminProductViewMode {
@@ -2098,6 +2540,76 @@ class _AdminProductFilterChipData {
 
   final String label;
   final VoidCallback onDeleted;
+}
+
+class _AdminBulkActionBar extends StatelessWidget {
+  const _AdminBulkActionBar({
+    required this.onDiscount,
+    required this.onPrices,
+    required this.onFeatured,
+    required this.onVisibility,
+    required this.onCategory,
+    required this.onClear,
+  });
+
+  final VoidCallback onDiscount;
+  final VoidCallback onPrices;
+  final VoidCallback onFeatured;
+  final ValueChanged<bool> onVisibility;
+  final VoidCallback onCategory;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: const ValueKey('admin-products-bulk-toolbar'),
+      color: Theme.of(context).colorScheme.primary.withValues(alpha: .06),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.tonal(
+              key: const ValueKey('admin-bulk-discount'),
+              onPressed: onDiscount,
+              child: const Text('الخصم'),
+            ),
+            FilledButton.tonal(
+              key: const ValueKey('admin-bulk-prices'),
+              onPressed: onPrices,
+              child: const Text('الأسعار'),
+            ),
+            FilledButton.tonal(
+              key: const ValueKey('admin-bulk-featured'),
+              onPressed: onFeatured,
+              child: const Text('تمييز'),
+            ),
+            FilledButton.tonal(
+              key: const ValueKey('admin-bulk-show'),
+              onPressed: () => onVisibility(true),
+              child: const Text('إظهار'),
+            ),
+            FilledButton.tonal(
+              key: const ValueKey('admin-bulk-hide'),
+              onPressed: () => onVisibility(false),
+              child: const Text('إخفاء'),
+            ),
+            FilledButton.tonal(
+              key: const ValueKey('admin-bulk-category'),
+              onPressed: onCategory,
+              child: const Text('التصنيف'),
+            ),
+            OutlinedButton(
+              key: const ValueKey('admin-bulk-clear'),
+              onPressed: onClear,
+              child: const Text('إلغاء التحديد'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _AdminProductsBrowseToolbar extends StatelessWidget {
@@ -2683,604 +3195,6 @@ List<String> _withSelectedFilterValue(
       if (value.trim().isNotEmpty) value.trim(),
   }.toList()
     ..sort();
-}
-
-class _AdminProductCard extends StatelessWidget {
-  const _AdminProductCard({
-    required this.product,
-    required this.onTap,
-    required this.onSelected,
-  });
-
-  final Product product;
-  final VoidCallback onTap;
-  final Future<void> Function(String value) onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final visibilityLabel = product.isArchived
-        ? 'مؤرشف'
-        : product.active
-            ? 'ظاهر للعملاء'
-            : 'مخفي عن العملاء';
-    final visibilityIcon = product.isArchived
-        ? Icons.archive_outlined
-        : product.active
-            ? Icons.visibility_outlined
-            : Icons.visibility_off_outlined;
-    final visibilityColor = product.isArchived || !product.active
-        ? Colors.blueGrey
-        : AppTheme.green;
-    final availabilityLabel = !product.stockTrackingEnabled
-        ? 'المخزون غير متتبع'
-        : !product.isOrderable
-            ? 'غير متاح للطلب'
-            : product.lowStock
-                ? 'مخزون منخفض'
-                : 'متاح للطلب';
-    final availabilityColor = !product.stockTrackingEnabled
-        ? Colors.blueGrey
-        : !product.isOrderable
-            ? AppTheme.red
-            : product.lowStock
-                ? AppTheme.orange
-                : AppTheme.green;
-    final quantityVisibilityLabel =
-        product.stockTrackingEnabled && product.showStockQuantityToCustomers
-            ? 'العدد للعملاء: ظاهر'
-            : 'العدد للعملاء: مخفي';
-    final textTheme = Theme.of(context).textTheme;
-
-    return Semantics(
-      button: true,
-      label: 'فتح تعديل ${product.name}',
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ProductImagePlaceholder(
-                    key: ValueKey('admin-product-image-${product.id}'),
-                    productId: product.id,
-                    category: product.category,
-                    imageUrl: product.imageUrl,
-                    semanticLabel: 'صورة ${product.name}',
-                    size: 56,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          product.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            height: 1.25,
-                          ),
-                        ),
-                        if (product.brand.trim().isNotEmpty)
-                          Text(
-                            product.brand,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: textTheme.bodySmall?.copyWith(
-                              color: Colors.grey.shade600,
-                              fontSize: 11,
-                              height: 1.2,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  _AdminProductMenu(
-                    product: product,
-                    onSelected: onSelected,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              ProductChipWrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: [
-                  _AdminProductInfoPill(
-                    key: ValueKey('admin-product-publish-state-${product.id}'),
-                    icon: visibilityIcon,
-                    label: visibilityLabel,
-                    color: visibilityColor,
-                  ),
-                  _AdminProductInfoPill(
-                    key: ValueKey('admin-product-availability-${product.id}'),
-                    icon: product.stockTrackingEnabled
-                        ? Icons.check_circle_outline
-                        : Icons.sync_disabled_outlined,
-                    label: availabilityLabel,
-                    color: availabilityColor,
-                  ),
-                  _AdminProductInfoPill(
-                    key: ValueKey(
-                        'admin-product-customer-quantity-${product.id}'),
-                    icon: product.stockTrackingEnabled &&
-                            product.showStockQuantityToCustomers
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined,
-                    label: quantityVisibilityLabel,
-                    color: product.stockTrackingEnabled &&
-                            product.showStockQuantityToCustomers
-                        ? AppTheme.green
-                        : Colors.blueGrey,
-                  ),
-                  if (product.stockTrackingEnabled)
-                    _AdminProductInfoPill(
-                      key: ValueKey(
-                        'admin-product-out-of-stock-behavior-${product.id}',
-                      ),
-                      icon: product.hideWhenOutOfStock
-                          ? Icons.hide_source_outlined
-                          : Icons.public_outlined,
-                      label: product.hideWhenOutOfStock
-                          ? 'يختفي عند النفاد'
-                          : 'يبقى ظاهراً عند النفاد',
-                      color: Colors.blueGrey,
-                    ),
-                  if (product.unitsPerBox != null && product.unitsPerBox! > 0)
-                    _AdminProductInfoPill(
-                      key: ValueKey('admin-product-box-units-${product.id}'),
-                      icon: Icons.inventory_outlined,
-                      label: '${product.unitsPerBox} في الصندوق',
-                      color: Colors.blueGrey,
-                    ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Container(
-                key: ValueKey('admin-product-stock-${product.id}'),
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .primaryContainer
-                      .withValues(alpha: .32),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: ProductChipWrap(
-                  spacing: 14,
-                  runSpacing: 3,
-                  children: [
-                    _AdminProductMetric(
-                      icon: Icons.inventory_2_outlined,
-                      label: 'المخزون',
-                      value: '${product.stockQuantity}',
-                    ),
-                    if (product.stockTrackingEnabled)
-                      _AdminProductMetric(
-                        icon: Icons.done_all,
-                        label: 'المتاح',
-                        value: '${product.orderableStockQuantity}',
-                      ),
-                    if (product.reservedQuantity > 0)
-                      _AdminProductMetric(
-                        icon: Icons.lock_clock_outlined,
-                        label: 'محجوز',
-                        value: '${product.reservedQuantity}',
-                      ),
-                    _AdminProductMetric(
-                      key: ValueKey('admin-product-moq-${product.id}'),
-                      icon: Icons.shopping_cart_checkout_outlined,
-                      label: 'أقل طلب',
-                      value: '${product.minOrderQty}',
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
-              ProductChipWrap(
-                key: ValueKey('admin-product-prices-${product.id}'),
-                spacing: 16,
-                runSpacing: 2,
-                children: [
-                  Text(
-                    'سعر الجملة ${lyd(product.price)}',
-                    softWrap: false,
-                    maxLines: 1,
-                    style: textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color: AppTheme.darkGreen,
-                    ),
-                  ),
-                  if (product.retailUnitPrice != null)
-                    Text(
-                      'بيع الوحدة المقترح ${lyd(product.retailUnitPrice!)}',
-                      softWrap: false,
-                      maxLines: 1,
-                      style: textTheme.bodySmall?.copyWith(
-                        color: Colors.grey.shade600,
-                        fontSize: 11,
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AdminProductCompactRow extends StatelessWidget {
-  const _AdminProductCompactRow({
-    required this.product,
-    required this.onTap,
-    required this.onSelected,
-    super.key,
-  });
-
-  final Product product;
-  final VoidCallback onTap;
-  final Future<void> Function(String value) onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final stateColor = _adminProductStateColor(product);
-    return Semantics(
-      button: true,
-      label: 'فتح تعديل ${product.name}',
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsetsDirectional.fromSTEB(10, 8, 4, 8),
-          child: Row(
-            children: [
-              ProductImagePlaceholder(
-                key: ValueKey('admin-product-compact-image-${product.id}'),
-                productId: product.id,
-                category: product.category,
-                imageUrl: product.imageUrl,
-                semanticLabel: 'صورة ${product.name}',
-                size: 40,
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      product.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        height: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      [
-                        if (product.brand.trim().isNotEmpty) product.brand,
-                        if (product.category.trim().isNotEmpty)
-                          product.category,
-                      ].join(' • '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.grey.shade600,
-                          ),
-                    ),
-                    const SizedBox(height: 4),
-                    ProductChipWrap(
-                      spacing: 10,
-                      runSpacing: 2,
-                      children: [
-                        Text(
-                          lyd(product.price),
-                          softWrap: false,
-                          maxLines: 1,
-                          style: const TextStyle(
-                            color: AppTheme.darkGreen,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        Text(
-                          product.stockTrackingEnabled
-                              ? 'المتاح ${product.orderableStockQuantity}'
-                              : 'المخزون غير متتبع',
-                          softWrap: false,
-                          maxLines: 1,
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                        Text(
-                          _adminProductStateLabel(product),
-                          softWrap: false,
-                          maxLines: 1,
-                          style: TextStyle(
-                            color: stateColor,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              _AdminProductMenu(
-                product: product,
-                onSelected: onSelected,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AdminProductGridTile extends StatelessWidget {
-  const _AdminProductGridTile({
-    required this.product,
-    required this.onTap,
-    required this.onSelected,
-    super.key,
-  });
-
-  final Product product;
-  final VoidCallback onTap;
-  final Future<void> Function(String value) onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final stateColor = _adminProductStateColor(product);
-    final textTheme = Theme.of(context).textTheme;
-    return Semantics(
-      button: true,
-      label: 'فتح تعديل ${product.name}',
-      child: InkWell(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  ProductImagePlaceholder(
-                    key: ValueKey('admin-product-grid-image-${product.id}'),
-                    productId: product.id,
-                    category: product.category,
-                    imageUrl: product.imageUrl,
-                    semanticLabel: 'صورة ${product.name}',
-                    expand: true,
-                    borderRadius: BorderRadius.zero,
-                  ),
-                  Positioned.directional(
-                    textDirection: Directionality.of(context),
-                    top: 4,
-                    end: 4,
-                    child: Material(
-                      color: Colors.white.withValues(alpha: .88),
-                      shape: const CircleBorder(),
-                      clipBehavior: Clip.antiAlias,
-                      child: _AdminProductMenu(
-                        product: product,
-                        onSelected: onSelected,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 7, 8, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    product.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      height: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    product.brand.trim().isEmpty
-                        ? product.category
-                        : '${product.brand} • ${product.category}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodySmall?.copyWith(
-                      color: Colors.grey.shade600,
-                      fontSize: 10.5,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Container(
-                        width: 7,
-                        height: 7,
-                        decoration: BoxDecoration(
-                          color: stateColor,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 5),
-                      Expanded(
-                        child: Text(
-                          _adminProductStateLabel(product),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: stateColor,
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        product.stockTrackingEnabled
-                            ? 'متاح ${product.orderableStockQuantity}'
-                            : 'غير متتبع',
-                        style: const TextStyle(fontSize: 10.5),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    lyd(product.price),
-                    style: textTheme.bodyMedium?.copyWith(
-                      color: AppTheme.darkGreen,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AdminProductMenu extends StatelessWidget {
-  const _AdminProductMenu({
-    required this.product,
-    required this.onSelected,
-  });
-
-  final Product product;
-  final Future<void> Function(String value) onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      key: ValueKey('admin-product-menu-${product.id}'),
-      tooltip: 'خيارات المنتج',
-      padding: EdgeInsets.zero,
-      iconSize: 22,
-      constraints: const BoxConstraints.tightFor(
-        width: 40,
-        height: 40,
-      ),
-      onSelected: (value) => unawaited(onSelected(value)),
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          key: ValueKey('admin-product-edit-${product.id}'),
-          value: 'edit',
-          child: const Text('تعديل'),
-        ),
-        if (product.isArchived)
-          PopupMenuItem(
-            key: ValueKey('admin-product-restore-${product.id}'),
-            value: 'restore',
-            child: const Text('استعادة ونشر المنتج'),
-          )
-        else
-          PopupMenuItem(
-            key: ValueKey('admin-product-archive-${product.id}'),
-            value: 'archive',
-            child: const Text('أرشفة المنتج'),
-          ),
-      ],
-    );
-  }
-}
-
-String _adminProductStateLabel(Product product) {
-  if (product.isArchived) return 'مؤرشف';
-  if (!product.active) return 'مخفي';
-  if (!product.stockTrackingEnabled) return 'ظاهر • غير متتبع';
-  if (!product.isOrderable) return 'غير متاح';
-  if (product.lowStock) return 'مخزون منخفض';
-  return 'ظاهر ومتاح';
-}
-
-Color _adminProductStateColor(Product product) {
-  if (product.isArchived || !product.active) return Colors.blueGrey;
-  if (!product.stockTrackingEnabled) return Colors.blueGrey;
-  if (!product.isOrderable) return AppTheme.red;
-  if (product.lowStock) return AppTheme.orange;
-  return AppTheme.green;
-}
-
-class _AdminProductInfoPill extends StatelessWidget {
-  const _AdminProductInfoPill({
-    required this.icon,
-    required this.label,
-    required this.color,
-    super.key,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return ProductInfoChip(
-      label,
-      icon: icon,
-      color: color,
-    );
-  }
-}
-
-class _AdminProductMetric extends StatelessWidget {
-  const _AdminProductMetric({
-    required this.icon,
-    required this.label,
-    required this.value,
-    super.key,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          icon,
-          size: 14,
-          color: Theme.of(context).colorScheme.primary,
-        ),
-        const SizedBox(width: 4),
-        Text.rich(
-          TextSpan(
-            children: [
-              TextSpan(text: '$label '),
-              TextSpan(
-                text: value,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ],
-          ),
-          maxLines: 1,
-          softWrap: false,
-          overflow: TextOverflow.visible,
-          style: const TextStyle(fontSize: 11, height: 1.25),
-        ),
-      ],
-    );
-  }
 }
 
 class _ProductImageEditor extends StatelessWidget {

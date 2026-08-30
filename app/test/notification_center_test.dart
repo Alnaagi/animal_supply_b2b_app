@@ -27,7 +27,8 @@ void main() {
     expect(find.text('منتجات جديدة'), findsOneWidget);
 
     expect(await repository.unreadCount(), 1);
-    await tester.tap(find.byKey(const Key('mark-all-notifications-read-button')));
+    await tester
+        .tap(find.byKey(const Key('mark-all-notifications-read-button')));
     await tester.pumpAndSettle();
     expect(await repository.unreadCount(), 0);
   });

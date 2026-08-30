@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/config/app_config.dart';
 import '../models/app_user.dart';
 import '../repositories/demo_data.dart';
 
@@ -36,6 +37,10 @@ class LocalAuthSessionStore {
   }
 
   Future<AppUser?> readDemoUser() async {
+    if (!AppConfig.allowsDemoCredentials) {
+      await clearDemoUser();
+      return null;
+    }
     final prefs = await _store();
     final raw = prefs?.getString(userKey);
     if (raw == null || raw.isEmpty) return null;
@@ -50,7 +55,7 @@ class LocalAuthSessionStore {
   }
 
   Future<bool> saveDemoUser(AppUser user) async {
-    if (!user.isDemo) return false;
+    if (!AppConfig.allowsDemoCredentials || !user.isDemo) return false;
     final canonical = demoUserById(user.id);
     if (canonical == null) return false;
     final prefs = await _store();

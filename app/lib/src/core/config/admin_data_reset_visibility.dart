@@ -13,8 +13,7 @@ class AdminDataResetVisibility {
 
   bool get showDemoLocalReset => demoMode;
 
-  bool get showProductionRemoteReset =>
-      !demoMode && productionBackendLive;
+  bool get showProductionRemoteReset => !demoMode && productionBackendLive;
 
   bool get showLocalCacheOnlyReset => !demoMode && productionBackendLive;
 }

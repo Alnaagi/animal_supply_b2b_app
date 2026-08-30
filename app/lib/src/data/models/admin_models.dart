@@ -18,6 +18,7 @@ class BusinessCustomer {
     this.creditLimit = 0,
     this.outstandingBalance = 0,
     this.updatedAt,
+    this.lastActiveAt,
   });
 
   final String id;
@@ -35,6 +36,7 @@ class BusinessCustomer {
   final double creditLimit;
   final double outstandingBalance;
   final DateTime? updatedAt;
+  final DateTime? lastActiveAt;
 
   bool get active => accountStatus == 'active';
 
@@ -54,6 +56,7 @@ class BusinessCustomer {
     double? creditLimit,
     double? outstandingBalance,
     DateTime? updatedAt,
+    DateTime? lastActiveAt,
   }) {
     return BusinessCustomer(
       id: id ?? this.id,
@@ -71,6 +74,7 @@ class BusinessCustomer {
       creditLimit: creditLimit ?? this.creditLimit,
       outstandingBalance: outstandingBalance ?? this.outstandingBalance,
       updatedAt: updatedAt ?? this.updatedAt,
+      lastActiveAt: lastActiveAt ?? this.lastActiveAt,
     );
   }
 
@@ -95,8 +99,28 @@ class BusinessCustomer {
       creditLimit: ((row['credit_limit'] ?? 0) as num).toDouble(),
       outstandingBalance: ((row['outstanding_balance'] ?? 0) as num).toDouble(),
       updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? ''),
+      lastActiveAt: _customerLastActiveAt(row),
     );
   }
+}
+
+DateTime? _customerLastActiveAt(Map<String, dynamic> row) {
+  final profile = row['profiles'];
+  final candidates = <Object?>[
+    if (profile is Map) ...[
+      profile['last_active_at'],
+      profile['customer_last_active_at'],
+      profile['last_seen_at'],
+      profile['last_login_at'],
+    ],
+    row['last_active_at'],
+    row['last_seen_at'],
+  ];
+  for (final value in candidates) {
+    final parsed = DateTime.tryParse(value?.toString() ?? '');
+    if (parsed != null) return parsed;
+  }
+  return null;
 }
 
 double validatedCustomerDiscountPercent(Object? value) {
@@ -482,6 +506,48 @@ class AppSettingsData {
   }
 }
 
+/// Customer banner frame aspect. Defaults to [wide] for existing banners.
+enum BannerAspectMode {
+  wide,
+  square;
+
+  /// Landscape strip matching upload crop / demo assets (1600×620).
+  static const double wideRatio = 1600 / 620;
+
+  /// Square 1:1 frame.
+  static const double squareRatio = 1.0;
+
+  double get ratio => switch (this) {
+        wide => wideRatio,
+        square => squareRatio,
+      };
+
+  String get storageValue => switch (this) {
+        wide => 'wide',
+        square => 'square',
+      };
+
+  String get labelAr => switch (this) {
+        wide => 'عريض',
+        square => 'مربع 1:1',
+      };
+
+  String get uploadAdviceAr => switch (this) {
+        wide =>
+          'الأفضل: 1600×620 بكسل (أو قريب من 16:9). الصورة تملأ الإطار بالكامل حتى لو اختلف المقاس.',
+        square =>
+          'الأفضل: 1080×1080 بكسل (مربع 1:1). الصورة تملأ الإطار بالكامل حتى لو اختلف المقاس.',
+      };
+
+  static BannerAspectMode parse(Object? raw) {
+    final value = raw?.toString().trim().toLowerCase() ?? '';
+    if (value == 'square' || value == '1:1' || value == '1x1') {
+      return square;
+    }
+    return wide;
+  }
+}
+
 class AppBanner {
   static const supportedTargetTypes = <String>{
     'catalog',
@@ -499,6 +565,8 @@ class AppBanner {
     this.targetValue = '',
     this.sortOrder = 0,
     this.active = true,
+    this.aspectMode = BannerAspectMode.wide,
+    this.archivedAt,
     this.updatedAt,
   });
 
@@ -511,7 +579,11 @@ class AppBanner {
   final String targetValue;
   final int sortOrder;
   final bool active;
+  final BannerAspectMode aspectMode;
+  final DateTime? archivedAt;
   final DateTime? updatedAt;
+
+  bool get isArchived => archivedAt != null;
 
   AppBanner copyWith({
     String? id,
@@ -523,6 +595,9 @@ class AppBanner {
     String? targetValue,
     int? sortOrder,
     bool? active,
+    BannerAspectMode? aspectMode,
+    DateTime? archivedAt,
+    bool clearArchivedAt = false,
     DateTime? updatedAt,
   }) {
     return AppBanner(
@@ -535,6 +610,8 @@ class AppBanner {
       targetValue: targetValue ?? this.targetValue,
       sortOrder: sortOrder ?? this.sortOrder,
       active: active ?? this.active,
+      aspectMode: aspectMode ?? this.aspectMode,
+      archivedAt: clearArchivedAt ? null : archivedAt ?? this.archivedAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -549,6 +626,8 @@ class AppBanner {
         'target_value': targetValue.isEmpty ? null : targetValue,
         'sort_order': sortOrder,
         'active': active,
+        'aspect_mode': aspectMode.storageValue,
+        'archived_at': archivedAt?.toIso8601String(),
       };
 
   factory AppBanner.fromSupabase(Map<String, dynamic> row) => AppBanner(
@@ -561,6 +640,8 @@ class AppBanner {
         targetValue: (row['target_value'] ?? '').toString(),
         sortOrder: (row['sort_order'] as num?)?.toInt() ?? 0,
         active: row['active'] != false,
+        aspectMode: BannerAspectMode.parse(row['aspect_mode']),
+        archivedAt: DateTime.tryParse(row['archived_at']?.toString() ?? ''),
         updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? ''),
       );
 }

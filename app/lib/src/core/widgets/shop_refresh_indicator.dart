@@ -1,5 +1,5 @@
 import 'dart:math' as math;
-import 'dart:ui' show lerpDouble;
+import 'dart:ui' show ImageFilter, lerpDouble;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import '../localization/arabic_copy.dart';
 import '../theme/app_theme.dart';
 
-/// Pull-to-refresh with a stretching green arrow that morphs into a loading circle.
+/// Pull-to-refresh with a frosted-glass HUD and a lightweight spinner.
 class ShopRefreshIndicator extends StatefulWidget {
   const ShopRefreshIndicator({
     required this.onRefresh,
@@ -52,13 +52,18 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
   RefreshIndicatorStatus? _status;
   double? _dragOffset;
   late final AnimationController _pull;
-  late final AnimationController _morph;
   late final AnimationController _spin;
   bool _overlayVisible = false;
 
   bool get _spinning =>
       _status == RefreshIndicatorStatus.snap ||
       _status == RefreshIndicatorStatus.refresh;
+
+  bool get _reduceMotion {
+    final media = MediaQuery.maybeOf(context);
+    return media?.disableAnimations == true ||
+        media?.accessibleNavigation == true;
+  }
 
   bool get _shouldShowOverlay {
     final status = _status;
@@ -68,7 +73,7 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
         status == RefreshIndicatorStatus.refresh) {
       return true;
     }
-    return _pull.value > 0.02 || _morph.value > 0.02;
+    return _pull.value > 0.02;
   }
 
   @override
@@ -80,24 +85,17 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
       lowerBound: 0,
       upperBound: ShopRefreshIndicator.maxPull,
     );
-    _morph = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 340),
-    );
     _spin = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
     );
     _pull.addListener(_syncOverlayVisibility);
-    _morph.addListener(_syncOverlayVisibility);
   }
 
   @override
   void dispose() {
     _pull.removeListener(_syncOverlayVisibility);
-    _morph.removeListener(_syncOverlayVisibility);
     _pull.dispose();
-    _morph.dispose();
     _spin.dispose();
     super.dispose();
   }
@@ -112,6 +110,10 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
     double next, {
     required Duration duration,
   }) {
+    if (_reduceMotion) {
+      _pull.value = next.clamp(0.0, ShopRefreshIndicator.maxPull);
+      return Future<void>.value();
+    }
     if ((next - _pull.value).abs() < 0.003 && !_pull.isAnimating) {
       return Future<void>.value();
     }
@@ -129,18 +131,8 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
       case RefreshIndicatorStatus.drag:
         _spin.stop();
         _spin.reset();
-        _morph.animateTo(
-          0,
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-        );
       case RefreshIndicatorStatus.armed:
         _spin.stop();
-        _morph.animateTo(
-          0.38,
-          duration: const Duration(milliseconds: 240),
-          curve: Curves.easeInOutCubic,
-        );
         if (_pull.value < 1) {
           _animatePullTo(
             1,
@@ -149,26 +141,22 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
         }
       case RefreshIndicatorStatus.snap:
       case RefreshIndicatorStatus.refresh:
-        _morph.animateTo(
-          1,
-          duration: const Duration(milliseconds: 320),
-          curve: Curves.easeInOutCubic,
-        );
         _animatePullTo(
           1,
           duration: const Duration(milliseconds: 280),
         );
-        _spin.repeat();
+        if (_reduceMotion) {
+          _spin
+            ..stop()
+            ..value = 0;
+        } else {
+          _spin.repeat();
+        }
       case RefreshIndicatorStatus.canceled:
       case RefreshIndicatorStatus.done:
       case null:
         _spin.stop();
         _spin.reset();
-        _morph.animateTo(
-          0,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOutCubic,
-        );
         _dragOffset = null;
         _animatePullTo(
           0,
@@ -224,8 +212,6 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
     final delta = (next - _pull.value).abs();
     if (delta < 0.002) return;
 
-    // Follow the finger with light smoothing. Restarting animateTo on every
-    // overscroll chunk fights the gesture and feels jumpy on Flutter web.
     if (_pull.isAnimating) {
       _pull.stop();
     }
@@ -237,6 +223,7 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
   @override
   Widget build(BuildContext context) {
     final rtl = Directionality.of(context) == TextDirection.rtl;
+    final reduceMotion = _reduceMotion;
     return Stack(
       children: [
         NotificationListener<ScrollNotification>(
@@ -263,14 +250,14 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
             right: 0,
             child: IgnorePointer(
               child: AnimatedBuilder(
-                animation: Listenable.merge([_pull, _morph, _spin]),
+                animation: Listenable.merge([_pull, _spin]),
                 builder: (context, _) {
                   return _ShopPullRefreshHud(
                     pull: _pull.value,
-                    morph: _morph.value,
                     spin: _spin.value,
                     spinning: _spinning,
                     rtl: rtl,
+                    reduceMotion: reduceMotion,
                     message: ShopRefreshIndicator.messageFor(_status),
                   );
                 },
@@ -285,28 +272,26 @@ class _ShopRefreshIndicatorState extends State<ShopRefreshIndicator>
 class _ShopPullRefreshHud extends StatelessWidget {
   const _ShopPullRefreshHud({
     required this.pull,
-    required this.morph,
     required this.spin,
     required this.spinning,
     required this.rtl,
+    required this.reduceMotion,
     required this.message,
   });
 
   final double pull;
-  final double morph;
   final double spin;
   final bool spinning;
   final bool rtl;
+  final bool reduceMotion;
   final String message;
 
   @override
   Widget build(BuildContext context) {
-    final clamped = pull.clamp(0.0, ShopRefreshIndicator.maxPull);
-    final appear = clamped.clamp(0.0, 1.0);
-    final stretchT = Curves.easeOutCubic.transform(appear);
-    final stretch = 1.0 + ((1.0 - morph) * stretchT * 0.26);
-    final drop = 8.0 + (appear * 18.0) + (morph * 8.0);
-    final scale = 0.78 + (appear * 0.22);
+    final scheme = Theme.of(context).colorScheme;
+    final appear = pull.clamp(0.0, 1.0);
+    final drop = 10.0 + (appear * 16.0);
+    final scale = 0.88 + (appear * 0.12);
 
     return Padding(
       padding: EdgeInsets.only(top: drop),
@@ -314,39 +299,17 @@ class _ShopPullRefreshHud extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Opacity(
-            opacity: (0.28 + appear * 0.72).clamp(0.0, 1.0),
+            opacity: (0.35 + appear * 0.65).clamp(0.0, 1.0),
             child: Transform.scale(
               scale: scale,
-              child: _RefreshMark(
+              child: _FrostedRefreshHud(
                 pull: appear,
-                morph: morph,
-                stretch: stretch,
                 spin: spin,
                 spinning: spinning,
                 rtl: rtl,
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
-            switchInCurve: Curves.easeOut,
-            switchOutCurve: Curves.easeIn,
-            child: Text(
-              message,
-              key: ValueKey(message),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppTheme.darkGreen.withValues(alpha: 0.92),
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-                height: 1.2,
-                shadows: const [
-                  Shadow(
-                    color: Color(0x66ffffff),
-                    blurRadius: 8,
-                  ),
-                ],
+                reduceMotion: reduceMotion,
+                message: message,
+                color: scheme.primary,
               ),
             ),
           ),
@@ -356,42 +319,87 @@ class _ShopPullRefreshHud extends StatelessWidget {
   }
 }
 
-class _RefreshMark extends StatelessWidget {
-  const _RefreshMark({
+class _FrostedRefreshHud extends StatelessWidget {
+  const _FrostedRefreshHud({
     required this.pull,
-    required this.morph,
-    required this.stretch,
     required this.spin,
     required this.spinning,
     required this.rtl,
+    required this.reduceMotion,
+    required this.message,
+    required this.color,
   });
 
   final double pull;
-  final double morph;
-  final double stretch;
   final double spin;
   final bool spinning;
   final bool rtl;
+  final bool reduceMotion;
+  final String message;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      key: const Key('shop-refresh-indicator'),
-      elevation: 3,
-      shadowColor: AppTheme.green.withValues(alpha: 0.28),
-      color: Colors.white,
-      shape: const CircleBorder(),
-      child: SizedBox.square(
-        dimension: 52,
-        child: CustomPaint(
-          size: const Size.square(52),
-          painter: _StretchingRefreshPainter(
-            pull: pull,
-            morph: morph,
-            stretch: stretch,
-            spin: spin,
-            rtl: rtl,
-            spinning: spinning,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.72),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: color.withValues(alpha: 0.22),
+              width: 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.10),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox.square(
+                  dimension: 28,
+                  key: const Key('shop-refresh-indicator'),
+                  child: CustomPaint(
+                    painter: _RefreshRingPainter(
+                      pull: pull,
+                      spin: spin,
+                      spinning: spinning,
+                      rtl: rtl,
+                      color: color,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                AnimatedSwitcher(
+                  duration: reduceMotion ? Duration.zero : AppMotion.quick,
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  child: Text(
+                    message,
+                    key: ValueKey(message),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.94),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -399,134 +407,58 @@ class _RefreshMark extends StatelessWidget {
   }
 }
 
-class _StretchingRefreshPainter extends CustomPainter {
-  _StretchingRefreshPainter({
+class _RefreshRingPainter extends CustomPainter {
+  _RefreshRingPainter({
     required this.pull,
-    required this.morph,
-    required this.stretch,
     required this.spin,
-    required this.rtl,
     required this.spinning,
+    required this.rtl,
+    required this.color,
   });
 
   final double pull;
-  final double morph;
-  final double stretch;
   final double spin;
-  final bool rtl;
   final bool spinning;
+  final bool rtl;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    const color = AppTheme.green;
-    final arrowOpacity = (1.0 - morph).clamp(0.0, 1.0);
-    final ringOpacity = morph.clamp(0.0, 1.0);
-
-    if (arrowOpacity > 0.02) {
-      canvas.save();
-      canvas.translate(center.dx, center.dy);
-      canvas.scale(1, stretch);
-      canvas.translate(-center.dx, -center.dy);
-      _paintArrow(canvas, size, center, color.withValues(alpha: arrowOpacity));
-      canvas.restore();
-    }
-    if (ringOpacity > 0.02) {
-      _paintRing(
-        canvas,
-        center,
-        size.width * 0.30,
-        color,
-        ringOpacity,
-      );
-    }
-  }
-
-  void _paintArrow(Canvas canvas, Size size, Offset center, Color color) {
-    final w = size.width;
-    final h = size.height;
-    final length = lerpDouble(h * 0.28, h * 0.42, pull)!;
-    final top = center.dy - length * 0.42;
-    final bottom = center.dy + length * 0.46;
-    final stroke = lerpDouble(2.6, 3.4, pull)!;
-
-    final shaft = Paint()
-      ..color = color
-      ..strokeWidth = stroke
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    canvas.drawLine(Offset(center.dx, top), Offset(center.dx, bottom), shaft);
-
-    final head = Path()
-      ..moveTo(center.dx - w * 0.16, bottom - h * 0.12)
-      ..lineTo(center.dx, bottom + h * 0.02)
-      ..lineTo(center.dx + w * 0.16, bottom - h * 0.12);
-    canvas.drawPath(head, shaft);
-  }
-
-  void _paintRing(
-    Canvas canvas,
-    Offset center,
-    double radius,
-    Color color,
-    double opacity,
-  ) {
-    final sweep = spinning
-        ? lerpDouble(1.35, 1.65, pull)! * math.pi
-        : lerpDouble(1.15, 1.85, pull)! * math.pi;
+    final radius = size.width * 0.34;
+    final sweep =
+        spinning ? 1.55 * math.pi : lerpDouble(0.85, 1.35, pull)! * math.pi;
     final start =
         -math.pi / 2 + (spinning ? spin * math.pi * 2 * (rtl ? -1 : 1) : 0);
     final signedSweep = rtl ? -sweep : sweep;
-    final paint = Paint()
-      ..color = color.withValues(alpha: opacity)
+
+    final track = Paint()
+      ..color = color.withValues(alpha: 0.18)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.1
+      ..strokeWidth = 2.6
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(center, radius, track);
+
+    final arc = Paint()
+      ..color = color.withValues(alpha: spinning ? 0.95 : 0.72 + pull * 0.2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.8
       ..strokeCap = StrokeCap.round;
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: radius),
       start,
       signedSweep,
       false,
-      paint,
-    );
-
-    if (spinning) return;
-
-    final end = start + signedSweep;
-    final headScale = (1.0 - (opacity * 0.35)).clamp(0.35, 1.0);
-    final ux = math.cos(end);
-    final uy = math.sin(end);
-    final tip = Offset(
-      center.dx + ux * radius - uy * 9 * headScale * (rtl ? -1 : 1),
-      center.dy + uy * radius + ux * 9 * headScale * (rtl ? -1 : 1),
-    );
-    final inner = Offset(
-      center.dx + ux * (radius - 5.5 * headScale),
-      center.dy + uy * (radius - 5.5 * headScale),
-    );
-    final outer = Offset(
-      center.dx + ux * (radius + 5.5 * headScale),
-      center.dy + uy * (radius + 5.5 * headScale),
-    );
-    final head = Path()
-      ..moveTo(inner.dx, inner.dy)
-      ..lineTo(outer.dx, outer.dy)
-      ..lineTo(tip.dx, tip.dy)
-      ..close();
-    canvas.drawPath(
-      head,
-      Paint()..color = color.withValues(alpha: opacity * 0.95),
+      arc,
     );
   }
 
   @override
-  bool shouldRepaint(covariant _StretchingRefreshPainter oldDelegate) {
+  bool shouldRepaint(covariant _RefreshRingPainter oldDelegate) {
     return oldDelegate.pull != pull ||
-        oldDelegate.morph != morph ||
-        oldDelegate.stretch != stretch ||
         oldDelegate.spin != spin ||
         oldDelegate.rtl != rtl ||
-        oldDelegate.spinning != spinning;
+        oldDelegate.spinning != spinning ||
+        oldDelegate.color != color;
   }
 }

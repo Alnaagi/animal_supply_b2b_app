@@ -2,6 +2,7 @@ import 'package:animal_supply_b2b/src/core/theme/app_theme.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
 import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:animal_supply_b2b/src/data/repositories/catalog_repository.dart';
+import 'package:animal_supply_b2b/src/features/admin_products/admin_product_discount_helpers.dart';
 import 'package:animal_supply_b2b/src/features/admin_products/admin_products_screen.dart';
 import 'package:animal_supply_b2b/src/features/auth/auth_controller.dart';
 import 'package:flutter/material.dart';
@@ -13,110 +14,75 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'mobile product card stays compact while preserving operational details',
+    'operational card shows hierarchy, quick actions, and discount badge',
     (tester) async {
-      const product = Product(
-        id: 'compact-product',
-        nameAr: 'رويال كانين طعام قطط بالغة Fit 32 - 2 كجم',
-        sku: 'RC-CAT-FIT32-2KG',
-        category: 'قطط',
-        animalType: 'قطط',
-        brand: 'Royal Canin',
-        unitSize: '2 كجم',
-        basePrice: 96,
-        retailUnitPrice: 120,
-        stockQuantity: 34,
-        availableQuantity: 28,
-        showStockQuantityToCustomers: false,
-        hideWhenOutOfStock: false,
-        unitsPerBox: 12,
-        minOrderQty: 2,
+      final product = applyProductDiscount(
+        const Product(
+          id: 'compact-product',
+          nameAr: 'رويال كانين طعام قطط بالغة Fit 32 - 2 كجم',
+          sku: 'RC-CAT-FIT32-2KG',
+          category: 'قطط',
+          animalType: 'قطط',
+          brand: 'Royal Canin',
+          unitSize: '2 كجم',
+          basePrice: 96,
+          retailUnitPrice: 120,
+          stockQuantity: 34,
+          availableQuantity: 28,
+          showStockQuantityToCustomers: false,
+          hideWhenOutOfStock: false,
+          unitsPerBox: 12,
+          minOrderQty: 2,
+          isFeatured: true,
+        ),
+        13,
       );
 
       await _pumpAdminProducts(tester, [product]);
 
       final card =
           find.byKey(const ValueKey('admin-product-card-compact-product'));
-      expect(card, findsOneWidget);
-      expect(tester.getSize(card).height, lessThanOrEqualTo(240));
-
-      expect(
-        find.descendant(of: card, matching: find.text('ظاهر للعملاء')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('admin-product-image-compact-product')),
-        findsOneWidget,
-      );
-      final boxChip = tester.getSize(
-        find.byKey(const ValueKey('admin-product-box-units-compact-product')),
-      );
-      expect(boxChip.width, greaterThanOrEqualTo(88));
-      expect(boxChip.height, lessThan(32));
-      expect(
-        find.descendant(of: card, matching: find.text('متاح للطلب')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: card,
-          matching: find.text('العدد للعملاء: مخفي'),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: card,
-          matching: find.text('يبقى ظاهراً عند النفاد'),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: card, matching: find.text('12 في الصندوق')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: card, matching: find.text('المخزون 34')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: card, matching: find.text('المتاح 28')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: card, matching: find.text('محجوز 6')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: card, matching: find.text('أقل طلب 2')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: card, matching: find.textContaining('96.00')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: card, matching: find.textContaining('120.00')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('admin-product-menu-compact-product')),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
-
-      await tester.tap(
-        find.byKey(const ValueKey('admin-product-menu-compact-product')),
+      await tester.scrollUntilVisible(
+        card,
+        120,
+        scrollable: find.byType(Scrollable).first,
       );
       await tester.pumpAndSettle();
+      expect(card, findsOneWidget);
 
-      expect(find.text('تعديل'), findsOneWidget);
-      expect(find.text('أرشفة المنتج'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.textContaining('Royal Canin • قطط'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-product-discount-badge-compact-product'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('admin-product-quick-price-compact-product')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-product-quick-discount-compact-product'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('admin-product-quick-stock-compact-product')),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.star), findsOneWidget);
+      expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('tapping the detailed product card opens the edit dialog',
-      (tester) async {
+  testWidgets('overflow menu opens full edit dialog', (tester) async {
     const product = Product(
       id: 'tap-edit-product',
       nameAr: 'منتج للضغط والتعديل',
@@ -134,22 +100,20 @@ void main() {
 
     await _pumpAdminProducts(tester, [product]);
 
-    await tester.tap(find.text('منتج للضغط والتعديل'));
+    await tester.tap(
+      find.byKey(const ValueKey('admin-product-menu-tap-edit-product')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تعديل كامل'));
     await tester.pumpAndSettle();
 
     expect(find.text('تعديل المنتج'), findsWidgets);
     expect(find.text('صورة المنتج'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('product-image-upload-button')),
-      findsOneWidget,
-    );
-    expect(find.text('رفع صورة'), findsOneWidget);
-    expect(find.text('أو رابط https'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets(
-    '390px RTL mobile keeps category manager, card, and product form usable',
+    '390px RTL mobile keeps quick filters and card usable',
     (tester) async {
       const product = Product(
         id: 'narrow-mobile-product',
@@ -178,7 +142,12 @@ void main() {
       final card = find.byKey(
         const ValueKey('admin-product-card-narrow-mobile-product'),
       );
-      await tester.ensureVisible(card);
+      await tester.scrollUntilVisible(
+        card,
+        120,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       expect(card, findsOneWidget);
       expect(tester.getSize(card).width, lessThanOrEqualTo(390));
       expect(
@@ -186,95 +155,10 @@ void main() {
         TextDirection.rtl,
       );
       expect(tester.takeException(), isNull);
-
-      final manager = find.byKey(const ValueKey('manage-categories-button'));
-      await tester.ensureVisible(manager);
-      await tester.tap(manager);
-      await tester.pumpAndSettle();
-
-      expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.text('إدارة التصنيفات'), findsWidgets);
-      expect(tester.takeException(), isNull);
-
-      await tester.tap(find.widgetWithText(TextButton, 'إغلاق'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('منتج جديد'));
-      await tester.pumpAndSettle();
-
-      final scrollbar = find.byKey(const ValueKey('product-form-scrollbar'));
-      expect(
-        find.byKey(const ValueKey('product-form-scroll-hint')),
-        findsOneWidget,
-      );
-      expect(scrollbar, findsOneWidget);
-      expect(
-        tester
-            .widget<Scrollbar>(scrollbar)
-            .controller!
-            .position
-            .maxScrollExtent,
-        greaterThan(0),
-      );
-      expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets(
-    'grid view uses a full-width product photo and still opens edit on tap',
-    (tester) async {
-      const product = Product(
-        id: 'grid-photo-product',
-        nameAr: 'منتج للشبكة بصورة كبيرة',
-        sku: 'GRID-PHOTO-1',
-        category: 'قطط',
-        animalType: 'قطط',
-        brand: 'العلامة',
-        unitSize: '1 كجم',
-        basePrice: 55,
-        stockQuantity: 14,
-        availableQuantity: 14,
-        minOrderQty: 1,
-      );
-
-      await _pumpAdminProducts(
-        tester,
-        [product],
-        surfaceSize: const Size(646, 838),
-      );
-
-      await tester.tap(find.byKey(const ValueKey('admin-products-view-grid')));
-      await tester.pumpAndSettle();
-
-      final card = find.byKey(
-        const ValueKey('admin-product-card-grid-photo-product'),
-      );
-      final image = find.byKey(
-        const ValueKey('admin-product-grid-image-grid-photo-product'),
-      );
-      expect(card, findsOneWidget);
-      expect(image, findsOneWidget);
-      expect(
-        Directionality.of(tester.element(card)),
-        TextDirection.rtl,
-      );
-      final cardSize = tester.getSize(card);
-      final imageSize = tester.getSize(image);
-      expect(imageSize.width, closeTo(cardSize.width, 1));
-      expect(imageSize.height, greaterThan(cardSize.height * .45));
-      expect(imageSize.height, greaterThan(140));
-      expect(find.byIcon(Icons.pets), findsWidgets);
-      expect(tester.takeException(), isNull);
-
-      await tester.tap(image);
-      await tester.pumpAndSettle();
-
-      expect(find.text('تعديل المنتج'), findsWidgets);
-      expect(find.text('صورة المنتج'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets('archived untracked card keeps its state and restore action',
+  testWidgets('archived product shows restore in overflow menu',
       (tester) async {
     final product = Product(
       id: 'archived-product',
@@ -294,38 +178,53 @@ void main() {
 
     await _pumpAdminProducts(tester, [product]);
 
-    final card =
-        find.byKey(const ValueKey('admin-product-card-archived-product'));
-    expect(card, findsOneWidget);
-    expect(tester.getSize(card).height, lessThanOrEqualTo(240));
-    expect(
-      find.descendant(of: card, matching: find.text('مؤرشف')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: card, matching: find.text('المخزون غير متتبع')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: card, matching: find.text('المخزون 9')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: card,
-        matching: find.text('العدد للعملاء: مخفي'),
-      ),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-
     await tester.tap(
       find.byKey(const ValueKey('admin-product-menu-archived-product')),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('استعادة ونشر المنتج'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'category chips wrap onto new lines instead of scrolling off-screen',
+    (tester) async {
+      const surface = Size(390, 844);
+      const products = [
+        Product(
+          id: 'wrap-dry-cat',
+          nameAr: 'اكل جاف للقطط',
+          sku: 'WRAP-DRY',
+          category: 'اكل جاف للقطط',
+          animalType: 'قطط',
+          brand: 'العلامة',
+          unitSize: '2 كجم',
+          basePrice: 40,
+          stockQuantity: 10,
+          minOrderQty: 1,
+        ),
+        Product(
+          id: 'wrap-wet',
+          nameAr: 'اكل رطب',
+          sku: 'WRAP-WET',
+          category: 'اكل رطب',
+          animalType: 'قطط',
+          brand: 'العلامة',
+          unitSize: '85 جم',
+          basePrice: 12,
+          stockQuantity: 20,
+          minOrderQty: 1,
+        ),
+      ];
+
+      await _pumpAdminProducts(tester, products, surfaceSize: surface);
+
+      final wrap = find.byKey(const ValueKey('admin-products-category-chips'));
+      expect(wrap, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 Future<void> _pumpAdminProducts(

@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:animal_supply_b2b/src/core/constants/order_status.dart';
+import 'package:animal_supply_b2b/src/core/widgets/product_image_placeholder.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
 import 'package:animal_supply_b2b/src/data/models/order.dart';
+import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:animal_supply_b2b/src/data/repositories/orders_repository.dart';
 import 'package:animal_supply_b2b/src/data/sync/sync_outbox.dart';
 import 'package:animal_supply_b2b/src/features/admin_orders/admin_orders_screen.dart';
@@ -220,6 +224,65 @@ void main() {
     });
   });
 
+  testWidgets('orders initial loading uses an RTL skeleton at 338px',
+      (tester) async {
+    tester.view.physicalSize = const Size(338, 838);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final prefs = await SharedPreferences.getInstance();
+    final outbox = SyncOutbox(prefs: prefs);
+    addTearDown(outbox.dispose);
+    final repository = _PendingOrdersRepository();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          syncOutboxProvider.overrideWithValue(outbox),
+          authControllerProvider.overrideWith(
+            (ref) => _FixedAuthController(
+              const AppUser(
+                id: 'profile-a',
+                username: 'customer',
+                role: 'customer',
+                businessName: 'متجر الاختبار',
+                customerId: 'customer-a',
+              ),
+            ),
+          ),
+          ordersRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(disableAnimations: true),
+            child: Directionality(
+              textDirection: TextDirection.rtl,
+              child: Scaffold(body: OrdersScreen()),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final skeleton = find.byKey(const ValueKey('orders-initial-skeleton'));
+    expect(skeleton, findsOneWidget);
+    expect(find.byKey(const Key('shop-skeleton')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('orders-skeleton-card-0')),
+      findsOneWidget,
+    );
+    expect(
+      Directionality.of(tester.element(skeleton)),
+      TextDirection.rtl,
+    );
+    expect(tester.takeException(), isNull);
+
+    repository.complete();
+    await tester.pump();
+    await tester.pumpAndSettle();
+  });
+
   testWidgets(
       'customer deep-link lookup is scoped and load more reuses the snapshot',
       (tester) async {
@@ -295,6 +358,122 @@ void main() {
     expect(repository.pageCalls, hasLength(2));
     expect(repository.pageCalls.last.offset, 1);
     expect(repository.pageCalls.last.snapshotAt, _ScreenOrdersRepository.time);
+  });
+
+  testWidgets('orders success panel renders and can clear success state',
+      (tester) async {
+    tester.view.physicalSize = const Size(338, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final prefs = await SharedPreferences.getInstance();
+    final outbox = SyncOutbox(prefs: prefs);
+    addTearDown(outbox.dispose);
+    final order = _order(
+      id: 'success-order',
+      orderNumber: 'ORD-SUCCESS',
+      customerId: 'customer-a',
+      createdAt: DateTime.utc(2026, 7, 22, 11),
+      items: const [
+        OrderItem(
+          id: 'item-1',
+          productId: 'product-1',
+          productName: 'علف اختبار',
+          productSku: 'FEED-1',
+          unitSize: '25 كجم',
+          packageLabel: '25 كجم',
+          unitsPerBox: 10,
+          quantity: 1,
+          unitPrice: 100,
+          lineTotal: 100,
+          product: Product(
+            id: 'product-1',
+            nameAr: 'علف اختبار',
+            sku: 'FEED-1',
+            category: 'أعلاف',
+            animalType: 'مواشي',
+            brand: 'المورد',
+            unitSize: '25 كجم',
+            basePrice: 100,
+            imageUrl: 'https://example.com/order-product.png',
+            stockQuantity: 50,
+            minOrderQty: 1,
+          ),
+        ),
+      ],
+    );
+    final repository = _ScreenOrdersRepository(
+      firstPage: [order],
+      secondPage: const [],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          syncOutboxProvider.overrideWithValue(outbox),
+          authControllerProvider.overrideWith(
+            (ref) => _FixedAuthController(
+              const AppUser(
+                id: 'profile-a',
+                username: 'customer',
+                role: 'customer',
+                businessName: 'متجر الاختبار',
+                customerId: 'customer-a',
+              ),
+            ),
+          ),
+          ordersRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(disableAnimations: true),
+            child: Directionality(
+              textDirection: TextDirection.rtl,
+              child: Scaffold(
+                body: OrdersScreen(
+                  highlightedOrderId: 'success-order',
+                  showSuccessState: true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('orders-success-panel')), findsOneWidget);
+    expect(find.text('تم استلام طلبك بنجاح!'), findsOneWidget);
+    expect(find.text('طلب ORD-SUCCESS'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey('customer-order-preview-image-success-order'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey(
+          'customer-order-item-image-success-order-product-1',
+        ),
+      ),
+      findsOneWidget,
+    );
+    final orderImage = tester.widget<ProductImagePlaceholder>(
+      find.byKey(
+        const ValueKey(
+          'customer-order-item-image-success-order-product-1',
+        ),
+      ),
+    );
+    expect(orderImage.imageUrl, 'https://example.com/order-product.png');
+    expect(orderImage.fit, BoxFit.contain);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('orders-success-view-order')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('orders-success-panel')), findsNothing);
   });
 
   testWidgets('admin combined filters and pagination stay server-side and RTL',
@@ -615,6 +794,38 @@ class _ScreenOrdersRepository extends OrdersRepository {
   }
 }
 
+class _PendingOrdersRepository extends OrdersRepository {
+  _PendingOrdersRepository() : super.demo(seed: const []);
+
+  final Completer<OrdersPage> _page = Completer<OrdersPage>();
+
+  @override
+  Future<OrdersPage> ordersPage({
+    String? customerId,
+    OrderStatus? status,
+    Iterable<OrderStatus>? statuses,
+    DateTime? createdFrom,
+    DateTime? createdUntil,
+    DateTime? snapshotAt,
+    int offset = 0,
+    int pageSize = OrdersRepository.defaultPageSize,
+  }) {
+    return _page.future;
+  }
+
+  void complete() {
+    if (_page.isCompleted) return;
+    _page.complete(
+      OrdersPage(
+        orders: const [],
+        hasMore: false,
+        nextOffset: 0,
+        snapshotAt: DateTime.utc(2026, 8, 25),
+      ),
+    );
+  }
+}
+
 class _FixedAuthController extends AuthController {
   _FixedAuthController(AppUser user) {
     state = AuthState(user: user);
@@ -651,6 +862,7 @@ Order _order({
   required DateTime createdAt,
   String? orderNumber,
   OrderStatus status = OrderStatus.pending,
+  List<OrderLine> items = const [],
 }) {
   return Order(
     id: id,
@@ -658,7 +870,7 @@ Order _order({
     customerId: customerId,
     businessName: 'متجر الاختبار',
     status: status,
-    items: const [],
+    items: items,
     createdAt: createdAt,
   );
 }

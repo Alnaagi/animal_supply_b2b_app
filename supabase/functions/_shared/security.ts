@@ -120,15 +120,27 @@ export function validateInviteBaseUrl(baseUrl: string | undefined): string {
       "INVITE_BASE_URL must not contain credentials or password parameters.",
     );
   }
+  if (url.hash) {
+    throw new HttpError(
+      500,
+      "INVITE_BASE_URL_UNSAFE",
+      "INVITE_BASE_URL must not include URL fragments.",
+    );
+  }
+  if ([...url.searchParams.keys()].length > 0) {
+    throw new HttpError(
+      500,
+      "INVITE_BASE_URL_UNSAFE",
+      "INVITE_BASE_URL must not include preset query parameters.",
+    );
+  }
 
   return url.toString();
 }
 
-/// Admin-chosen customer passwords have no composition rules.
-/// Empty values are handled by callers as "generate a temporary password".
-/// Invite URLs still must never include this value.
+/** Admin-chosen customer passwords (create/reset). Not for staff/self-service. */
 export function adminSetPassword(value: unknown): string {
-  if (typeof value !== "string") {
+  if (typeof value !== "string" || value.trim().length === 0) {
     throw new HttpError(
       422,
       "PASSWORD_POLICY_FAILED",
@@ -136,15 +148,17 @@ export function adminSetPassword(value: unknown): string {
       { field: "password" },
     );
   }
-  if (value.length < 1 || value.length > 128) {
+  // Callers trim before invoke; reject whitespace-only if raw value is passed.
+  const password = value.trim();
+  if (password.length < 6 || password.length > 128) {
     throw new HttpError(
       422,
       "PASSWORD_POLICY_FAILED",
-      "The password must contain 1-128 characters.",
-      { field: "password", minLength: 1, maxLength: 128 },
+      "The password must contain 6-128 characters.",
+      { field: "password", minLength: 6, maxLength: 128 },
     );
   }
-  return value;
+  return password;
 }
 
 export function strongPassword(value: unknown): string {
@@ -312,6 +326,35 @@ export function rateLimitIdentity(
     req.headers.get("cf-connecting-ip") ||
     req.headers.get("user-agent") ||
     "unknown";
+}
+
+export function validatedInstallationId(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new HttpError(
+      422,
+      "VALIDATION_ERROR",
+      "installation_id is required.",
+      { field: "installation_id" },
+    );
+  }
+  const trimmed = value.trim();
+  if (trimmed.length < 16 || trimmed.length > 200) {
+    throw new HttpError(
+      422,
+      "VALIDATION_ERROR",
+      "installation_id must contain 16-200 characters.",
+      { field: "installation_id", minLength: 16, maxLength: 200 },
+    );
+  }
+  if (!/^[A-Za-z0-9._:-]+$/.test(trimmed)) {
+    throw new HttpError(
+      422,
+      "VALIDATION_ERROR",
+      "installation_id must use only letters, numbers, dot, colon, dash, or underscore.",
+      { field: "installation_id" },
+    );
+  }
+  return trimmed;
 }
 
 function isLocalSupabaseUrl(rawUrl: string | undefined): boolean {

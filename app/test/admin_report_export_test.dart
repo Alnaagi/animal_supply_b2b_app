@@ -90,7 +90,8 @@ void main() {
     expect(csv, isNot(contains('أرصدة')));
   });
 
-  test('HTML export is RTL Arabic with shop branding and selected sections', () {
+  test('HTML export is RTL Arabic with shop branding and selected sections',
+      () {
     final html = AdminReportHtmlExport.build(
       const AdminReportExportRequest(
         report: sample,
@@ -235,7 +236,8 @@ void main() {
     expect(find.text('أرصدة مرجعية مسجلة'), findsNothing);
     expect(find.text('الأرصدة المسجلة يدوياً'), findsNothing);
     expect(find.text('لا توجد أرصدة يدوية مسجلة.'), findsNothing);
-    expect(find.byKey(const Key('admin-reports-export-button')), findsOneWidget);
+    expect(
+        find.byKey(const Key('admin-reports-export-button')), findsOneWidget);
     expect(
       Directionality.of(tester.element(find.text('تصدير'))),
       TextDirection.rtl,
@@ -423,7 +425,8 @@ void main() {
     await tester.tap(find.byKey(const Key('admin-report-panel-customers')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('admin-report-detail-sheet')), findsOneWidget);
-    expect(find.text('العملاء حسب المبيعات المسلّمة في آخر 30 يوماً'), findsOneWidget);
+    expect(find.text('العملاء حسب المبيعات المسلّمة في آخر 30 يوماً'),
+        findsOneWidget);
     await _dismissDetailSheet(tester);
 
     await tester.ensureVisible(
@@ -431,7 +434,8 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('admin-report-panel-products')));
     await tester.pumpAndSettle();
-    expect(find.text('المنتجات حسب الكمية المباعة في آخر 30 يوماً'), findsOneWidget);
+    expect(find.text('المنتجات حسب الكمية المباعة في آخر 30 يوماً'),
+        findsOneWidget);
     expect(find.textContaining('SKU-feed'), findsWidgets);
     await _dismissDetailSheet(tester);
 
@@ -440,7 +444,8 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('admin-report-panel-inventory')));
     await tester.pumpAndSettle();
-    expect(find.text('منتجات بكمية منخفضة أو غير متوفرة حالياً'), findsOneWidget);
+    expect(
+        find.text('منتجات بكمية منخفضة أو غير متوفرة حالياً'), findsOneWidget);
   });
 }
 

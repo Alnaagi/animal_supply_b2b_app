@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../../core/config/app_config.dart';
+import '../../core/config/shop_branding.dart';
 import '../../core/files/browser_file_download.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/export/admin_report_export.dart';
@@ -19,6 +20,7 @@ Future<void> showAdminReportExportSheet({
   required AdminReportData report,
   required String periodLabel,
   String? shopName,
+  String? logoUrl,
   AdminReportFileSaver? fileSaver,
 }) {
   return showModalBottomSheet<void>(
@@ -32,6 +34,7 @@ Future<void> showAdminReportExportSheet({
           report: report,
           periodLabel: periodLabel,
           shopName: shopName ?? AppConfig.shopName,
+          logoUrl: logoUrl,
           fileSaver: fileSaver ??
               ({
                 required filename,
@@ -56,12 +59,14 @@ class AdminReportExportSheet extends StatefulWidget {
     required this.periodLabel,
     required this.fileSaver,
     this.shopName = AppConfig.shopName,
+    this.logoUrl,
     super.key,
   });
 
   final AdminReportData report;
   final String periodLabel;
   final String shopName;
+  final String? logoUrl;
   final AdminReportFileSaver fileSaver;
 
   @override
@@ -168,18 +173,21 @@ class _AdminReportExportSheetState extends State<AdminReportExportSheet> {
   Future<void> _export({required bool pdf}) async {
     if (selected.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('اختر مجموعة واحدة على الأقل قبل التصدير.')),
+        const SnackBar(
+            content: Text('اختر مجموعة واحدة على الأقل قبل التصدير.')),
       );
       return;
     }
     setState(() => exporting = true);
     try {
+      final logoBytes = await fetchShopLogoBytes(widget.logoUrl);
       final request = AdminReportExportRequest(
         report: widget.report,
         periodLabel: widget.periodLabel,
         datasets: Set<AdminReportExportDataset>.from(selected),
         demoData: AppConfig.isDemoMode,
         shopName: widget.shopName,
+        logoBytes: logoBytes,
       );
       final stem = adminReportExportFileStem(DateTime.now());
       if (pdf) {

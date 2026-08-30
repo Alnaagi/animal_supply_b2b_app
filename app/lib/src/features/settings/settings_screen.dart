@@ -9,10 +9,9 @@ import '../../core/config/app_config.dart';
 import '../../core/config/shop_branding.dart';
 import '../../core/config/shop_branding_cache.dart';
 import '../../core/refresh/screen_reload.dart';
-import '../../core/theme/app_theme.dart';
 import '../../core/updates/update_link.dart';
 import '../../core/widgets/shop_brand_logo.dart';
-import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../../data/repositories/product_images_repository.dart';
@@ -67,7 +66,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         future: _settingsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const ShopLoading.page();
+            return const ShopSkeleton(
+              semanticLabel: 'جارٍ تحميل الإعدادات...',
+              child: ShopSettingsSkeleton(),
+            );
           }
           if (snapshot.hasError) {
             return _SettingsLoadError(
@@ -94,8 +96,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               key: const Key('store-settings-logo-preview'),
                               logoUrl: settings.shopLogoUrl,
                               size: 64,
-                              backgroundColor: const Color(0xffe3f3eb),
-                              fallbackIconColor: AppTheme.green,
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.primaryContainer,
+                              fallbackIconColor:
+                                  Theme.of(context).colorScheme.primary,
                             ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -175,8 +179,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     logoUrl: logoUrl,
                     logoBytes: logoPreviewBytes,
                     size: 72,
-                    backgroundColor: const Color(0xffe3f3eb),
-                    fallbackIconColor: AppTheme.green,
+                    backgroundColor:
+                        Theme.of(context).colorScheme.primaryContainer,
+                    fallbackIconColor:
+                        Theme.of(context).colorScheme.primary,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -199,8 +205,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   logoError = null;
                                 });
                                 try {
-                                  final images = ref
-                                      .read(productImagesRepositoryProvider);
+                                  final images =
+                                      ref.read(productImagesRepositoryProvider);
                                   final picked = await images.pick();
                                   if (picked == null) {
                                     setDialogState(() => uploadingLogo = false);
@@ -236,7 +242,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         icon: uploadingLogo
                             ? const SizedBox.square(
                                 dimension: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.upload_file_outlined),
                         label: Text(
@@ -322,14 +329,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 final validWhatsapp =
                     rawWhatsapp.isEmpty || _isValidWhatsapp(rawWhatsapp);
                 final rawLogo = logoUrl.trim();
-                final validLogo = rawLogo.isEmpty ||
-                    safeHttpsUpdateUri(rawLogo) != null;
-                if (shop.text.trim().isEmpty ||
-                    !validWhatsapp ||
-                    !validLogo) {
+                final validLogo =
+                    rawLogo.isEmpty || safeHttpsUpdateUri(rawLogo) != null;
+                if (shop.text.trim().isEmpty || !validWhatsapp || !validLogo) {
                   setDialogState(() {
-                    validationMessage =
-                        'أدخل اسم المتجر ورقم واتساب صحيحاً، '
+                    validationMessage = 'أدخل اسم المتجر ورقم واتساب صحيحاً، '
                         'واستخدم روابط HTTPS فقط للشعار.';
                   });
                   return;

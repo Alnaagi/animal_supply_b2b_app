@@ -24,10 +24,28 @@ function environment(overrides = {}) {
       }),
     ],
     [
-      '/pwa_install.js',
-      new Response('console.log("install");', {
-        headers: { 'Content-Type': 'text/javascript' },
-      }),
+      '/manifest.json',
+      new Response(
+        JSON.stringify({
+          name: 'المتجر',
+          short_name: 'المتجر',
+          start_url: '/',
+          display: 'standalone',
+          icons: [
+            {
+              src: '/icons/Icon-192.png',
+              sizes: '192x192',
+              type: 'image/png',
+            },
+          ],
+        }),
+        {
+          headers: {
+            'Content-Type': 'application/manifest+json',
+            ETag: '"manifest-v1"',
+          },
+        },
+      ),
     ],
   ]);
 
@@ -36,12 +54,75 @@ function environment(overrides = {}) {
     ASSETS: {
       async fetch(request) {
         const url = new URL(request.url);
+        if (
+          url.pathname === '/manifest.json' &&
+          request.headers.get('If-None-Match') === '"manifest-v1"'
+        ) {
+          return new Response(null, {
+            status: 304,
+            headers: { ETag: '"manifest-v1"' },
+          });
+        }
         const response = assets.get(url.pathname);
         return response?.clone() ?? new Response('Not Found', { status: 404 });
       },
     },
   };
 }
+
+test('serves Android a browser-only manifest to prevent WebAPK installs', async () => {
+  const response = await worker.fetch(
+    new Request('https://example.com/manifest.json', {
+      headers: {
+        'If-None-Match': '"manifest-v1"',
+        'User-Agent':
+          'Mozilla/5.0 (Linux; Android 16; Pixel 10) '
+          + 'AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36',
+      },
+    }),
+    environment(),
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('X-Android-Install-Mode'), 'browser-only');
+  assert.equal(response.headers.get('ETag'), null);
+  assert.equal(response.headers.get('Vary'), 'User-Agent');
+  assert.equal(
+    response.headers.get('Cache-Control'),
+    'no-cache, no-store, must-revalidate',
+  );
+  assert.match(
+    response.headers.get('Content-Type') ?? '',
+    /application\/manifest\+json/,
+  );
+  assert.deepEqual(await response.json(), {
+    name: 'المتجر',
+    short_name: 'المتجر',
+    start_url: '/',
+    display: 'browser',
+    icons: [],
+    prefer_related_applications: false,
+  });
+});
+
+test('preserves the installable manifest for non-Android browsers', async () => {
+  const response = await worker.fetch(
+    new Request('https://example.com/manifest.json', {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (X11; Linux x86_64) '
+          + 'AppleWebKit/537.36 Chrome/140 Safari/537.36',
+      },
+    }),
+    environment(),
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('X-Android-Install-Mode'), null);
+  const manifest = await response.json();
+  assert.equal(manifest.display, 'standalone');
+  assert.equal(manifest.icons.length, 1);
+});
 
 test('redirects cleartext requests to HTTPS', async () => {
   const response = await worker.fetch(

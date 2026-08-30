@@ -6,8 +6,7 @@ void main() {
   String fingerprint(NewOrderAlertTone tone) {
     return newOrderAlertVoicesFor(tone)
         .map(
-          (voice) =>
-              '${voice.type}:${voice.startHz.toStringAsFixed(1)}>'
+          (voice) => '${voice.type}:${voice.startHz.toStringAsFixed(1)}>'
               '${voice.endHz.toStringAsFixed(1)}@${voice.delay.toStringAsFixed(3)}'
               'x${voice.duration.toStringAsFixed(3)}g${voice.peakGain}'
               'a${voice.attack}f${voice.filterHz}',

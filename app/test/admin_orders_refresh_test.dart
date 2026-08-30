@@ -394,6 +394,18 @@ void main() {
       _expectHorizontallyWithinViewport(tester, card, surfaceSize);
       expect(details, findsNothing);
 
+      final overflowMenu = find.byKey(
+        const ValueKey('admin-order-menu-invoice-order'),
+      );
+      expect(overflowMenu, findsOneWidget);
+      final overflowRect = tester.getRect(overflowMenu);
+      expect(overflowRect.width, greaterThanOrEqualTo(44));
+      expect(overflowRect.height, greaterThanOrEqualTo(44));
+      expect(
+        overflowRect.left,
+        greaterThanOrEqualTo(tester.getRect(card).left + 4),
+      );
+
       await _tapVisible(tester, summary);
       await tester.pumpAndSettle();
 
@@ -596,6 +608,18 @@ void main() {
       _expectHorizontallyWithinViewport(tester, filterPanel, surfaceSize);
       _expectHorizontallyWithinViewport(tester, card, surfaceSize);
       expect(details, findsNothing);
+
+      final overflowMenu = find.byKey(
+        const ValueKey('admin-order-menu-invoice-order'),
+      );
+      expect(overflowMenu, findsOneWidget);
+      final overflowRect = tester.getRect(overflowMenu);
+      expect(overflowRect.width, greaterThanOrEqualTo(44));
+      expect(overflowRect.height, greaterThanOrEqualTo(44));
+      expect(
+        overflowRect.left,
+        greaterThanOrEqualTo(tester.getRect(card).left + 4),
+      );
 
       await _tapVisible(tester, summary);
       await tester.pumpAndSettle();
@@ -1028,10 +1052,227 @@ void main() {
         ),
         findsOneWidget,
       );
+      expect(find.text('إرسال عبر واتساب'), findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-whatsapp-gear-invoice-order'),
+        ),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('admin-order-copy-summary-invoice-order')),
         findsOneWidget,
       );
+      expect(
+        find.byKey(const ValueKey('admin-order-whatsapp-gear-invoice-order')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('admin-orders-whatsapp-template-gear')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'order kebab menu copies the number and expands details without clipping',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: _MutableOrdersRepository([_invoiceOrder()]),
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+
+      final card = find.byKey(
+        const ValueKey('admin-order-card-invoice-order'),
+      );
+      final menu = find.byKey(
+        const ValueKey('admin-order-menu-invoice-order'),
+      );
+      expect(menu, findsOneWidget);
+      final cardRect = tester.getRect(card);
+      final menuRect = tester.getRect(menu);
+      expect(menuRect.width, greaterThanOrEqualTo(44));
+      expect(menuRect.height, greaterThanOrEqualTo(44));
+      expect(menuRect.left, greaterThanOrEqualTo(cardRect.left + 4));
+      expect(menuRect.right, lessThanOrEqualTo(cardRect.right - 4));
+
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+
+      expect(find.text('عرض التفاصيل'), findsOneWidget);
+      expect(find.text('نسخ رقم الطلب'), findsOneWidget);
+      expect(find.text('نسخ ملخص الطلب'), findsOneWidget);
+      expect(find.text('نسخ رقم الهاتف'), findsOneWidget);
+      expect(find.text('إرسال عبر واتساب'), findsOneWidget);
+      expect(find.text('تعديل رسالة واتساب'), findsOneWidget);
+      expect(find.text('واتساب العميل'), findsOneWidget);
+      expect(find.text('اتصال'), findsOneWidget);
+      expect(find.text('طباعة الفاتورة'), findsOneWidget);
+      expect(find.text('تعديل التسعير'), findsOneWidget);
+      expect(find.text('إلى مؤكد'), findsOneWidget);
+      expect(find.text('إلى ملغي'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(
+            const ValueKey('admin-order-menu-copy-number-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('تم نسخ رقم الطلب'), findsOneWidget);
+
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('admin-order-menu-toggle-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('admin-order-details-invoice-order')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'per-order WhatsApp gear saves an override used when copying the summary',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: _MutableOrdersRepository([_invoiceOrder()]),
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-whatsapp-gear-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('رسالة واتساب للطلب AS-K7M4Q2P'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('admin-order-whatsapp-override-field')),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-order-whatsapp-override-field')),
+        'رسالة خاصة للطلب AS-K7M4Q2P',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('admin-order-whatsapp-override-save')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('تم حفظ رسالة واتساب لهذا الطلب.'), findsOneWidget);
+
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-copy-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      expect(copied, 'رسالة خاصة للطلب AS-K7M4Q2P');
+    },
+  );
+
+  testWidgets(
+    'global WhatsApp gear saves a template applied to orders without overrides',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: _MutableOrdersRepository([_invoiceOrder()]),
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-whatsapp-template-gear')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('قالب رسائل واتساب للطلبات'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-order-whatsapp-template-field')),
+        'قالب {store_name} رقم {order_number}',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'حفظ للطلبات'));
+      await tester.pumpAndSettle();
+      expect(find.text('تم حفظ قالب واتساب على هذا الجهاز.'), findsOneWidget);
+
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-copy-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      expect(copied, 'قالب متجر الاختبار رقم AS-K7M4Q2P');
     },
   );
 
@@ -1067,7 +1308,8 @@ void main() {
     },
   );
 
-  testWidgets('invoice pricing sheet recalculates and saves through the repository',
+  testWidgets(
+      'invoice pricing sheet recalculates and saves through the repository',
       (tester) async {
     const surfaceSize = Size(390, 844);
     await tester.binding.setSurfaceSize(surfaceSize);
@@ -1430,8 +1672,11 @@ class _MutableOrdersRepository extends OrdersRepository {
   OrderStatus? lastStatus;
   List<OrderStatus>? lastStatuses;
   OrderStatus? lastTransition;
-  ({List<double> unitPrices, double deliveryFee, double discountAmount})?
-      lastPricing;
+  ({
+    List<double> unitPrices,
+    double deliveryFee,
+    double discountAmount
+  })? lastPricing;
 
   @override
   Future<OrdersPage> ordersPage({
@@ -1617,7 +1862,7 @@ Order _invoiceOrder({
   );
   return Order(
     id: 'invoice-order',
-    orderNumber: 'INV-1001',
+    orderNumber: 'AS-K7M4Q2P',
     customerId: 'customer-test',
     businessName: 'متجر الاختبار',
     contactPerson: 'أحمد الفيتوري',

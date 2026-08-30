@@ -9,6 +9,48 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/shop_loading.dart';
 import '../../data/models/admin_models.dart';
 
+/// Breakpoints for customer-home / storefront banner composition.
+abstract final class HomeBannerBreakpoints {
+  static const double mobileMax = 600;
+  static const double tabletMax = 900;
+  static const double desktopMax = 1200;
+
+  static bool isMobile(double width) => width < mobileMax;
+  static bool isTablet(double width) => width >= mobileMax && width < tabletMax;
+  static bool isDesktop(double width) =>
+      width >= tabletMax && width < desktopMax;
+  static bool isWide(double width) => width >= desktopMax;
+
+  /// Responsive banner height. Legacy/default config heights (≤120) mean "auto".
+  ///
+  /// Uses the banner [BannerAspectMode] so the banner image fills the frame
+  /// and shows the complete banner cleanly. Wide keeps the 1600:620 ratio strip; square is 1:1.
+  static double resolveHeight(
+    double width, {
+    double? configuredHeight,
+    BannerAspectMode aspectMode = BannerAspectMode.wide,
+  }) {
+    final fromAspect = width / aspectMode.ratio;
+    final double auto;
+    switch (aspectMode) {
+      case BannerAspectMode.square:
+        // Cap square height on large screens so home layout stays usable.
+        auto = fromAspect.clamp(160.0, isMobile(width) ? width : 420.0);
+      case BannerAspectMode.wide:
+        auto = isMobile(width)
+            ? fromAspect.clamp(152.0, 196.0)
+            : isTablet(width)
+                ? 228.0
+                : isDesktop(width)
+                    ? 280.0
+                    : 320.0;
+    }
+    if (configuredHeight == null || configuredHeight <= 120) return auto;
+    // Soft-follow admin preference without collapsing or over-stretching.
+    return configuredHeight.clamp(auto * 0.82, auto * 1.18);
+  }
+}
+
 class HomeBannerSlide {
   const HomeBannerSlide({
     required this.id,
@@ -20,6 +62,7 @@ class HomeBannerSlide {
     required this.destination,
     required this.sourceUrl,
     required this.isDemo,
+    this.aspectMode = BannerAspectMode.wide,
   });
 
   final String id;
@@ -31,6 +74,7 @@ class HomeBannerSlide {
   final BannerDestination destination;
   final String sourceUrl;
   final bool isDemo;
+  final BannerAspectMode aspectMode;
 
   static List<HomeBannerSlide> fromAdminBanners(List<AppBanner> banners) {
     return [
@@ -48,6 +92,7 @@ class HomeBannerSlide {
           ),
           sourceUrl: '',
           isDemo: false,
+          aspectMode: banner.aspectMode,
         ),
     ];
   }
@@ -139,6 +184,12 @@ class OfferBannerCarousel extends StatefulWidget {
     required this.banners,
     this.preview = false,
     this.compact,
+    this.height,
+    this.autoPlay = true,
+    this.intervalSeconds = 4,
+    this.showIndicators = true,
+    this.borderRadius = 24,
+    this.interactionEnabled = true,
   });
 
   final List<HomeBannerSlide> banners;
@@ -147,21 +198,35 @@ class OfferBannerCarousel extends StatefulWidget {
   /// When set, forces the phone or wide-web banner proportions used on
   /// customer home. Otherwise the layout follows the available width.
   final bool? compact;
+  final double? height;
+  final bool autoPlay;
+  final int intervalSeconds;
+  final bool showIndicators;
+  final double borderRadius;
+  final bool interactionEnabled;
 
   @override
   State<OfferBannerCarousel> createState() => _OfferBannerCarouselState();
 }
 
 class _OfferBannerCarouselState extends State<OfferBannerCarousel> {
-  late final PageController _controller;
+  static const _virtualStartPage = 10000;
+  static const _peekViewportFraction = .90;
+
+  late PageController _controller;
   Timer? _timer;
   int _activeIndex = 0;
+  int _currentPage = 0;
   bool _reduceMotion = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = PageController();
+    _currentPage = _initialPage(widget.banners.length);
+    _controller = PageController(
+      initialPage: _currentPage,
+      viewportFraction: _peekViewportFraction,
+    );
     _startTimer();
   }
 
@@ -184,8 +249,18 @@ class _OfferBannerCarouselState extends State<OfferBannerCarousel> {
     _timer?.cancel();
     _timer = null;
     _activeIndex = 0;
+    _currentPage = _initialPage(widget.banners.length);
     if (_controller.hasClients) {
-      _controller.jumpToPage(0);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_controller.hasClients) return;
+        _controller.jumpToPage(_currentPage);
+      });
+    } else {
+      _controller.dispose();
+      _controller = PageController(
+        initialPage: _currentPage,
+        viewportFraction: _peekViewportFraction,
+      );
     }
     _startTimer();
   }
@@ -208,11 +283,22 @@ class _OfferBannerCarouselState extends State<OfferBannerCarousel> {
     return false;
   }
 
+  int _initialPage(int slideCount) {
+    if (slideCount < 2) return 0;
+    return _virtualStartPage - (_virtualStartPage % slideCount);
+  }
+
   void _startTimer() {
-    if (_reduceMotion || widget.banners.length < 2 || _timer != null) return;
-    _timer = Timer.periodic(const Duration(seconds: 4), (_) {
+    if (_reduceMotion ||
+        !widget.autoPlay ||
+        widget.banners.length < 2 ||
+        _timer != null) {
+      return;
+    }
+    final seconds = widget.intervalSeconds.clamp(2, 30);
+    _timer = Timer.periodic(Duration(seconds: seconds), (_) {
       if (!_controller.hasClients || !mounted) return;
-      final next = (_activeIndex + 1) % widget.banners.length;
+      final next = _currentPage + 1;
       _controller.animateToPage(
         next,
         duration: const Duration(milliseconds: 420),
@@ -224,60 +310,128 @@ class _OfferBannerCarouselState extends State<OfferBannerCarousel> {
   @override
   Widget build(BuildContext context) {
     final banners = widget.banners;
+    if (banners.isEmpty) return const SizedBox.shrink();
     return Column(children: [
       LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth;
-          final compact = widget.compact ?? width < 640;
-          final height = compact
-              ? 240.0
-              : width >= 900
-                  ? 280.0
-                  : 250.0;
-          return SizedBox(
-            height: height,
-            child: PageView.builder(
-              controller: _controller,
-              onPageChanged: (index) {
-                if (_activeIndex == index) return;
-                setState(() => _activeIndex = index);
-              },
-              itemCount: banners.length,
-              itemBuilder: (context, index) => _OfferBannerCard(
-                banner: banners[index],
-                preview: widget.preview,
-                compact: compact,
-              ),
-            ),
+          final hasPeek = banners.length > 1;
+          final renderedPageWidth =
+              width * (hasPeek ? _peekViewportFraction : 1);
+          final mobileLayout =
+              widget.compact ?? HomeBannerBreakpoints.isMobile(width);
+          final frameAspect = _stableFrameAspect(banners);
+          final resolvedHeight = HomeBannerBreakpoints.resolveHeight(
+            renderedPageWidth,
+            configuredHeight: widget.height,
+            aspectMode: frameAspect,
+          );
+          final frame = SizedBox(
+            key: const Key('offer-banner-carousel-frame'),
+            height: resolvedHeight,
+            width: double.infinity,
+            child: banners.length == 1
+                ? _OfferBannerCard(
+                    banner: banners.first,
+                    preview: widget.preview || !widget.interactionEnabled,
+                    compact:
+                        mobileLayout || HomeBannerBreakpoints.isTablet(width),
+                    borderRadius: widget.borderRadius,
+                  )
+                : PageView.builder(
+                    key: const Key('offer-banner-peek-page-view'),
+                    controller: _controller,
+                    physics: const BouncingScrollPhysics(),
+                    onPageChanged: (page) {
+                      final index = page % banners.length;
+                      _currentPage = page;
+                      if (_activeIndex == index) return;
+                      setState(() => _activeIndex = index);
+                    },
+                    itemBuilder: (context, page) {
+                      final index = page % banners.length;
+                      return AnimatedBuilder(
+                        key: ValueKey('offer-banner-page-$page'),
+                        animation: _controller,
+                        child: _OfferBannerCard(
+                          banner: banners[index],
+                          preview: widget.preview || !widget.interactionEnabled,
+                          compact: mobileLayout ||
+                              HomeBannerBreakpoints.isTablet(width),
+                          borderRadius: widget.borderRadius,
+                        ),
+                        builder: (context, child) {
+                          if (_reduceMotion) return child!;
+                          final current = _controller.hasClients &&
+                                  _controller.position.haveDimensions
+                              ? _controller.page ?? _currentPage.toDouble()
+                              : _currentPage.toDouble();
+                          final distance =
+                              (current - page).abs().clamp(0.0, 1.0);
+                          final scale = 1 - (distance * .055);
+                          return Transform.scale(
+                            scale: scale,
+                            alignment: Alignment.center,
+                            child: child,
+                          );
+                        },
+                      );
+                    },
+                  ),
+          );
+          if (_reduceMotion) return frame;
+          return AnimatedSize(
+            key: ValueKey<double>(resolvedHeight),
+            duration: AppMotion.standard,
+            curve: AppMotion.standardCurve,
+            alignment: Alignment.topCenter,
+            child: frame,
           );
         },
       ),
-      const SizedBox(height: 10),
-      Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          for (var i = 0; i < banners.length; i++)
-            Semantics(
-              label:
-                  'العرض ${i + 1} من ${banners.length}${_activeIndex == i ? '، معروض حالياً' : ''}',
-              selected: _activeIndex == i,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                width: _activeIndex == i ? 22 : 7,
-                height: 7,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(99),
-                  color: _activeIndex == i
-                      ? AppTheme.green
-                      : AppTheme.green.withValues(alpha: .22),
-                ),
-              ),
-            ),
-        ],
-      ),
+      if (widget.showIndicators) ...[
+        const SizedBox(height: 10),
+        Builder(
+          builder: (context) {
+            final primary = Theme.of(context).colorScheme.primary;
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (var i = 0; i < banners.length; i++)
+                  Semantics(
+                    label:
+                        'العرض ${i + 1} من ${banners.length}${_activeIndex == i ? '، معروض حالياً' : ''}',
+                    selected: _activeIndex == i,
+                    child: AnimatedContainer(
+                      key: ValueKey('offer-banner-indicator-$i'),
+                      duration:
+                          _reduceMotion ? Duration.zero : AppMotion.standard,
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      width: _activeIndex == i ? 22 : 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(99),
+                        color: _activeIndex == i
+                            ? primary
+                            : primary.withValues(alpha: .22),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
     ]);
   }
+}
+
+BannerAspectMode _stableFrameAspect(List<HomeBannerSlide> banners) {
+  final first = banners.first.aspectMode;
+  for (final banner in banners.skip(1)) {
+    if (banner.aspectMode != first) return BannerAspectMode.wide;
+  }
+  return first;
 }
 
 class _OfferBannerCard extends StatelessWidget {
@@ -285,17 +439,21 @@ class _OfferBannerCard extends StatelessWidget {
     required this.banner,
     required this.preview,
     required this.compact,
+    this.borderRadius = 24,
   });
 
   final HomeBannerSlide banner;
   final bool preview;
   final bool compact;
+  final double borderRadius;
 
   Future<void> _openDestination(BuildContext context) async {
     if (preview) return;
     final externalUri = banner.destination.externalUri;
     if (externalUri == null) {
-      context.go(banner.destination.path);
+      if (banner.destination.path.isNotEmpty) {
+        context.go(banner.destination.path);
+      }
       return;
     }
     final opened = await launchUrl(
@@ -315,147 +473,117 @@ class _OfferBannerCard extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 2),
       child: Material(
         color: Colors.transparent,
-        elevation: 6,
-        shadowColor: Colors.black.withValues(alpha: .28),
-        borderRadius: BorderRadius.circular(24),
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        borderRadius: BorderRadius.circular(borderRadius),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => _openDestination(context),
-          child: DecoratedBox(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                  colors: [AppTheme.green, AppTheme.darkGreen],
-                  begin: Alignment.topRight,
-                  end: Alignment.bottomLeft),
-            ),
-            child: Stack(fit: StackFit.expand, children: [
-              Image.network(
-                banner.imageUrl,
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-                filterQuality: FilterQuality.medium,
-                webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                          colors: [AppTheme.green, AppTheme.darkGreen],
-                          begin: Alignment.topRight,
-                          end: Alignment.bottomLeft),
-                    ),
-                    child: Center(
-                      child: ShopLoading.compact(
-                        size: 22,
-                        color: Colors.white,
-                        light: true,
-                      ),
-                    ),
-                  );
-                },
-                errorBuilder: (context, error, stackTrace) {
-                  return DecoratedBox(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                          colors: [AppTheme.green, AppTheme.darkGreen],
-                          begin: Alignment.topRight,
-                          end: Alignment.bottomLeft),
-                    ),
-                    child: Align(
-                      alignment: AlignmentDirectional.centerEnd,
-                      child: Padding(
-                        padding: const EdgeInsetsDirectional.only(end: 24),
-                        child: Icon(Icons.pets,
-                            color: Colors.white.withValues(alpha: .24),
-                            size: 112),
-                      ),
-                    ),
-                  );
-                },
-              ),
-              Positioned.fill(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Colors.black.withValues(alpha: .70),
-                        Colors.black.withValues(alpha: .36),
-                        Colors.black.withValues(alpha: .08),
-                      ],
-                      stops: const [0, .54, 1],
-                      begin: Alignment.centerRight,
-                      end: Alignment.centerLeft,
-                    ),
-                  ),
-                ),
-              ),
-              Align(
-                alignment: AlignmentDirectional.centerStart,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: compact ? 280 : 520),
-                  child: Padding(
-                    padding: EdgeInsets.all(compact ? 16 : 22),
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: AlignmentDirectional.centerStart,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (banner.isDemo) ...[
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 6),
-                              decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: .16),
-                                  borderRadius: BorderRadius.circular(99)),
-                              child: const Text('بانر تجريبي من الإنترنت',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 12)),
-                            ),
-                            const SizedBox(height: 8),
-                          ],
-                          Text(
-                            banner.title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineSmall
-                                ?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w900,
-                                    height: 1.12),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            banner.subtitle,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(height: 10),
-                          FilledButton.icon(
-                            style: FilledButton.styleFrom(
-                                backgroundColor: Colors.white,
-                                foregroundColor: AppTheme.green),
-                            onPressed: () => _openDestination(context),
-                            icon: const Icon(Icons.arrow_back),
-                            label: Text(banner.cta),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ]),
+          child: _OverlayBanner(
+            banner: banner,
+            compact: compact,
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _BannerImage extends StatelessWidget {
+  const _BannerImage({required this.imageUrl, this.alignment});
+
+  final String imageUrl;
+  final Alignment? alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context) ||
+        MediaQuery.accessibleNavigationOf(context);
+    final fallbackDecoration = BoxDecoration(
+      gradient: LinearGradient(
+        colors: [colors.primary, colors.secondary],
+        begin: Alignment.topRight,
+        end: Alignment.bottomLeft,
+      ),
+    );
+    return Image.network(
+      imageUrl,
+      fit: BoxFit.fill,
+      alignment: alignment ?? Alignment.center,
+      gaplessPlayback: true,
+      filterQuality: FilterQuality.medium,
+      width: double.infinity,
+      height: double.infinity,
+      webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return DecoratedBox(
+          key: const Key('offer-banner-image-loading'),
+          decoration: fallbackDecoration,
+          child: Center(
+            child: reduceMotion
+                ? Icon(
+                    Icons.image_outlined,
+                    color: colors.onPrimary,
+                    size: 28,
+                  )
+                : ShopLoading.compact(
+                    size: 22,
+                    color: colors.onPrimary,
+                    light: true,
+                  ),
+          ),
+        );
+      },
+      errorBuilder: (context, error, stackTrace) {
+        return DecoratedBox(
+          key: const Key('offer-banner-image-error'),
+          decoration: fallbackDecoration,
+          child: Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(end: 24),
+              child: Icon(
+                Icons.pets,
+                color: colors.onPrimary.withValues(alpha: .30),
+                size: 112,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Full-bleed clean banner image.
+class _OverlayBanner extends StatelessWidget {
+  const _OverlayBanner({
+    required this.banner,
+    required this.compact,
+  });
+
+  final HomeBannerSlide banner;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      key: const Key('offer-banner-overlay'),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [colors.primary, colors.secondary],
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+        ),
+      ),
+      child: _BannerImage(
+        imageUrl: banner.imageUrl,
+        alignment: compact
+            ? const Alignment(0, -0.08)
+            : const Alignment(0.15, 0),
       ),
     );
   }

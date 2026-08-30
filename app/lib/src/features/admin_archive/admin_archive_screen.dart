@@ -4,9 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/refresh/screen_reload.dart';
-import '../../core/theme/app_theme.dart';
 import '../../core/widgets/category_icon_view.dart';
-import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/product.dart';
@@ -115,18 +114,27 @@ class _AdminArchiveScreenState extends ConsumerState<AdminArchiveScreen> {
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: AppTheme.green.withValues(alpha: .08),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: .08),
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: AppTheme.green.withValues(alpha: .18),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withValues(alpha: .18),
                       ),
                     ),
-                    child: const Row(
+                    child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(Icons.inventory_2_outlined, color: AppTheme.green),
-                        SizedBox(width: 10),
-                        Expanded(
+                        Icon(
+                          Icons.inventory_2_outlined,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 10),
+                        const Expanded(
                           child: Text(
                             'العناصر المؤرشفة محفوظة ولا تُحذف نهائياً. '
                             'يمكنك البحث عنها واستعادتها من هنا.',
@@ -201,7 +209,10 @@ class _AdminArchiveScreenState extends ConsumerState<AdminArchiveScreen> {
     required List<BusinessCustomer> customers,
   }) {
     if (_loading && _data == null) {
-      return const ShopLoading.page();
+      return const ShopSkeleton(
+        semanticLabel: 'جارٍ تحميل الأرشيف...',
+        child: ShopArchiveSkeleton(),
+      );
     }
     if (_loadError != null && _data == null) {
       return _ArchiveLoadError(onRetry: _reload);

@@ -7,7 +7,8 @@ import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('invoice HTML uses the effective delivery address and customer note', () {
+  test('invoice HTML uses the effective delivery address and customer note',
+      () {
     final html = AdminOrderInvoiceHtml.build(
       order: _order(deliveryAddress: ''),
       shopName: 'متجر الأعلاف',

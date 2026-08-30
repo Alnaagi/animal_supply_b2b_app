@@ -3,10 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/config/app_config.dart';
-import '../../core/config/app_config_validation.dart';
 import '../../core/refresh/screen_reload.dart';
-import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/notification_campaign_summary.dart';
 import '../../data/models/product.dart';
@@ -81,9 +79,11 @@ class _AdminNotificationsScreenState
       title: 'إرسال الإشعارات',
       actions: [
         IconButton(
-          onPressed: sending ? null : () {
-            _reloadScreen();
-          },
+          onPressed: sending
+              ? null
+              : () {
+                  _reloadScreen();
+                },
           icon: const Icon(Icons.refresh),
           tooltip: 'تحديث الحملات والعملاء',
         ),
@@ -92,7 +92,10 @@ class _AdminNotificationsScreenState
         future: _formData,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const ShopLoading.page();
+            return const ShopSkeleton(
+              semanticLabel: 'جارٍ تحميل بيانات الحملات...',
+              child: ShopNotificationsSkeleton(),
+            );
           }
           if (snapshot.hasError) {
             return Center(
@@ -139,14 +142,15 @@ class _AdminNotificationsScreenState
                               .titleLarge
                               ?.copyWith(fontWeight: FontWeight.w900),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 6),
                         Text(
-                          'يُحفظ الإشعار داخل التطبيق للمستلمين فوراً. '
-                          'جهاز العميل يظهر التنبيه في شريط النظام عبر المتصفح إذا كان التطبيق أو التبويب يعمل بعد السماح بالإذن. '
-                          '${firebaseClosedAppRequirementAr(
-                            configured: AppConfig
-                                .hasFirebaseConfigurationForCurrentPlatform,
-                          )}',
+                          'إرسال إشعار فوري لجميع العملاء أو عميل محدد',
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                         ),
                         const SizedBox(height: 16),
                         DropdownButtonFormField<String>(
@@ -493,17 +497,42 @@ class _CampaignHistoryCard extends StatelessWidget {
                 ),
               ],
             ),
-            const Text(
-              'يعرض حالة صف الإرسال داخل التطبيق. تنبيه شريط النظام يعتمد على جهاز المستلم وهو يعمل، وليس على Firebase.',
+            Text(
+              'سجل الحملات السابقة وحالة استلامها داخل التطبيق',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
             ),
             const SizedBox(height: 12),
             FutureBuilder<List<NotificationCampaignSummary>>(
               future: history,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const ShopLoading.section(
-                    message: 'جارٍ تحميل سجل الحملات...',
-                    height: 88,
+                  return const ShopSkeleton(
+                    semanticLabel: 'جارٍ تحميل سجل الحملات...',
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Column(
+                        children: [
+                          ShopSkeletonCard(
+                            margin: EdgeInsets.only(bottom: 8),
+                            padding: EdgeInsets.all(12),
+                            child: Row(
+                              children: [
+                                ShopSkeletonCircle(size: 32),
+                                SizedBox(width: 10),
+                                Expanded(
+                                  child: ShopSkeletonBox(
+                                    height: 14,
+                                    borderRadius: 5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   );
                 }
                 if (snapshot.hasError) {
@@ -566,7 +595,7 @@ class _CampaignHistoryRow extends StatelessWidget {
             ),
             _SummaryChip(
               label: 'اكتمل ${campaign.completedCount}',
-              color: Colors.green.shade100,
+              color: theme.colorScheme.primaryContainer,
             ),
             if (campaign.pendingCount > 0)
               _SummaryChip(

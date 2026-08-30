@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/app_config.dart';
 import '../connectivity/connectivity_provider.dart';
 import '../localization/arabic_copy.dart';
-import '../theme/app_theme.dart';
 import 'shop_loading.dart';
 
 class NetworkStatusHeader extends ConsumerStatefulWidget {
@@ -38,7 +37,8 @@ class _NetworkStatusHeaderState extends ConsumerState<NetworkStatusHeader> {
     _slowTimer = Timer(_slowDelay, () {
       if (!mounted) return;
       final stillBusy = ref.read(remoteActivityProvider) > 0;
-      final stillOnline = isOnlineFromConnectivity(ref.read(connectivityProvider));
+      final stillOnline =
+          isOnlineFromConnectivity(ref.read(connectivityProvider));
       setState(() => _showSlow = stillBusy && stillOnline);
     });
   }
@@ -136,9 +136,10 @@ class SlowConnectionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Material(
       key: const Key('slow-connection-bar'),
-      color: AppTheme.green.withValues(alpha: 0.10),
+      color: scheme.primary.withValues(alpha: 0.10),
       child: const Padding(
         padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         child: Row(

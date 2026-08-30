@@ -1,27 +1,38 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/config/shop_branding.dart';
 import '../../core/refresh/screen_reload.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/empty_state.dart';
+import '../../core/widgets/product_image_placeholder.dart';
 import '../../core/widgets/shop_loading.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/status_chip.dart';
+import '../../data/models/app_user.dart';
 import '../../data/models/order.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/orders_repository.dart';
 import '../../data/sync/sync_outbox.dart';
 import '../auth/auth_controller.dart';
 import '../cart/cart_controller.dart';
+import 'customer_invoice_actions.dart';
 
 class OrdersScreen extends ConsumerStatefulWidget {
-  const OrdersScreen({this.highlightedOrderId, super.key});
+  const OrdersScreen({
+    this.highlightedOrderId,
+    this.showSuccessState = false,
+    super.key,
+  });
 
   final String? highlightedOrderId;
+  final bool showSuccessState;
 
   @override
   ConsumerState<OrdersScreen> createState() => _OrdersScreenState();
@@ -41,6 +52,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   int loadRevision = 0;
   DateTime? snapshotAt;
   String? reorderingOrderId;
+  bool successDismissed = false;
 
   @override
   void didUpdateWidget(covariant OrdersScreen oldWidget) {
@@ -49,12 +61,17 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         loadedCustomerId != null) {
       unawaited(_reloadCustomer(loadedCustomerId!));
     }
+    if (oldWidget.highlightedOrderId != widget.highlightedOrderId ||
+        oldWidget.showSuccessState != widget.showSuccessState) {
+      successDismissed = false;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     listenForScreenReload(ref, _refresh);
     final user = ref.watch(authControllerProvider).user;
+    final branding = ref.watch(shopBrandingProvider);
     final highlightedOrderId = widget.highlightedOrderId;
     if (user == null) {
       return const Center(
@@ -79,10 +96,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final remoteLoading = initialLoading || loadedCustomerId != customerId;
     final visibleOrders =
         loadedCustomerId == customerId ? orders : const <Order>[];
+    final successOrder =
+        _resolveSuccessOrder(user: user, visibleOrders: visibleOrders);
     final localSnapshot = queuedOrders.asData?.value;
 
-    if (remoteLoading && localSnapshot == null && !queuedOrders.hasError) {
-      return const ShopLoading.page();
+    final hasQueuedOrders = localSnapshot?.isEmpty == false;
+    if (remoteLoading && !hasQueuedOrders && !queuedOrders.hasError) {
+      return const _OrdersInitialSkeleton();
     }
 
     return ShopRefreshIndicator(
@@ -110,6 +130,19 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
             ],
           ),
           const SizedBox(height: 12),
+          if (successOrder != null) ...[
+            _OrderSuccessPanel(
+              order: successOrder,
+              onViewOrder: () => setState(() => successDismissed = true),
+              onBackToOrders: () {
+                context.go(
+                    '/orders?order=${Uri.encodeQueryComponent(successOrder.id)}');
+              },
+              shopName: branding.shopName,
+              logoUrl: branding.logoUrl,
+            ),
+            const SizedBox(height: 12),
+          ],
           queuedOrders.when(
             data: (queued) => queued.isEmpty
                 ? const SizedBox.shrink()
@@ -117,7 +150,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     snapshot: queued,
                     onEdit: _discardAndEditQueuedOrder,
                   ),
-            loading: () => const LinearProgressIndicator(),
+            loading: () => const ShopSkeleton(
+              semanticLabel: 'جارٍ فحص الطلبات غير المكتملة...',
+              child: ShopSkeletonBox(
+                height: 52,
+                borderRadius: 14,
+              ),
+            ),
             error: (_, __) => const _OutboxReadErrorCard(),
           ),
           if (localSnapshot != null && !localSnapshot.isEmpty)
@@ -152,8 +191,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     : () => _reorder(order),
                 onCopy: () => _copySummary(
                   order,
-                  user.businessName ?? user.username,
+                  branding.shopName,
                 ),
+                shopName: branding.shopName,
+                logoUrl: branding.logoUrl,
               ),
             if (hasMore)
               Padding(
@@ -412,6 +453,301 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       );
     }
   }
+
+  Order? _resolveSuccessOrder({
+    required AppUser user,
+    required List<Order> visibleOrders,
+  }) {
+    if (!widget.showSuccessState || successDismissed) return null;
+    final highlightedId = widget.highlightedOrderId?.trim();
+    if (highlightedId == null || highlightedId.isEmpty) return null;
+    final expectedCustomerId = user.customerId ?? user.id;
+    for (final order in visibleOrders) {
+      if (order.id == highlightedId && order.customerId == expectedCustomerId) {
+        return order;
+      }
+    }
+    return null;
+  }
+}
+
+class _OrdersInitialSkeleton extends StatelessWidget {
+  const _OrdersInitialSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      key: const ValueKey('orders-initial-skeleton'),
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      children: [
+        ShopSkeleton(
+          semanticLabel: 'جارٍ تحميل الطلبات',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Row(
+                children: [
+                  Expanded(
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: ShopSkeletonBox(
+                        width: 104,
+                        height: 28,
+                        borderRadius: 9,
+                      ),
+                    ),
+                  ),
+                  ShopSkeletonCircle(size: 44),
+                ],
+              ),
+              const SizedBox(height: 12),
+              for (var index = 0; index < 4; index++)
+                _OrderSkeletonCard(index: index),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _OrderSkeletonCard extends StatelessWidget {
+  const _OrderSkeletonCard({required this.index});
+
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: ValueKey('orders-skeleton-card-$index'),
+      margin: const EdgeInsets.only(bottom: 12),
+      child: const Padding(
+        padding: EdgeInsets.all(12),
+        child: Row(
+          children: [
+            ShopSkeletonBox(
+              width: 48,
+              height: 48,
+              borderRadius: 12,
+            ),
+            SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ShopSkeletonBox(height: 16, borderRadius: 7),
+                  SizedBox(height: 8),
+                  FractionallySizedBox(
+                    widthFactor: .72,
+                    alignment: AlignmentDirectional.centerStart,
+                    child: ShopSkeletonBox(height: 11, borderRadius: 6),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(width: 8),
+            ShopSkeletonBox(
+              width: 58,
+              height: 28,
+              borderRadius: 999,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OrderSuccessPanel extends StatelessWidget {
+  const _OrderSuccessPanel({
+    required this.order,
+    required this.onViewOrder,
+    required this.onBackToOrders,
+    required this.shopName,
+    this.logoUrl,
+  });
+
+  final Order order;
+  final VoidCallback onViewOrder;
+  final VoidCallback onBackToOrders;
+  final String shopName;
+  final String? logoUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      key: const ValueKey('orders-success-panel'),
+      color: scheme.primaryContainer.withValues(alpha: .45),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                _SuccessCelebrationIcon(),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'تم استلام طلبك بنجاح!',
+                    style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'شكراً لطلبك 🤍 سنقوم بمراجعته وتحديث حالته قريباً.',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 10),
+            Text('رقم الطلب: ${order.displayNumber}'),
+            const SizedBox(height: 2),
+            Text(
+              'الإجمالي المعتمد: ${lyd(order.total)}',
+              key: const ValueKey('orders-success-total'),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  key: const ValueKey('orders-success-view-order'),
+                  onPressed: onViewOrder,
+                  icon: const Icon(Icons.receipt_long_outlined),
+                  label: const Text('عرض الطلب'),
+                ),
+                OutlinedButton.icon(
+                  key: const ValueKey('orders-success-download-pdf'),
+                  onPressed: () => CustomerInvoiceActions.downloadPdfForOrder(
+                    context,
+                    order: order,
+                    shopName: shopName,
+                    logoUrl: logoUrl,
+                  ),
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('تحميل الفاتورة PDF'),
+                ),
+                TextButton(
+                  key: const ValueKey('orders-success-back'),
+                  onPressed: onBackToOrders,
+                  child: const Text('العودة إلى طلباتي'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SuccessCelebrationIcon extends StatefulWidget {
+  const _SuccessCelebrationIcon();
+
+  @override
+  State<_SuccessCelebrationIcon> createState() =>
+      _SuccessCelebrationIconState();
+}
+
+class _SuccessCelebrationIconState extends State<_SuccessCelebrationIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+  late final Animation<double> _scale = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeOutBack,
+  );
+  late final Animation<double> _fade = CurvedAnimation(
+    parent: _controller,
+    curve: const Interval(0, .65, curve: Curves.easeOut),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    if (reduceMotion) {
+      _controller.value = 1;
+    } else if (_controller.status == AnimationStatus.dismissed) {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return SizedBox(
+          width: 52,
+          height: 52,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CustomPaint(
+                painter: _BurstPainter(progress: _fade.value),
+                size: const Size.square(52),
+              ),
+              Opacity(
+                opacity: .7 + (_fade.value * .3),
+                child: Transform.scale(
+                  scale: .88 + (_scale.value * .12),
+                  child: const Icon(
+                    Icons.check_circle,
+                    color: Color(0xff1d8f52),
+                    size: 34,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _BurstPainter extends CustomPainter {
+  const _BurstPainter({required this.progress});
+
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0) return;
+    const count = 10;
+    final center = size.center(Offset.zero);
+    final radius = 14 + (progress * 11);
+    final paint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xff8cd9af).withValues(alpha: 1 - progress);
+    for (var i = 0; i < count; i++) {
+      final angle = (i / count) * 6.28318530718;
+      final dot = Offset(
+        center.dx + radius * math.cos(angle),
+        center.dy + radius * math.sin(angle),
+      );
+      canvas.drawCircle(dot, 2.2, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BurstPainter oldDelegate) =>
+      oldDelegate.progress != progress;
 }
 
 class _QueuedOrdersSection extends StatelessWidget {
@@ -591,12 +927,16 @@ class _CustomerOrderCard extends StatelessWidget {
     required this.highlighted,
     required this.onReorder,
     required this.onCopy,
+    this.shopName = '',
+    this.logoUrl,
   });
 
   final Order order;
   final bool highlighted;
   final VoidCallback? onReorder;
   final VoidCallback onCopy;
+  final String shopName;
+  final String? logoUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -613,6 +953,22 @@ class _CustomerOrderCard extends StatelessWidget {
       ),
       child: ExpansionTile(
         initiallyExpanded: highlighted,
+        leading: order.items.isEmpty
+            ? null
+            : SizedBox.square(
+                dimension: 48,
+                child: ProductImagePlaceholder(
+                  key: ValueKey(
+                    'customer-order-preview-image-${order.id}',
+                  ),
+                  category: order.items.first.product.category,
+                  productId: order.items.first.productId,
+                  imageUrl: order.items.first.product.imageUrl,
+                  expand: true,
+                  fit: BoxFit.contain,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
         title: Text(
           'طلب ${order.displayNumber}',
           style: const TextStyle(fontWeight: FontWeight.w900),
@@ -623,15 +979,9 @@ class _CustomerOrderCard extends StatelessWidget {
         trailing: StatusChip.order(order.status),
         children: [
           for (final item in order.items)
-            ListTile(
-              title: Text(item.productName),
-              subtitle: item.unitsPerBox == null
-                  ? null
-                  : Text('${item.unitsPerBox} قطعة في الصندوق'),
-              trailing: Text(
-                '${item.quantity} × ${lyd(item.unitPrice)}\n${lyd(item.lineTotal)}',
-                textAlign: TextAlign.end,
-              ),
+            _CustomerOrderProductRow(
+              orderId: order.id,
+              item: item,
             ),
           const Divider(height: 1),
           _OrderTotalTile(
@@ -683,6 +1033,94 @@ class _CustomerOrderCard extends StatelessWidget {
                   label: const Text('نسخ ملخص واتساب'),
                 ),
               ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(
+                start: 12, end: 12, bottom: 14),
+            child: CustomerInvoiceActions(
+              order: order,
+              shopName: shopName.isEmpty ? order.businessName : shopName,
+              logoUrl: logoUrl,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CustomerOrderProductRow extends StatelessWidget {
+  const _CustomerOrderProductRow({
+    required this.orderId,
+    required this.item,
+  });
+
+  final String orderId;
+  final OrderLine item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox.square(
+            dimension: 58,
+            child: ProductImagePlaceholder(
+              key: ValueKey(
+                'customer-order-item-image-$orderId-${item.productId}',
+              ),
+              category: item.product.category,
+              productId: item.productId,
+              imageUrl: item.product.imageUrl,
+              expand: true,
+              fit: BoxFit.contain,
+              borderRadius: BorderRadius.circular(13),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.productName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  [
+                    '${item.quantity} × ${lyd(item.unitPrice)}',
+                    if (item.unitsPerBox != null)
+                      '${item.unitsPerBox} قطعة في الصندوق',
+                  ].join(' • '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: .66),
+                    fontSize: 12.5,
+                    height: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            lyd(item.lineTotal),
+            style: const TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 12.5,
             ),
           ),
         ],
@@ -745,9 +1183,20 @@ class _OrderTotalTile extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
       child: Row(
         children: [
-          Text(label, style: style),
-          const Spacer(),
-          Text(lyd(amount), style: style),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: style,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            lyd(amount),
+            maxLines: 1,
+            style: style,
+          ),
         ],
       ),
     );
