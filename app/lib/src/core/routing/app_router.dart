@@ -31,6 +31,7 @@ import '../../features/offers/offers_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/admin_storefront/admin_storefront_preview_screen.dart';
 import '../../features/admin_storefront/admin_storefront_screen.dart';
+import '../../features/admin_storefront/guest_storefront_preview_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/support/support_screen.dart';
 
@@ -267,6 +268,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
           path: '/admin/storefront/preview',
           builder: (context, state) => const AdminStorefrontPreviewScreen()),
+      GoRoute(
+        path: '/admin/storefront/guest',
+        builder: (context, state) => const GuestStorefrontPreviewScreen(),
+      ),
     ],
   );
 });
@@ -322,6 +327,7 @@ bool _isAdminLocation(String location) =>
       '/admin/reports',
       '/admin/settings',
       '/admin/storefront',
+      '/admin/storefront/guest',
     }.contains(location) ||
     location == '/admin/storefront/preview';
 
@@ -331,6 +337,7 @@ bool _isAdminOnlyLocation(String location) =>
     location == '/admin/reports' ||
     location == '/admin/settings' ||
     location == '/admin/storefront' ||
+    location == '/admin/storefront/guest' ||
     location == '/admin/storefront/preview';
 
 String _locationWithNext(String path, String next) => Uri(

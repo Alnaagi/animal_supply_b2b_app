@@ -11,6 +11,7 @@ class StorefrontToolbar extends ConsumerWidget {
     required this.controller,
     required this.onReset,
     required this.onPublish,
+    required this.onGuestPreview,
     super.key,
   });
 
@@ -18,11 +19,11 @@ class StorefrontToolbar extends ConsumerWidget {
   final AdminStorefrontController controller;
   final VoidCallback onReset;
   final VoidCallback onPublish;
+  final VoidCallback onGuestPreview;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final unread =
-        ref.watch(unreadNotificationsCountProvider).valueOrNull ?? 0;
+    final unread = ref.watch(unreadNotificationsCountProvider).valueOrNull ?? 0;
     final showMenu = MediaQuery.sizeOf(context).width < 900;
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -45,6 +46,7 @@ class StorefrontToolbar extends ConsumerWidget {
                       controller: controller,
                       onReset: onReset,
                       onPublish: onPublish,
+                      onGuestPreview: onGuestPreview,
                       showMenu: showMenu,
                       unread: unread,
                     )
@@ -53,6 +55,7 @@ class StorefrontToolbar extends ConsumerWidget {
                       controller: controller,
                       onReset: onReset,
                       onPublish: onPublish,
+                      onGuestPreview: onGuestPreview,
                       showMenu: showMenu,
                       unread: unread,
                     ),
@@ -90,6 +93,7 @@ class _WideToolbar extends StatelessWidget {
     required this.controller,
     required this.onReset,
     required this.onPublish,
+    required this.onGuestPreview,
     required this.showMenu,
     required this.unread,
   });
@@ -98,6 +102,7 @@ class _WideToolbar extends StatelessWidget {
   final AdminStorefrontController controller;
   final VoidCallback onReset;
   final VoidCallback onPublish;
+  final VoidCallback onGuestPreview;
   final bool showMenu;
   final int unread;
 
@@ -148,6 +153,7 @@ class _WideToolbar extends StatelessWidget {
                 onPreviewPublished: () =>
                     controller.togglePreviewPublished(true),
                 onReset: onReset,
+                onGuestPreview: onGuestPreview,
               ),
             ),
           ),
@@ -163,6 +169,7 @@ class _CompactToolbar extends StatelessWidget {
     required this.controller,
     required this.onReset,
     required this.onPublish,
+    required this.onGuestPreview,
     required this.showMenu,
     required this.unread,
   });
@@ -171,6 +178,7 @@ class _CompactToolbar extends StatelessWidget {
   final AdminStorefrontController controller;
   final VoidCallback onReset;
   final VoidCallback onPublish;
+  final VoidCallback onGuestPreview;
   final bool showMenu;
   final int unread;
 
@@ -206,6 +214,7 @@ class _CompactToolbar extends StatelessWidget {
           onPublish: onPublish,
           onPreviewPublished: () => controller.togglePreviewPublished(true),
           onReset: onReset,
+          onGuestPreview: onGuestPreview,
           compact: true,
         ),
       ],
@@ -220,8 +229,8 @@ class _DraftStatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final saving = state.saving ||
-        state.syncStatus == StorefrontDraftSyncStatus.saving;
+    final saving =
+        state.saving || state.syncStatus == StorefrontDraftSyncStatus.saving;
     final error = state.syncStatus == StorefrontDraftSyncStatus.error;
     final pending = state.hasUnsavedChanges ||
         state.syncStatus == StorefrontDraftSyncStatus.pending;
@@ -320,6 +329,7 @@ class _PrimaryActions extends StatelessWidget {
     required this.onPublish,
     required this.onPreviewPublished,
     required this.onReset,
+    required this.onGuestPreview,
     this.compact = false,
   });
 
@@ -327,6 +337,7 @@ class _PrimaryActions extends StatelessWidget {
   final VoidCallback onPublish;
   final VoidCallback onPreviewPublished;
   final VoidCallback onReset;
+  final VoidCallback onGuestPreview;
   final bool compact;
 
   @override
@@ -346,6 +357,12 @@ class _PrimaryActions extends StatelessWidget {
         onPressed: onPreviewPublished,
         icon: const Icon(Icons.visibility_outlined, size: 18),
         label: const Text('معاينة المنشور'),
+      ),
+      OutlinedButton.icon(
+        key: const Key('storefront-guest-preview-button'),
+        onPressed: onGuestPreview,
+        icon: const Icon(Icons.person_outline, size: 18),
+        label: const Text('تجربة كزائر'),
       ),
       FilledButton.icon(
         onPressed: state.publishing ? null : onPublish,

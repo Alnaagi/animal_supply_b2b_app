@@ -775,6 +775,52 @@ class _AdminProductsScreenState extends ConsumerState<AdminProductsScreen> {
   }
 
   Widget _buildProductCollection(BuildContext context) {
+    if (viewMode == _AdminProductViewMode.grid) {
+      return LayoutBuilder(
+        key: const ValueKey('admin-products-results'),
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          final columns = width >= 1180
+              ? 4
+              : width >= 760
+                  ? 3
+                  : 2;
+          return GridView.builder(
+            key: const ValueKey('admin-products-grid'),
+            padding: EdgeInsets.zero,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: products.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              mainAxisExtent: width < 520
+                  ? 300
+                  : width < 900
+                      ? 330
+                      : 360,
+            ),
+            itemBuilder: (context, index) {
+              final product = products[index];
+              return _AdminProductGridCard(
+                key: ValueKey('admin-product-card-${product.id}'),
+                product: product,
+                busy: busyProductIds.contains(product.id),
+                multiSelectMode: multiSelectMode,
+                selected: selectedProductIds.contains(product.id),
+                onToggleSelected: () => _toggleProductSelected(product.id),
+                onMenuAction: (value) => _handleProductAction(product, value),
+                onFeaturedToggle: () => unawaited(_toggleFeatured(product)),
+                onVisibilityToggle: () => unawaited(_toggleVisibility(product)),
+                onOpenFullEdit: () => unawaited(_showProductForm(product)),
+              );
+            },
+          );
+        },
+      );
+    }
+
     return Column(
       key: const ValueKey('admin-products-results'),
       children: [
@@ -2607,6 +2653,240 @@ class _AdminBulkActionBar extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _AdminProductGridCard extends StatelessWidget {
+  const _AdminProductGridCard({
+    required this.product,
+    required this.busy,
+    required this.multiSelectMode,
+    required this.selected,
+    required this.onToggleSelected,
+    required this.onMenuAction,
+    required this.onFeaturedToggle,
+    required this.onVisibilityToggle,
+    required this.onOpenFullEdit,
+    super.key,
+  });
+
+  final Product product;
+  final bool busy;
+  final bool multiSelectMode;
+  final bool selected;
+  final VoidCallback onToggleSelected;
+  final AdminProductCardAction onMenuAction;
+  final VoidCallback onFeaturedToggle;
+  final VoidCallback onVisibilityToggle;
+  final VoidCallback onOpenFullEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final stockColor = !product.stockTrackingEnabled
+        ? Colors.blueGrey
+        : !product.isOrderable
+            ? Colors.red
+            : product.lowStock
+                ? Colors.orange
+                : Colors.green;
+    final visibilityLabel = product.isArchived
+        ? 'مؤرشف'
+        : product.active
+            ? 'ظاهر للعملاء'
+            : 'مخفي';
+    final visibilityColor = product.isArchived || !product.active
+        ? Colors.blueGrey
+        : scheme.primary;
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      margin: EdgeInsets.zero,
+      elevation: 0.5,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(
+          color: selected
+              ? scheme.primary.withValues(alpha: .55)
+              : scheme.primary.withValues(alpha: .12),
+          width: selected ? 2 : 1,
+        ),
+      ),
+      child: Stack(
+        children: [
+          InkWell(
+            onTap: onOpenFullEdit,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ProductImagePlaceholder(
+                          key: ValueKey(
+                            'admin-product-grid-image-${product.id}',
+                          ),
+                          productId: product.id,
+                          category: product.category,
+                          imageUrl: product.imageUrl,
+                          semanticLabel: 'صورة ${product.name}',
+                          expand: true,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        if (multiSelectMode)
+                          PositionedDirectional(
+                            top: 2,
+                            start: 2,
+                            child: Material(
+                              color: scheme.surface.withValues(alpha: .9),
+                              shape: const CircleBorder(),
+                              child: Checkbox(
+                                key: ValueKey(
+                                  'admin-product-grid-select-${product.id}',
+                                ),
+                                value: selected,
+                                onChanged: (_) => onToggleSelected(),
+                              ),
+                            ),
+                          ),
+                        PositionedDirectional(
+                          top: 2,
+                          end: 2,
+                          child: Material(
+                            color: scheme.surface.withValues(alpha: .9),
+                            shape: const CircleBorder(),
+                            child: PopupMenuButton<String>(
+                              key: ValueKey(
+                                'admin-product-menu-${product.id}',
+                              ),
+                              tooltip: 'خيارات المنتج',
+                              icon: const Icon(Icons.more_horiz, size: 20),
+                              padding: EdgeInsets.zero,
+                              onSelected: (value) => onMenuAction(value),
+                              itemBuilder: (context) =>
+                                  adminProductOverflowItems(product),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    product.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w900,
+                          height: 1.2,
+                        ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    [
+                      if (product.brand.trim().isNotEmpty) product.brand,
+                      if (product.category.trim().isNotEmpty) product.category,
+                    ].join(' • '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    lyd(product.price),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: scheme.onSurface,
+                          fontWeight: FontWeight.w900,
+                        ),
+                  ),
+                  const SizedBox(height: 5),
+                  ProductChipWrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      ProductInfoChip(
+                        adminStockStatusLabel(product),
+                        icon: Icons.inventory_2_outlined,
+                        color: stockColor,
+                      ),
+                      ProductInfoChip(
+                        visibilityLabel,
+                        icon: product.active
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                        color: visibilityColor,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      IconButton(
+                        key: ValueKey(
+                          'admin-product-featured-${product.id}',
+                        ),
+                        tooltip: product.isFeatured ? 'إلغاء التمييز' : 'تمييز',
+                        onPressed: onFeaturedToggle,
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(
+                          product.isFeatured ? Icons.star : Icons.star_border,
+                          color: product.isFeatured
+                              ? Colors.orange
+                              : scheme.onSurfaceVariant,
+                        ),
+                      ),
+                      IconButton(
+                        key: ValueKey(
+                          'admin-product-grid-visibility-${product.id}',
+                        ),
+                        tooltip: product.active ? 'إخفاء' : 'إظهار',
+                        onPressed: onVisibilityToggle,
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(
+                          product.active
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
+                        ),
+                      ),
+                      const Spacer(),
+                      if (product.hasProductDiscount)
+                        Text(
+                          '-${product.discountPercent!.toStringAsFixed(0)}%',
+                          style: TextStyle(
+                            color: scheme.error,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 11,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (busy)
+            Positioned.fill(
+              child: ColoredBox(
+                color: scheme.surface.withValues(alpha: .72),
+                child: const Center(
+                  child: SizedBox.square(
+                    dimension: 28,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

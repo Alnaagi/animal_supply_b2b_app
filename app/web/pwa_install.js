@@ -5,6 +5,7 @@
 
   const SHOP_NAME_KEY = 'shop_branding.v1.name';
   const SHOP_LOGO_KEY = 'shop_branding.v1.logo';
+  const SHOP_THEME_KEY = 'storefront_theme.v1';
   const DISMISS_UNTIL_KEY = 'animal-supply-pwa-install-dismiss-until';
   const DISMISS_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
   const DISPLAY_MODE_QUERY = '(display-mode: standalone)';
@@ -91,6 +92,51 @@
       // Storage can be disabled in private or restricted browser contexts.
     }
     return 'icons/Icon-192.png';
+  }
+
+  function normalizeHex(value, fallback) {
+    const candidate = String(value ?? '').trim();
+    return /^#[0-9a-f]{6}$/i.test(candidate)
+      ? candidate.toUpperCase()
+      : fallback;
+  }
+
+  function rgba(hex, alpha) {
+    const value = Number.parseInt(hex.slice(1), 16);
+    const red = (value >> 16) & 0xff;
+    const green = (value >> 8) & 0xff;
+    const blue = value & 0xff;
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+  }
+
+  function applyTheme(theme) {
+    const root = global.document?.documentElement;
+    if (!root?.style) return;
+    const primary = normalizeHex(theme?.primaryColor, '#146C4E');
+    const secondary = normalizeHex(theme?.secondaryColor, '#8A623F');
+    const background = normalizeHex(theme?.backgroundColor, '#F7F2EA');
+    const card = normalizeHex(theme?.cardColor, '#FFFFFF');
+    const text = normalizeHex(theme?.textColor, '#173F32');
+    root.style.setProperty('--storefront-primary', primary);
+    root.style.setProperty('--storefront-primary-soft', rgba(primary, 0.12));
+    root.style.setProperty('--storefront-primary-strong', rgba(primary, 0.22));
+    root.style.setProperty('--storefront-secondary', secondary);
+    root.style.setProperty('--storefront-background', background);
+    root.style.setProperty('--storefront-card', card);
+    root.style.setProperty('--storefront-text', text);
+    root.style.setProperty('--storefront-muted', rgba(text, 0.72));
+    root.style.setProperty('--storefront-background-soft', rgba(background, 0.92));
+  }
+
+  function applyCachedTheme() {
+    try {
+      const raw = global.localStorage?.getItem(SHOP_THEME_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') applyTheme(parsed);
+    } catch (_) {
+      // Ignore malformed or unavailable cached theme data.
+    }
   }
 
   function storedDismissalActive() {
@@ -204,7 +250,7 @@
         align-items: center;
         justify-content: center;
         padding: 20px;
-        background: rgba(24, 39, 35, 0.56);
+        background: rgba(15, 23, 42, 0.52);
         backdrop-filter: blur(4px);
         direction: rtl;
         opacity: 0;
@@ -218,11 +264,11 @@
       .animal-supply-pwa-install-dialog {
         width: min(100%, 430px);
         box-sizing: border-box;
-        border: 1px solid rgba(22, 138, 99, 0.22);
+        border: 1px solid var(--storefront-primary-strong, rgba(20, 108, 78, 0.22));
         border-radius: 24px;
         padding: 22px;
-        background: #fffdf9;
-        color: #18372e;
+        background: var(--storefront-card, #fffdf9);
+        color: var(--storefront-text, #18372e);
         box-shadow: 0 24px 70px rgba(12, 38, 30, 0.28);
         font-family: "Noto Sans Arabic", Tahoma, Arial, sans-serif;
         text-align: right;
@@ -248,12 +294,12 @@
         flex: 0 0 58px;
         border-radius: 17px;
         object-fit: cover;
-        background: #e3f2eb;
+        background: var(--storefront-primary-soft, #e3f2eb);
       }
 
       .animal-supply-pwa-install-title {
         margin: 0;
-        color: #145c47;
+        color: var(--storefront-primary, #145c47);
         font-size: 1.3rem;
         font-weight: 900;
         line-height: 1.45;
@@ -262,7 +308,7 @@
       .animal-supply-pwa-install-copy,
       .animal-supply-pwa-install-status {
         margin: 0;
-        color: #425c54;
+        color: var(--storefront-muted, #425c54);
         font-size: 0.98rem;
         line-height: 1.8;
       }
@@ -271,8 +317,8 @@
         margin: 14px 0 0;
         padding: 12px 16px;
         border-radius: 15px;
-        background: #edf7f2;
-        color: #285847;
+        background: var(--storefront-primary-soft, #edf7f2);
+        color: var(--storefront-text, #285847);
         font-weight: 700;
         line-height: 1.8;
       }
@@ -301,7 +347,7 @@
       }
 
       .animal-supply-pwa-install-button:focus-visible {
-        outline: 3px solid rgba(22, 138, 99, 0.32);
+        outline: 3px solid var(--storefront-primary-strong, rgba(22, 138, 99, 0.32));
         outline-offset: 2px;
       }
 
@@ -312,13 +358,13 @@
 
       .animal-supply-pwa-install-primary {
         flex: 1;
-        background: #168a63;
+        background: var(--storefront-primary, #168a63);
         color: white;
       }
 
       .animal-supply-pwa-install-secondary {
-        background: #edf2ef;
-        color: #36564c;
+        background: var(--storefront-primary-soft, #edf2ef);
+        color: var(--storefront-text, #36564c);
       }
 
       @media (max-width: 520px) {
@@ -625,4 +671,8 @@
     resetDismissal,
     show: showDialog,
   });
+
+  // Apply the last published palette before Flutter starts so the install
+  // dialog never flashes the old green defaults on a branded storefront.
+  applyCachedTheme();
 })(window);

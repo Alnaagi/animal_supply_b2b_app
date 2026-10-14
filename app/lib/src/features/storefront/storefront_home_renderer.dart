@@ -27,6 +27,8 @@ class StorefrontHomeRenderer extends ConsumerWidget {
     this.renderMode = StorefrontRenderMode.customer,
     this.scrollKey = const Key('customer-home-scroll'),
     this.priceResolver,
+    this.previewSelectedSection,
+    this.onPreviewSectionTap,
     super.key,
   });
 
@@ -37,6 +39,8 @@ class StorefrontHomeRenderer extends ConsumerWidget {
   final StorefrontRenderMode renderMode;
   final Key scrollKey;
   final double Function(Product product)? priceResolver;
+  final StorefrontSectionType? previewSelectedSection;
+  final ValueChanged<StorefrontSectionType>? onPreviewSectionTap;
 
   bool get isPreview => interactionMode == StorefrontInteractionMode.preview;
 
@@ -50,8 +54,17 @@ class StorefrontHomeRenderer extends ConsumerWidget {
       if (!section.visible) continue;
       final widget = _buildSection(context, ref, section, spacing);
       if (widget != null) {
+        final sectionWidget = isPreview && onPreviewSectionTap != null
+            ? _PreviewSectionSelectable(
+                key: Key('storefront-preview-section-${section.type.name}'),
+                section: section.type,
+                selected: previewSelectedSection == section.type,
+                onTap: () => onPreviewSectionTap!(section.type),
+                child: widget,
+              )
+            : widget;
         if (children.isNotEmpty) children.add(SizedBox(height: spacing));
-        children.add(widget);
+        children.add(sectionWidget);
       }
     }
 
@@ -372,8 +385,7 @@ class StorefrontHomeRenderer extends ConsumerWidget {
           final width = constraints.maxWidth;
           final desktopGrid = width >= 700;
           final compactMetrics = _CompactCategoryStripMetrics.resolve(width);
-          final density =
-              config.style.densityScale.clamp(.92, 1.04).toDouble();
+          final density = config.style.densityScale.clamp(.92, 1.04).toDouble();
 
           Widget categoryTile(ProductCategory category, double tileWidth) {
             return _HomeCategoryTile(
@@ -504,9 +516,7 @@ class StorefrontHomeRenderer extends ConsumerWidget {
                   theme: config.theme,
                 ),
               SizedBox(
-                height: compactChrome
-                    ? 6
-                    : config.style.sectionSpacing * 0.55,
+                height: compactChrome ? 6 : config.style.sectionSpacing * 0.55,
               ),
               if (products.isEmpty)
                 Padding(
@@ -555,11 +565,9 @@ class StorefrontHomeRenderer extends ConsumerWidget {
                                     product.price,
                                 onTap: isPreview
                                     ? null
-                                    : () =>
-                                        actions.onProductTap?.call(product),
+                                    : () => actions.onProductTap?.call(product),
                                 onAddToCart: showAddToCart
-                                    ? () =>
-                                        actions.onAddToCart?.call(product)
+                                    ? () => actions.onAddToCart?.call(product)
                                     : null,
                               )
                             : _HomeProductCard(
@@ -577,11 +585,9 @@ class StorefrontHomeRenderer extends ConsumerWidget {
                                     product.price,
                                 onTap: isPreview
                                     ? null
-                                    : () =>
-                                        actions.onProductTap?.call(product),
+                                    : () => actions.onProductTap?.call(product),
                                 onAddToCart: showAddToCart
-                                    ? () =>
-                                        actions.onAddToCart?.call(product)
+                                    ? () => actions.onAddToCart?.call(product)
                                     : null,
                               ),
                       );
@@ -745,6 +751,106 @@ class StorefrontHomeRenderer extends ConsumerWidget {
       case _ProductSelector.latest:
         return products.take(maxItems).toList();
     }
+  }
+}
+
+class _PreviewSectionSelectable extends StatefulWidget {
+  const _PreviewSectionSelectable({
+    required this.section,
+    required this.selected,
+    required this.onTap,
+    required this.child,
+    super.key,
+  });
+
+  final StorefrontSectionType section;
+  final bool selected;
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  State<_PreviewSectionSelectable> createState() =>
+      _PreviewSectionSelectableState();
+}
+
+class _PreviewSectionSelectableState extends State<_PreviewSectionSelectable> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final highlighted = _hovered || widget.selected;
+    const accent = Color(0xff2563eb);
+
+    return Semantics(
+      button: true,
+      label: 'تعديل ألوان قسم ${widget.section.labelAr}',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOut,
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: highlighted ? accent : Colors.transparent,
+                width: highlighted ? 2 : 0,
+              ),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                widget.child,
+                if (highlighted)
+                  PositionedDirectional(
+                    top: 6,
+                    end: 8,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: accent,
+                          borderRadius: BorderRadius.circular(999),
+                          boxShadow: [
+                            BoxShadow(
+                              color: accent.withValues(alpha: .22),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          child: Text(
+                            'اضغط لتعديل الألوان',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black.withValues(alpha: .18),
+                                  blurRadius: 2,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -1160,10 +1266,9 @@ class _CompactCategoryStripMetrics {
     final usableWidth = (width - edgePadding * 2).clamp(0.0, width);
     final visibleSlots =
         ((usableWidth + gap) / (minimumTileWidth + gap)).floor().clamp(3, 6);
-    final tileWidth =
-        ((usableWidth - gap * (visibleSlots - 1)) / visibleSlots)
-            .clamp(minimumTileWidth, 86.0)
-            .toDouble();
+    final tileWidth = ((usableWidth - gap * (visibleSlots - 1)) / visibleSlots)
+        .clamp(minimumTileWidth, 86.0)
+        .toDouble();
     final imageSize = tileWidth;
     // Square art + tight label row (single line).
     final railHeight = imageSize + 4 + 15;
@@ -1325,9 +1430,7 @@ class _AutoSlidingCategoryRailState extends State<_AutoSlidingCategoryRail> {
   void _scheduleAutoPlay() {
     _timer?.cancel();
     _timer = null;
-    if (!widget.autoPlay ||
-        _reduceMotion ||
-        widget.categories.length < 4) {
+    if (!widget.autoPlay || _reduceMotion || widget.categories.length < 4) {
       return;
     }
     _timer = Timer.periodic(_tickInterval, (_) => _advance());
@@ -1464,7 +1567,9 @@ class _HomeCategoryTile extends StatelessWidget {
         ? (tileWidth * .08).clamp(5.0, 8.0)
         : (tileWidth * .09).clamp(7.0, 11.0);
     final radius = BorderRadius.circular(
-      compact ? (style.cardRadius * .78).clamp(12.0, 16.0) : style.cardRadius * .9,
+      compact
+          ? (style.cardRadius * .78).clamp(12.0, 16.0)
+          : style.cardRadius * .9,
     );
     return SizedBox(
       width: tileWidth,
@@ -1733,6 +1838,7 @@ class _HomeProductSectionLayout {
   final bool usesWideCards;
   final bool centerCards;
   final bool usesHorizontalPeek;
+
   /// Visible strip of the next off-screen card on phone peek rails.
   final double peekExtent;
 
@@ -2372,10 +2478,10 @@ class _HomeProductCard extends StatelessWidget {
                                   foregroundColor: _contentColorFor(
                                     theme.primaryColor,
                                   ),
-                                  disabledBackgroundColor: theme.primaryColor
-                                      .withValues(alpha: .20),
-                                  disabledForegroundColor: theme.textColor
-                                      .withValues(alpha: .38),
+                                  disabledBackgroundColor:
+                                      theme.primaryColor.withValues(alpha: .20),
+                                  disabledForegroundColor:
+                                      theme.textColor.withValues(alpha: .38),
                                 ),
                                 onPressed:
                                     product.isOrderable ? onAddToCart : null,

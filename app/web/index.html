@@ -62,8 +62,110 @@
       } catch (e) {}
     })();
   </script>
+  <!--
+    Pre-Flutter loader: vertical paw trail walking bottom to top.
+    Mirrors PawTrail in lib/src/core/widgets/paw_trail_loader.dart.
+  -->
+  <style>
+    #app-loader {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: var(--loader-bg, #f7f2ea);
+      color: var(--loader-paw, #146c4e);
+      transition: opacity .32s ease-out;
+    }
+    #app-loader.app-loader-done { opacity: 0; pointer-events: none; }
+    #app-loader svg { width: 96px; height: 160px; overflow: visible; }
+    #app-loader .app-loader-paw {
+      opacity: 0;
+      animation: appLoaderStep 2.4s ease-out infinite;
+      animation-delay: calc(var(--i) * .3s);
+    }
+    #app-loader-name {
+      font-family: system-ui, -apple-system, 'Segoe UI', Tahoma, sans-serif;
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--loader-text, #173f32);
+      text-align: center;
+      padding: 0 24px;
+    }
+    @keyframes appLoaderStep {
+      0%   { opacity: 0; transform: scale(.3); }
+      10%  { opacity: 1; transform: scale(1.12); }
+      18%  { opacity: 1; transform: scale(1); }
+      55%  { opacity: 1; }
+      80%, 100% { opacity: 0; transform: scale(1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #app-loader .app-loader-paw { animation: none; opacity: 1; }
+    }
+  </style>
 </head>
 <body>
+  <div id="app-loader" role="status" aria-label="جارٍ تجهيز الصفحة...">
+    <svg viewBox="0 0 96 160" aria-hidden="true">
+      <defs>
+        <g id="app-loader-paw-shape" fill="currentColor">
+          <ellipse cx="0" cy="6.2" rx="9.7" ry="8.3"/>
+          <ellipse cx="-10.4" cy="-5.5" rx="3.8" ry="4.8"/>
+          <ellipse cx="-4.2" cy="-12.4" rx="3.8" ry="4.8"/>
+          <ellipse cx="4.2" cy="-12.4" rx="3.8" ry="4.8"/>
+          <ellipse cx="10.4" cy="-5.5" rx="3.8" ry="4.8"/>
+        </g>
+      </defs>
+      <g transform="translate(65 138) rotate(11)"><use class="app-loader-paw" href="#app-loader-paw-shape" style="--i:0"/></g>
+      <g transform="translate(31 99) rotate(-11)"><use class="app-loader-paw" href="#app-loader-paw-shape" style="--i:1"/></g>
+      <g transform="translate(65 61) rotate(11)"><use class="app-loader-paw" href="#app-loader-paw-shape" style="--i:2"/></g>
+      <g transform="translate(31 22) rotate(-11)"><use class="app-loader-paw" href="#app-loader-paw-shape" style="--i:3"/></g>
+    </svg>
+    <div id="app-loader-name"></div>
+  </div>
+  <script>
+    (function appLoader() {
+      var loader = document.getElementById('app-loader');
+      if (!loader) return;
+      try {
+        var name = String(localStorage.getItem('shop_branding.v1.name') || '').trim();
+        if (name) document.getElementById('app-loader-name').textContent = name;
+      } catch (e) {}
+      // Published storefront palette cached by applyShopWebTheme in Flutter.
+      try {
+        var theme = JSON.parse(localStorage.getItem('storefront_theme.v1') || 'null');
+        if (theme && typeof theme === 'object') {
+          var isHex = function (v) { return typeof v === 'string' && /^#[0-9A-Fa-f]{6}$/.test(v); };
+          if (isHex(theme.backgroundColor)) loader.style.setProperty('--loader-bg', theme.backgroundColor);
+          if (isHex(theme.primaryColor)) loader.style.setProperty('--loader-paw', theme.primaryColor);
+          if (isHex(theme.textColor)) loader.style.setProperty('--loader-text', theme.textColor);
+          var themeMeta = document.querySelector('meta[name="theme-color"]');
+          if (themeMeta && isHex(theme.primaryColor)) themeMeta.setAttribute('content', theme.primaryColor);
+        }
+      } catch (e) {}
+
+      var shownAt = Date.now();
+      var minVisibleMs = 900;
+      var removed = false;
+      function hide() {
+        if (removed) return;
+        removed = true;
+        var wait = Math.max(0, minVisibleMs - (Date.now() - shownAt));
+        setTimeout(function () {
+          loader.classList.add('app-loader-done');
+          setTimeout(function () {
+            if (loader.parentNode) loader.parentNode.removeChild(loader);
+          }, 360);
+        }, wait);
+      }
+      window.addEventListener('flutter-first-frame', hide, { once: true });
+      // Never trap the page behind the loader if Flutter fails to boot.
+      setTimeout(hide, 20000);
+    })();
+  </script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

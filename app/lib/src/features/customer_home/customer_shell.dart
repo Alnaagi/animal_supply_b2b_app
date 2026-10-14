@@ -310,11 +310,13 @@ class CustomerPreviewShell extends ConsumerWidget {
   const CustomerPreviewShell({
     required this.child,
     this.selectedIndex = 0,
+    this.onDestinationSelected,
     super.key,
   });
 
   final Widget child;
   final int selectedIndex;
+  final ValueChanged<int>? onDestinationSelected;
 
   static const previewOnlyMessage =
       'وضع المعاينة — لا يمكن تنفيذ هذا الإجراء من هنا.';
@@ -349,6 +351,10 @@ class CustomerPreviewShell extends ConsumerWidget {
 
     void onDestinationSelected(int index) {
       if (index == selectedIndex) return;
+      if (this.onDestinationSelected != null) {
+        this.onDestinationSelected!(index);
+        return;
+      }
       previewOnly();
     }
 
@@ -752,8 +758,7 @@ class _CustomerBottomNavigation extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final barColor =
-        theme.navigationBarTheme.backgroundColor ?? Colors.white;
+    final barColor = theme.navigationBarTheme.backgroundColor ?? Colors.white;
     final borderColor =
         theme.dividerTheme.color ?? theme.colorScheme.outlineVariant;
     return DecoratedBox(
@@ -1034,16 +1039,15 @@ class _CustomerSupportNudgeState extends State<CustomerSupportNudge>
   @override
   Widget build(BuildContext context) {
     final expanded = widget.expanded;
-    final revealProgress = expanded ? widget.expandProgress.clamp(0.0, 1.0) : 0.0;
-    final frameWidth = expanded
-        ? 48 + ((widget.expandedWidth - 48) * revealProgress)
-        : 48.0;
+    final revealProgress =
+        expanded ? widget.expandProgress.clamp(0.0, 1.0) : 0.0;
+    final frameWidth =
+        expanded ? 48 + ((widget.expandedWidth - 48) * revealProgress) : 48.0;
     return Semantics(
       key: const Key('customer-support-nudge-semantics'),
       button: true,
-      label: expanded
-          ? 'تحتاج مساعدة؟ تواصل معنا عبر واتساب'
-          : 'الدعم عبر واتساب',
+      label:
+          expanded ? 'تحتاج مساعدة؟ تواصل معنا عبر واتساب' : 'الدعم عبر واتساب',
       child: ExcludeSemantics(
         child: Tooltip(
           message: 'الدعم عبر واتساب',

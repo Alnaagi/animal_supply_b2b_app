@@ -46,6 +46,16 @@ void main() {
         find.byKey(const ValueKey('admin-product-card-budget')),
         findsOneWidget,
       );
+      expect(
+        find.byKey(const ValueKey('admin-products-grid')),
+        findsOneWidget,
+      );
+      final grid = tester.widget<GridView>(
+        find.byKey(const ValueKey('admin-products-grid')),
+      );
+      final delegate =
+          grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
+      expect(delegate.crossAxisCount, 2);
       expect(tester.takeException(), isNull);
     },
   );

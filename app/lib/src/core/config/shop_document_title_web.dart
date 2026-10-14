@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:web/web.dart' as web;
 
 const _nameStorageKey = 'shop_branding.v1.name';
 const _logoStorageKey = 'shop_branding.v1.logo';
+const _themeStorageKey = 'storefront_theme.v1';
 
 void applyShopWebBrandingImpl(String shopName, String? logoUrl) {
   final trimmedName = shopName.trim();
@@ -67,6 +70,62 @@ void applyShopWebBrandingImpl(String shopName, String? logoUrl) {
   }
 }
 
+void applyShopWebThemeImpl(Map<String, dynamic> theme) {
+  final normalized = <String, String>{
+    'primaryColor': _safeHex(theme['primaryColor'], '#146C4E'),
+    'secondaryColor': _safeHex(theme['secondaryColor'], '#8A623F'),
+    'backgroundColor': _safeHex(theme['backgroundColor'], '#F7F2EA'),
+    'cardColor': _safeHex(theme['cardColor'], '#FFFFFF'),
+    'textColor': _safeHex(theme['textColor'], '#173F32'),
+  };
+  final root = web.document.documentElement as web.HTMLElement?;
+  if (root != null) {
+    final primary = normalized['primaryColor']!;
+    final secondary = normalized['secondaryColor']!;
+    final background = normalized['backgroundColor']!;
+    final card = normalized['cardColor']!;
+    final text = normalized['textColor']!;
+    root.style
+      ..setProperty('--storefront-primary', primary)
+      ..setProperty('--storefront-primary-soft', _rgba(primary, .12))
+      ..setProperty('--storefront-primary-strong', _rgba(primary, .22))
+      ..setProperty('--storefront-secondary', secondary)
+      ..setProperty('--storefront-background', background)
+      ..setProperty('--storefront-card', card)
+      ..setProperty('--storefront-text', text)
+      ..setProperty('--storefront-muted', _rgba(text, .72));
+  }
+
+  final meta = web.document.querySelector('meta[name="theme-color"]');
+  if (meta != null) {
+    meta.setAttribute('content', normalized['primaryColor']!);
+  } else {
+    final created = web.document.createElement('meta');
+    created.setAttribute('name', 'theme-color');
+    created.setAttribute('content', normalized['primaryColor']!);
+    web.document.head?.appendChild(created);
+  }
+
+  try {
+    web.window.localStorage.setItem(_themeStorageKey, jsonEncode(normalized));
+  } catch (_) {}
+}
+
+String _safeHex(Object? raw, String fallback) {
+  final value = raw?.toString().trim() ?? '';
+  return RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(value)
+      ? value.toUpperCase()
+      : fallback;
+}
+
+String _rgba(String hex, double alpha) {
+  final value = int.parse(hex.substring(1), radix: 16);
+  final red = (value >> 16) & 0xFF;
+  final green = (value >> 8) & 0xFF;
+  final blue = value & 0xFF;
+  return 'rgba($red, $green, $blue, $alpha)';
+}
+
 String? readCachedShopDocumentTitleImpl() {
   try {
     final value = web.window.localStorage.getItem(_nameStorageKey);
@@ -88,4 +147,3 @@ String? readCachedShopLogoImpl() {
     return null;
   }
 }
-

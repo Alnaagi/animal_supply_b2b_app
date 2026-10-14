@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/concurrency/stale_write.dart';
 import '../../core/config/app_config.dart';
+import '../../core/config/storefront_theme_cache.dart';
 import '../models/storefront_config.dart';
 import '../remote/supabase_clients.dart';
 
@@ -49,10 +50,12 @@ class StorefrontRepository {
       );
       config.validate();
       _cachedPublished = config;
+      StorefrontThemeCache.remember(config.theme);
       return config;
     } catch (_) {
-      _cachedPublished = StorefrontDefaults.bundled;
-      return StorefrontDefaults.bundled;
+      final fallback = StorefrontThemeCache.fallbackConfig();
+      _cachedPublished = fallback;
+      return fallback;
     }
   }
 

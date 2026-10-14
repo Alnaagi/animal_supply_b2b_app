@@ -35,7 +35,11 @@ enum StorefrontThemePreset {
   defaultPreset('default', 'الافتراضي'),
   clean('clean', 'نظيف'),
   warm('warm', 'دافئ'),
-  modern('modern', 'حديث');
+  modern('modern', 'حديث'),
+  ocean('ocean', 'بحري'),
+  rose('rose', 'وردي'),
+  sunset('sunset', 'غروب'),
+  midnight('midnight', 'ليلي');
 
   const StorefrontThemePreset(this.key, this.labelAr);
 
@@ -624,6 +628,42 @@ class StorefrontDefaults {
           backgroundColor: Color(0xfff1f5f9),
           cardColor: Colors.white,
           textColor: Color(0xff134e4a),
+        );
+      case StorefrontThemePreset.ocean:
+        return const StorefrontThemeConfig(
+          preset: StorefrontThemePreset.ocean,
+          primaryColor: Color(0xff0f766e),
+          secondaryColor: Color(0xff1d4ed8),
+          backgroundColor: Color(0xffeffcff),
+          cardColor: Colors.white,
+          textColor: Color(0xff12343b),
+        );
+      case StorefrontThemePreset.rose:
+        return const StorefrontThemeConfig(
+          preset: StorefrontThemePreset.rose,
+          primaryColor: Color(0xffbe185d),
+          secondaryColor: Color(0xff9f1239),
+          backgroundColor: Color(0xfffff1f2),
+          cardColor: Color(0xfffffbfc),
+          textColor: Color(0xff4a102a),
+        );
+      case StorefrontThemePreset.sunset:
+        return const StorefrontThemeConfig(
+          preset: StorefrontThemePreset.sunset,
+          primaryColor: Color(0xffc2410c),
+          secondaryColor: Color(0xfff59e0b),
+          backgroundColor: Color(0xfffff7ed),
+          cardColor: Color(0xfffffbf5),
+          textColor: Color(0xff431407),
+        );
+      case StorefrontThemePreset.midnight:
+        return const StorefrontThemeConfig(
+          preset: StorefrontThemePreset.midnight,
+          primaryColor: Color(0xff38bdf8),
+          secondaryColor: Color(0xffa78bfa),
+          backgroundColor: Color(0xff0f172a),
+          cardColor: Color(0xff1e293b),
+          textColor: Color(0xfff8fafc),
         );
     }
   }

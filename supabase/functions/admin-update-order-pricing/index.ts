@@ -34,16 +34,19 @@ serve(async (req) => {
     const input = parseOrderPricingBody(await readJsonObject(req));
 
     const { data, error } = await adminClient.rpc(
-      "admin_update_order_pricing_transaction",
+      "admin_update_order_transaction",
       {
         p_actor_id: caller.id,
         p_order_id: input.orderId,
         p_items: input.items.map((item) => ({
           id: item.id,
+          ...(item.productId == null ? {} : { product_id: item.productId }),
+          ...(item.quantity == null ? {} : { quantity: item.quantity }),
           unit_price: item.unitPrice,
         })),
         p_delivery_fee: input.deliveryFee,
         p_discount_amount: input.discountAmount,
+        p_admin_note: input.adminNote,
         p_expected_updated_at: input.expectedUpdatedAt,
       },
     );

@@ -31,16 +31,26 @@ class StorefrontDesignPanel extends ConsumerWidget {
       children: [
         _GroupedCard(
           title: 'قوالب التصميم',
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (final preset in StorefrontThemePreset.values)
-                ChoiceChip(
-                  label: Text(preset.labelAr),
-                  selected: draftTheme.preset == preset,
-                  onSelected: (_) => controller.applyThemePreset(preset),
+              SizedBox(
+                height: 64,
+                child: ListView.separated(
+                  reverse: true,
+                  scrollDirection: Axis.horizontal,
+                  itemCount: StorefrontThemePreset.values.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final preset = StorefrontThemePreset.values[index];
+                    return _ThemePresetCard(
+                      preset: preset,
+                      selected: draftTheme.preset == preset,
+                      onTap: () => controller.applyThemePreset(preset),
+                    );
+                  },
                 ),
+              ),
             ],
           ),
         ),
@@ -358,6 +368,133 @@ class StorefrontDesignPanel extends ConsumerWidget {
         ],
       ],
     );
+  }
+}
+
+class _ThemePresetCard extends StatelessWidget {
+  const _ThemePresetCard({
+    required this.preset,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final StorefrontThemePreset preset;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = StorefrontDefaults.presetTheme(preset);
+    final borderColor =
+        selected ? theme.colorScheme.primary : theme.colorScheme.outlineVariant;
+    return Tooltip(
+      message: _themePresetDescription(preset),
+      child: SizedBox(
+        width: 94,
+        child: Material(
+          color: selected
+              ? theme.colorScheme.primaryContainer.withValues(alpha: .45)
+              : theme.colorScheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(
+              color: borderColor,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: InkWell(
+            key: Key('storefront-theme-preset-${preset.key}'),
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(14),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _ThemeColorDot(color: colors.primaryColor),
+                      const SizedBox(width: 3),
+                      _ThemeColorDot(color: colors.secondaryColor),
+                      const SizedBox(width: 3),
+                      _ThemeColorDot(color: colors.backgroundColor),
+                      const SizedBox(width: 3),
+                      _ThemeColorDot(color: colors.textColor),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          preset.labelAr,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      if (selected) ...[
+                        const SizedBox(width: 3),
+                        Icon(
+                          Icons.check_circle_rounded,
+                          size: 14,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ThemeColorDot extends StatelessWidget {
+  const _ThemeColorDot({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.black26),
+      ),
+      child: const SizedBox.square(dimension: 10),
+    );
+  }
+}
+
+String _themePresetDescription(StorefrontThemePreset preset) {
+  switch (preset) {
+    case StorefrontThemePreset.defaultPreset:
+      return 'هوية الباشق';
+    case StorefrontThemePreset.clean:
+      return 'أزرق واضح وخفيف';
+    case StorefrontThemePreset.warm:
+      return 'رملي دافئ';
+    case StorefrontThemePreset.modern:
+      return 'تركواز عصري';
+    case StorefrontThemePreset.ocean:
+      return 'بحري منعش';
+    case StorefrontThemePreset.rose:
+      return 'وردي ناعم';
+    case StorefrontThemePreset.sunset:
+      return 'برتقالي حيوي';
+    case StorefrontThemePreset.midnight:
+      return 'داكن أنيق';
   }
 }
 

@@ -340,7 +340,8 @@ void main() {
     );
     expect(
       await repository.allBanners(),
-      contains(predicate<AppBanner>((item) => item.id == created.id && item.isArchived)),
+      contains(predicate<AppBanner>(
+          (item) => item.id == created.id && item.isArchived)),
     );
 
     final restored = await repository.restoreBanner(archived);
@@ -377,7 +378,8 @@ void main() {
     final active = draft(id: 'a', title: 'نشط', sortOrder: 1, active: true);
     final archived = draft(id: 'b', title: 'مؤرشف', sortOrder: 2, active: true)
         .copyWith(archivedAt: DateTime(2026, 8, 22));
-    final inactive = draft(id: 'c', title: 'متوقف', sortOrder: 3, active: false);
+    final inactive =
+        draft(id: 'c', title: 'متوقف', sortOrder: 3, active: false);
 
     expect(
       activeBannersInShowingOrder([archived, inactive, active])
@@ -385,7 +387,6 @@ void main() {
       ['a'],
     );
   });
-
 
   testWidgets('archive action confirms and moves banner to archived filter',
       (tester) async {
@@ -464,7 +465,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('بانر حذف واجهة'), findsNothing);
   });
-
 }
 
 class _FailToggleRepository extends AdminRepository {

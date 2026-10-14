@@ -277,6 +277,44 @@ class AppTheme {
     );
   }
 
+  static ThemeData get dark {
+    final base = ThemeData.dark(useMaterial3: true);
+    final seeded = ColorScheme.fromSeed(
+      seedColor: green,
+      brightness: Brightness.dark,
+    );
+    final textTheme = _arabicTextTheme(base.textTheme).apply(
+      bodyColor: Colors.white,
+      displayColor: Colors.white,
+    );
+    return base.copyWith(
+      brightness: Brightness.dark,
+      colorScheme: seeded.copyWith(
+        primary: const Color(0xff52d6a2),
+        onPrimary: const Color(0xff003827),
+        surface: const Color(0xff1e293b),
+        onSurface: Colors.white,
+        onSurfaceVariant: const Color(0xffcbd5e1),
+        outline: const Color(0xff64748b),
+        outlineVariant: const Color(0xff334155),
+      ),
+      scaffoldBackgroundColor: const Color(0xff0f172a),
+      textTheme: textTheme,
+      appBarTheme: AppBarTheme(
+        centerTitle: true,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        backgroundColor: const Color(0xff0f172a),
+        foregroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        titleTextStyle: textTheme.titleLarge?.copyWith(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+
   static TextTheme _arabicTextTheme(TextTheme base) {
     final themed = base.apply(
       fontFamily: 'NotoSansArabic',

@@ -16,6 +16,7 @@ import '../storefront/storefront_home_data.dart';
 import '../storefront/storefront_home_renderer.dart';
 import '../storefront/storefront_theme_scope.dart';
 import 'admin_storefront_controller.dart';
+import 'guest_storefront_preview_screen.dart';
 import 'storefront_breakpoints.dart';
 import 'widgets/storefront_design_panel.dart';
 import 'widgets/storefront_inspector_panel.dart';
@@ -193,35 +194,62 @@ class _AdminStorefrontScreenState extends ConsumerState<AdminStorefrontScreen> {
       }
     });
 
-    return PopScope(
-      canPop: !builder.hasUnsavedChanges,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        final flushed = await controller.flushAutosave();
-        if (!context.mounted) return;
-        if (flushed &&
-            !ref.read(adminStorefrontControllerProvider).hasUnsavedChanges) {
-          Navigator.of(context).maybePop();
-          return;
-        }
-        if (await _confirmDiscard() && context.mounted) {
-          Navigator.of(context).maybePop();
-        }
-      },
-      child: AdminShell(
-        title: '',
-        compactForStorefrontBuilder: true,
-        child: builder.loading
-            ? const ShopSkeleton(
-                semanticLabel: 'جارٍ تجهيز مصمم الواجهة...',
-                child: ShopStorefrontBuilderSkeleton(),
-              )
-            : LayoutBuilder(
-                builder: (context, constraints) {
-                  // Viewport width drives breakpoints; nav rail reduces inner constraints.
-                  final width = MediaQuery.sizeOf(context).width;
-                  if (StorefrontBreakpoints.isDesktop(width)) {
-                    return _DesktopBuilderShell(
+    return Theme(
+      // While editing, the admin chrome follows the live draft so a selected
+      // brand color is visible everywhere in the builder, not only in preview.
+      // AdminShell may still override this when its separate-colors toggle is
+      // enabled.
+      data: storefrontThemeData(builder.activeConfig),
+      child: PopScope(
+        canPop: !builder.hasUnsavedChanges,
+        onPopInvokedWithResult: (didPop, result) async {
+          if (didPop) return;
+          final flushed = await controller.flushAutosave();
+          if (!context.mounted) return;
+          if (flushed &&
+              !ref.read(adminStorefrontControllerProvider).hasUnsavedChanges) {
+            Navigator.of(context).maybePop();
+            return;
+          }
+          if (await _confirmDiscard() && context.mounted) {
+            Navigator.of(context).maybePop();
+          }
+        },
+        child: AdminShell(
+          title: '',
+          compactForStorefrontBuilder: true,
+          child: builder.loading
+              ? const ShopSkeleton(
+                  semanticLabel: 'جارٍ تجهيز مصمم الواجهة...',
+                  child: ShopStorefrontBuilderSkeleton(),
+                )
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Viewport width drives breakpoints; nav rail reduces inner constraints.
+                    final width = MediaQuery.sizeOf(context).width;
+                    if (StorefrontBreakpoints.isDesktop(width)) {
+                      return _DesktopBuilderShell(
+                        builder: builder,
+                        controller: controller,
+                        productsFuture: _productsFuture,
+                        metaFuture: _metaFuture,
+                        onReload: _reloadPreviewData,
+                        onReset: _confirmReset,
+                        onPublish: _confirmPublish,
+                      );
+                    }
+                    if (StorefrontBreakpoints.isTablet(width)) {
+                      return _TabletBuilderShell(
+                        builder: builder,
+                        controller: controller,
+                        productsFuture: _productsFuture,
+                        metaFuture: _metaFuture,
+                        onReload: _reloadPreviewData,
+                        onReset: _confirmReset,
+                        onPublish: _confirmPublish,
+                      );
+                    }
+                    return _MobileBuilderShell(
                       builder: builder,
                       controller: controller,
                       productsFuture: _productsFuture,
@@ -229,31 +257,11 @@ class _AdminStorefrontScreenState extends ConsumerState<AdminStorefrontScreen> {
                       onReload: _reloadPreviewData,
                       onReset: _confirmReset,
                       onPublish: _confirmPublish,
+                      onPreviewPublished: _previewPublished,
                     );
-                  }
-                  if (StorefrontBreakpoints.isTablet(width)) {
-                    return _TabletBuilderShell(
-                      builder: builder,
-                      controller: controller,
-                      productsFuture: _productsFuture,
-                      metaFuture: _metaFuture,
-                      onReload: _reloadPreviewData,
-                      onReset: _confirmReset,
-                      onPublish: _confirmPublish,
-                    );
-                  }
-                  return _MobileBuilderShell(
-                    builder: builder,
-                    controller: controller,
-                    productsFuture: _productsFuture,
-                    metaFuture: _metaFuture,
-                    onReload: _reloadPreviewData,
-                    onReset: _confirmReset,
-                    onPublish: _confirmPublish,
-                    onPreviewPublished: _previewPublished,
-                  );
-                },
-              ),
+                  },
+                ),
+        ),
       ),
     );
   }
@@ -287,6 +295,7 @@ class _DesktopBuilderShell extends StatelessWidget {
           controller: controller,
           onReset: onReset,
           onPublish: onPublish,
+          onGuestPreview: () => controller.setPreviewAsGuest(true),
         ),
         Expanded(
           child: Row(
@@ -370,6 +379,7 @@ class _TabletBuilderShell extends StatelessWidget {
           controller: controller,
           onReset: onReset,
           onPublish: onPublish,
+          onGuestPreview: () => controller.setPreviewAsGuest(true),
         ),
         Expanded(
           child: Row(
@@ -595,6 +605,15 @@ class _StorefrontPreviewHost extends ConsumerWidget {
   final VoidCallback onReload;
   final bool compactPreview;
 
+  void _selectPreviewSection(StorefrontSectionType type) {
+    controller.selectSection(type);
+    if (compactPreview) {
+      controller.setMobileTab(StorefrontBuilderTab.design);
+    } else {
+      controller.setSidebarMode(StorefrontSidebarMode.design);
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final config = builder.activeConfig;
@@ -616,19 +635,48 @@ class _StorefrontPreviewHost extends ConsumerWidget {
                 ? Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const _CompactPreviewSafetyBadge(),
-                      Align(
-                        alignment: AlignmentDirectional.centerStart,
-                        child: TextButton.icon(
-                          key: const Key('storefront-preview-settings-button'),
-                          onPressed: () => showStorefrontPreviewSettingsSheet(
-                            context: context,
-                            state: builder,
-                            controller: controller,
+                      builder.previewAsGuest
+                          ? _GuestPreviewSafetyBadge(
+                              onExit: () => controller.setPreviewAsGuest(false),
+                            )
+                          : const _CompactPreviewSafetyBadge(),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: [
+                          TextButton.icon(
+                            key: const Key(
+                              'storefront-preview-settings-button',
+                            ),
+                            onPressed: () => showStorefrontPreviewSettingsSheet(
+                              context: context,
+                              state: builder,
+                              controller: controller,
+                            ),
+                            icon: const Icon(
+                              Icons.settings_outlined,
+                              size: 18,
+                            ),
+                            label: const Text('⚙ إعدادات المعاينة'),
                           ),
-                          icon: const Icon(Icons.settings_outlined, size: 18),
-                          label: const Text('⚙ إعدادات المعاينة'),
-                        ),
+                          OutlinedButton.icon(
+                            key: const Key('storefront-guest-preview-toggle'),
+                            onPressed: () => controller.setPreviewAsGuest(
+                              !builder.previewAsGuest,
+                            ),
+                            icon: Icon(
+                              builder.previewAsGuest
+                                  ? Icons.design_services_outlined
+                                  : Icons.person_outline,
+                              size: 18,
+                            ),
+                            label: Text(
+                              builder.previewAsGuest
+                                  ? 'العودة للمصمم'
+                                  : 'تجربة كزائر',
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   )
@@ -638,7 +686,12 @@ class _StorefrontPreviewHost extends ConsumerWidget {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          const _WidePreviewSafetyBadge(),
+                          builder.previewAsGuest
+                              ? _GuestPreviewSafetyBadge(
+                                  onExit: () =>
+                                      controller.setPreviewAsGuest(false),
+                                )
+                              : const _WidePreviewSafetyBadge(),
                           const SizedBox(height: 6),
                           Align(
                             alignment: AlignmentDirectional.centerStart,
@@ -662,19 +715,32 @@ class _StorefrontPreviewHost extends ConsumerWidget {
                 compactPreview ? 6 : 10,
               ),
               child: FutureBuilder<List<dynamic>>(
-                future: Future.wait([
-                  productsFuture ?? Future.value(<Product>[]),
-                  metaFuture ?? Future.value(<dynamic>[]),
-                  if (previewCustomerId != null &&
-                      builder.pricePreviewMode ==
-                          StorefrontPricePreviewMode.customerPreview)
-                    ref
-                        .read(ordersRepositoryProvider)
-                        .ordersForCustomer(previewCustomerId)
-                  else
-                    Future.value(<dynamic>[]),
-                ]),
+                future: builder.previewAsGuest
+                    ? null
+                    : Future.wait([
+                        productsFuture ?? Future.value(<Product>[]),
+                        metaFuture ?? Future.value(<dynamic>[]),
+                        if (previewCustomerId != null &&
+                            builder.pricePreviewMode ==
+                                StorefrontPricePreviewMode.customerPreview)
+                          ref
+                              .read(ordersRepositoryProvider)
+                              .ordersForCustomer(previewCustomerId)
+                        else
+                          Future.value(<dynamic>[]),
+                      ]),
                 builder: (context, snapshot) {
+                  if (builder.previewAsGuest) {
+                    return SizedBox.expand(
+                      child: StorefrontPreviewFrame(
+                        device: builder.previewDevice,
+                        compact: compactPreview,
+                        child: const GuestStorefrontPreviewScreen(
+                          embedded: true,
+                        ),
+                      ),
+                    );
+                  }
                   final products = snapshot.data != null &&
                           snapshot.data!.isNotEmpty &&
                           snapshot.data![0] is List<Product>
@@ -714,6 +780,8 @@ class _StorefrontPreviewHost extends ConsumerWidget {
                             ),
                             interactionMode: StorefrontInteractionMode.preview,
                             renderMode: StorefrontRenderMode.adminPreview,
+                            previewSelectedSection: builder.selectedSection,
+                            onPreviewSectionTap: _selectPreviewSection,
                             scrollKey:
                                 const Key('admin-storefront-preview-scroll'),
                             priceResolver: builder.pricePreviewMode ==
@@ -784,6 +852,47 @@ class _CompactPreviewSafetyBadge extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _GuestPreviewSafetyBadge extends StatelessWidget {
+  const _GuestPreviewSafetyBadge({required this.onExit});
+
+  final VoidCallback onExit;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      key: const Key('storefront-guest-preview-badge'),
+      padding: const EdgeInsetsDirectional.fromSTEB(12, 7, 8, 7),
+      decoration: BoxDecoration(
+        color: scheme.primary.withValues(alpha: .10),
+        borderRadius: BorderRadius.circular(99),
+        border: Border.all(color: scheme.primary.withValues(alpha: .24)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.person_outline, size: 17, color: scheme.primary),
+          const SizedBox(width: 7),
+          const Expanded(
+            child: Text(
+              'تجربة كزائر — يمكنك التصفح والتنقل والسلة داخل المعاينة',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+            ),
+          ),
+          TextButton(
+            key: const Key('storefront-guest-preview-exit'),
+            onPressed: onExit,
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('المصمم'),
+          ),
+        ],
       ),
     );
   }
@@ -862,7 +971,8 @@ class _PreviewDeviceControls extends StatelessWidget {
         for (final device in StorefrontPreviewDevice.values)
           ButtonSegment(
             value: device,
-            icon: Icon(_deviceIcon(device), key: Key('storefront-preview-device-${device.name}')),
+            icon: Icon(_deviceIcon(device),
+                key: Key('storefront-preview-device-${device.name}')),
             label: Text(device.labelAr),
           ),
       ],

@@ -12,10 +12,12 @@ import '../../core/notifications/in_app_notification_poller.dart';
 import '../../core/notifications/push_notifications.dart';
 import '../../core/widgets/network_status.dart';
 import '../../core/widgets/shop_brand_logo.dart';
+import '../../data/models/storefront_config.dart';
 import '../../data/repositories/notifications_repository.dart';
 import '../auth/auth_controller.dart';
 import '../admin_storefront/apply_storefront_theme_to_admin.dart';
 import '../notifications/notification_center_sheet.dart';
+import 'admin_text_scale.dart';
 import 'pending_orders_kpi_alert.dart';
 
 class AdminShell extends ConsumerWidget {
@@ -52,45 +54,55 @@ class AdminShell extends ConsumerWidget {
               .read(pushNotificationsCoordinatorProvider)
               .signOut(ref.read(authControllerProvider.notifier)),
         );
-        // Storefront builder owns its chrome (toolbar / mobile header). An empty
-        // sand AppBar above the demo notice created a large dead beige strip.
-        return Scaffold(
-          appBar: storefrontBuilder
+        final appBar = AppBar(
+          title: Text(title),
+          leading: wide
               ? null
-              : AppBar(
-                  title: Text(title),
-                  leading: wide
-                      ? null
-                      : Builder(
-                          builder: (context) => IconButton(
-                              icon: const Icon(Icons.menu),
-                              tooltip: 'فتح قائمة الإدارة',
-                              onPressed: () =>
-                                  Scaffold.of(context).openDrawer())),
-                  actions: [
-                    IconButton(
-                      tooltip: 'الإشعارات',
-                      onPressed: () => showNotificationCenter(context, ref),
-                      icon: Badge(
-                        isLabelVisible: unread > 0,
-                        label: Text(unread > 99 ? '99+' : '$unread'),
-                        child: const Icon(Icons.notifications_outlined),
-                      ),
-                    ),
-                    ...actions,
-                  ],
+              : Builder(
+                  builder: (context) => IconButton(
+                    icon: const Icon(Icons.menu),
+                    tooltip: 'فتح قائمة الإدارة',
+                    onPressed: () => Scaffold.of(context).openDrawer(),
+                  ),
                 ),
+          actions: [
+            IconButton(
+              tooltip: 'الإشعارات',
+              onPressed: () => showNotificationCenter(context, ref),
+              icon: Badge(
+                isLabelVisible: unread > 0,
+                label: Text(unread > 99 ? '99+' : '$unread'),
+                child: const Icon(Icons.notifications_outlined),
+              ),
+            ),
+            ...actions,
+            const AdminTextScaleControls(),
+            const _AdminAppearanceButton(),
+          ],
+        );
+        // Storefront builder owns its chrome (toolbar / mobile header). On wide
+        // admin pages the toolbar belongs beside the nav, not above the whole
+        // Scaffold; otherwise the sidebar gets an empty AppBar-height strip.
+        return Scaffold(
+          appBar: wide || storefrontBuilder ? null : appBar,
           drawer: wide ? null : Drawer(child: nav),
           body: Row(
             children: [
               if (wide)
                 SizedBox(
+                  key: const Key('admin-wide-sidebar'),
                   width: storefrontBuilder ? 72 : 270,
                   child: Material(color: scheme.surface, child: nav),
                 ),
               Expanded(
                 child: Column(
                   children: [
+                    if (wide && !storefrontBuilder)
+                      SizedBox(
+                        key: const Key('admin-wide-toolbar'),
+                        height: kToolbarHeight,
+                        child: appBar,
+                      ),
                     if (AppConfig.isDemoMode ||
                         ref.watch(appRuntimeModeProvider) ||
                         user?.isDemo == true)
@@ -109,8 +121,16 @@ class AdminShell extends ConsumerWidget {
         );
       },
     );
-    if (storefrontTheme == null) return shell;
-    return Theme(data: storefrontTheme, child: shell);
+    final themedShell = storefrontTheme == null
+        ? shell
+        : Theme(data: storefrontTheme, child: shell);
+    final textScale = ref.watch(adminTextScaleProvider);
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(
+        textScaler: TextScaler.linear(textScale),
+      ),
+      child: themedShell,
+    );
   }
 }
 
@@ -160,6 +180,254 @@ class AdminDemoModeNotice extends StatelessWidget {
       ),
     );
   }
+}
+
+class _AdminAppearanceButton extends ConsumerWidget {
+  const _AdminAppearanceButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(
+      adminCustomThemeConfigProvider.select((config) => config.mode),
+    );
+    return IconButton(
+      key: const Key('admin-appearance-button'),
+      tooltip: mode == AdminThemeMode.dark
+          ? 'مظهر لوحة الإدارة: داكن'
+          : 'مظهر لوحة الإدارة: فاتح',
+      icon: Icon(
+        mode == AdminThemeMode.dark
+            ? Icons.light_mode_outlined
+            : Icons.dark_mode_outlined,
+      ),
+      onPressed: () => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: true,
+        builder: (_) => const _AdminAppearanceSheet(),
+      ),
+    );
+  }
+}
+
+class _AdminAppearanceSheet extends ConsumerWidget {
+  const _AdminAppearanceSheet();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final config = ref.watch(adminCustomThemeConfigProvider);
+    final separate = ref.watch(applyStorefrontThemeToAdminProvider);
+    return SingleChildScrollView(
+      key: const Key('admin-appearance-sheet'),
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'مظهر لوحة الإدارة',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'اختر الوضع والألوان الجاهزة لهذه اللوحة على هذا الجهاز.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 16),
+          SegmentedButton<AdminThemeMode>(
+            key: const Key('admin-appearance-mode-selector'),
+            segments: const [
+              ButtonSegment(
+                value: AdminThemeMode.light,
+                icon: Icon(Icons.light_mode_outlined),
+                label: Text('فاتح'),
+              ),
+              ButtonSegment(
+                value: AdminThemeMode.dark,
+                icon: Icon(Icons.dark_mode_outlined),
+                label: Text('داكن'),
+              ),
+            ],
+            selected: {config.mode},
+            onSelectionChanged: (selected) {
+              if (selected.isEmpty) return;
+              unawaited(_applyAdminThemeMode(ref, selected.single));
+            },
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            key: const Key('admin-appearance-separate-toggle'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              'تخصيص لوحة الإدارة بشكل مستقل',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            subtitle: Text(
+              separate
+                  ? 'مفعّل — التغييرات لا تؤثر على ألوان متجر العملاء.'
+                  : 'عند التفعيل يمكنك اختيار ألوان الإدارة دون تغيير المتجر.',
+              style: theme.textTheme.bodySmall,
+            ),
+            value: separate,
+            onChanged: (value) => unawaited(
+              ref
+                  .read(applyStorefrontThemeToAdminProvider.notifier)
+                  .setEnabled(value),
+            ),
+          ),
+          const Divider(height: 24),
+          Text(
+            'ألوان جاهزة',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            key: const Key('admin-appearance-presets'),
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final preset in StorefrontThemePreset.values)
+                _AdminAppearancePreset(
+                  preset: preset,
+                  selected: _adminThemeMatchesPreset(config, preset),
+                  onTap: () => unawaited(
+                    _applyAdminThemePreset(ref, preset),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminAppearancePreset extends StatelessWidget {
+  const _AdminAppearancePreset({
+    required this.preset,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final StorefrontThemePreset preset;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = StorefrontDefaults.presetTheme(preset);
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 104,
+      child: Material(
+        color: selected
+            ? scheme.primaryContainer.withValues(alpha: .55)
+            : scheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: InkWell(
+          key: ValueKey('admin-appearance-preset-${preset.key}'),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 8),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _AppearanceColorDot(theme.primaryColor),
+                    _AppearanceColorDot(theme.secondaryColor),
+                    _AppearanceColorDot(theme.backgroundColor),
+                    _AppearanceColorDot(theme.textColor),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  preset.labelAr,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AppearanceColorDot extends StatelessWidget {
+  const _AppearanceColorDot(this.color);
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 14,
+      height: 14,
+      margin: const EdgeInsetsDirectional.only(end: 3),
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.black26),
+      ),
+    );
+  }
+}
+
+bool _adminThemeMatchesPreset(
+  AdminThemeConfig config,
+  StorefrontThemePreset preset,
+) {
+  final theme = StorefrontDefaults.presetTheme(preset);
+  final expectedMode = preset == StorefrontThemePreset.midnight
+      ? AdminThemeMode.dark
+      : AdminThemeMode.light;
+  return config.mode == expectedMode &&
+      config.primaryColor == theme.primaryColor &&
+      config.backgroundColor == theme.backgroundColor &&
+      config.surfaceColor == theme.cardColor &&
+      config.textColor == theme.textColor;
+}
+
+Future<void> _applyAdminThemeMode(
+  WidgetRef ref,
+  AdminThemeMode mode,
+) async {
+  final preset = mode == AdminThemeMode.dark
+      ? StorefrontThemePreset.midnight
+      : StorefrontThemePreset.defaultPreset;
+  await _applyAdminThemePreset(ref, preset, mode: mode);
+}
+
+Future<void> _applyAdminThemePreset(
+  WidgetRef ref,
+  StorefrontThemePreset preset, {
+  AdminThemeMode? mode,
+}) async {
+  final theme = StorefrontDefaults.presetTheme(preset);
+  await ref.read(applyStorefrontThemeToAdminProvider.notifier).setEnabled(true);
+  await ref.read(adminCustomThemeConfigProvider.notifier).updateTheme(
+        AdminThemeConfig.fromStorefrontTheme(theme, mode: mode),
+      );
 }
 
 class _AdminNav extends ConsumerWidget {

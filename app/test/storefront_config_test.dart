@@ -22,6 +22,18 @@ void main() {
       expect(decoded.sections.length, original.sections.length);
     });
 
+    test('all preset themes provide readable text contrast', () {
+      for (final preset in StorefrontThemePreset.values) {
+        final theme = StorefrontDefaults.presetTheme(preset);
+        expect(
+          theme.hasLowTextContrast,
+          isFalse,
+          reason: '${preset.key} should remain readable',
+        );
+        expect(theme.preset, preset);
+      }
+    });
+
     test('rejects duplicate sections', () {
       final broken = StorefrontDefaults.bundled.copyWith(
         sections: [

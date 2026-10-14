@@ -122,8 +122,8 @@ void main() {
 
     final scaffoldContext = tester.element(find.byType(Scaffold).first);
     expect(
-        Theme.of(scaffoldContext).colorScheme.primary,
-        StorefrontDefaults.bundled.theme.primaryColor,
+      Theme.of(scaffoldContext).colorScheme.primary,
+      StorefrontDefaults.bundled.theme.primaryColor,
     );
   });
 
@@ -213,7 +213,8 @@ void main() {
     );
   });
 
-  test('apply-to-admin preference and custom theme persist in SharedPreferences',
+  test(
+      'apply-to-admin preference and custom theme persist in SharedPreferences',
       () async {
     final store = ApplyStorefrontThemeToAdminPrefs();
     expect(await store.load(), isFalse);
@@ -229,6 +230,7 @@ void main() {
       backgroundColor: Color(0xfff8fafc),
       surfaceColor: Color(0xffffffff),
       textColor: Color(0xff0f172a),
+      mode: AdminThemeMode.dark,
     );
     expect(await store.saveAdminTheme(customTheme), isTrue);
     final loaded = await store.loadAdminTheme();
@@ -236,6 +238,8 @@ void main() {
     expect(loaded.backgroundColor, customTheme.backgroundColor);
     expect(loaded.surfaceColor, customTheme.surfaceColor);
     expect(loaded.textColor, customTheme.textColor);
+    expect(loaded.mode, AdminThemeMode.dark);
+    expect(adminThemeData(loaded).brightness, Brightness.dark);
 
     // Reset to standard removes key
     expect(await store.saveAdminTheme(AdminThemeConfig.standard), isTrue);

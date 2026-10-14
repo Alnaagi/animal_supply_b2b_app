@@ -688,9 +688,11 @@ class OrdersRepository {
 
   Future<Order> updateOrderPricing({
     required String orderId,
-    required List<double> unitPrices,
+    List<double>? unitPrices,
+    List<AdminOrderEditItem>? items,
     required double deliveryFee,
     required double discountAmount,
+    String? adminNote,
     DateTime? expectedUpdatedAt,
   }) async {
     final remote = _remote;
@@ -707,21 +709,31 @@ class OrdersRepository {
         current: current.updatedAt,
         expected: expectedUpdatedAt,
       );
-      final priced = AdminOrderPricing.apply(
-        order: current,
-        unitPrices: unitPrices,
-        deliveryFee: deliveryFee,
-        discountAmount: discountAmount,
-      );
-      final items = <Map<String, dynamic>>[
+      final priced = items != null
+          ? AdminOrderPricing.applyOrderEdit(
+              order: current,
+              items: items,
+              deliveryFee: deliveryFee,
+              discountAmount: discountAmount,
+              adminNote: adminNote,
+            )
+          : AdminOrderPricing.apply(
+              order: current,
+              unitPrices: unitPrices ?? const [],
+              deliveryFee: deliveryFee,
+              discountAmount: discountAmount,
+            ).copyWith(adminNote: adminNote ?? current.adminNote);
+      final payloadItems = <Map<String, dynamic>>[
         for (final item in priced.items)
           if (item is OrderItem && (item.id ?? '').isNotEmpty)
             {
               'id': item.id,
+              'product_id': item.productId,
+              'quantity': item.quantity,
               'unit_price': item.unitPrice,
             },
       ];
-      if (items.length != current.items.length) {
+      if (payloadItems.length != current.items.length || priced.items.isEmpty) {
         throw const OrdersRepositoryException(
           code: 'ORDER_ITEM_MISMATCH',
           message: 'بنود الفاتورة غير مكتملة للتحديث.',
@@ -733,7 +745,8 @@ class OrdersRepository {
         'order_id': orderId,
         'delivery_fee': priced.deliveryFee,
         'discount_amount': priced.discountAmount,
-        'items': items,
+        'items': payloadItems,
+        if (adminNote != null) 'admin_note': adminNote,
         if (expected != null) 'expected_updated_at': expected,
       });
       final saved = _orderFromFunction(response);
@@ -761,12 +774,20 @@ class OrdersRepository {
         current: _orders[index].updatedAt,
         expected: expectedUpdatedAt,
       );
-      final updated = AdminOrderPricing.apply(
-        order: _orders[index],
-        unitPrices: unitPrices,
-        deliveryFee: deliveryFee,
-        discountAmount: discountAmount,
-      );
+      final updated = items != null
+          ? AdminOrderPricing.applyOrderEdit(
+              order: _orders[index],
+              items: items,
+              deliveryFee: deliveryFee,
+              discountAmount: discountAmount,
+              adminNote: adminNote,
+            )
+          : AdminOrderPricing.apply(
+              order: _orders[index],
+              unitPrices: unitPrices ?? const [],
+              deliveryFee: deliveryFee,
+              discountAmount: discountAmount,
+            ).copyWith(adminNote: adminNote ?? _orders[index].adminNote);
       _orders[index] = updated;
       return updated;
     } on AdminOrderPricingException catch (error) {

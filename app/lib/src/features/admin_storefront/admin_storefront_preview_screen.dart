@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/admin_models.dart';
 import '../../data/models/product.dart';
+import '../../data/models/storefront_config.dart';
 import '../../data/repositories/admin_repository.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../customer_home/customer_shell.dart';
@@ -22,6 +23,12 @@ class AdminStorefrontPreviewScreen extends ConsumerStatefulWidget {
 
 class _AdminStorefrontPreviewScreenState
     extends ConsumerState<AdminStorefrontPreviewScreen> {
+  void _selectPreviewSection(StorefrontSectionType type) {
+    final controller = ref.read(adminStorefrontControllerProvider.notifier);
+    controller.selectSection(type);
+    controller.setSidebarMode(StorefrontSidebarMode.design);
+  }
+
   @override
   Widget build(BuildContext context) {
     final builder = ref.watch(adminStorefrontControllerProvider);
@@ -75,6 +82,8 @@ class _AdminStorefrontPreviewScreenState
                         ),
                         interactionMode: StorefrontInteractionMode.preview,
                         renderMode: StorefrontRenderMode.adminPreview,
+                        previewSelectedSection: builder.selectedSection,
+                        onPreviewSectionTap: _selectPreviewSection,
                         actions: const StorefrontHomeActions(),
                       ),
                     ),

@@ -6,7 +6,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../data/models/storefront_config.dart';
 import 'widgets/storefront_color_picker_sheet.dart';
+
+enum AdminThemeMode {
+  light('light'),
+  dark('dark');
+
+  const AdminThemeMode(this.key);
+
+  final String key;
+
+  static AdminThemeMode fromKey(String? raw) {
+    return values.firstWhere(
+      (mode) => mode.key == raw,
+      orElse: () => AdminThemeMode.light,
+    );
+  }
+}
 
 /// Configuration for independent Admin Panel chrome theme.
 class AdminThemeConfig {
@@ -15,14 +32,34 @@ class AdminThemeConfig {
     this.backgroundColor = const Color(0xfff7f2ea),
     this.surfaceColor = const Color(0xffffffff),
     this.textColor = const Color(0xff173f32),
+    this.mode = AdminThemeMode.light,
   });
 
   final Color primaryColor;
   final Color backgroundColor;
   final Color surfaceColor;
   final Color textColor;
+  final AdminThemeMode mode;
 
   static const standard = AdminThemeConfig();
+
+  bool get isDark => mode == AdminThemeMode.dark;
+
+  factory AdminThemeConfig.fromStorefrontTheme(
+    StorefrontThemeConfig theme, {
+    AdminThemeMode? mode,
+  }) {
+    return AdminThemeConfig(
+      primaryColor: theme.primaryColor,
+      backgroundColor: theme.backgroundColor,
+      surfaceColor: theme.cardColor,
+      textColor: theme.textColor,
+      mode: mode ??
+          (theme.preset == StorefrontThemePreset.midnight
+              ? AdminThemeMode.dark
+              : AdminThemeMode.light),
+    );
+  }
 
   bool get hasLowTextContrast {
     final onBg = contrastRatio(textColor, backgroundColor);
@@ -43,12 +80,14 @@ class AdminThemeConfig {
     Color? backgroundColor,
     Color? surfaceColor,
     Color? textColor,
+    AdminThemeMode? mode,
   }) {
     return AdminThemeConfig(
       primaryColor: primaryColor ?? this.primaryColor,
       backgroundColor: backgroundColor ?? this.backgroundColor,
       surfaceColor: surfaceColor ?? this.surfaceColor,
       textColor: textColor ?? this.textColor,
+      mode: mode ?? this.mode,
     );
   }
 
@@ -58,6 +97,7 @@ class AdminThemeConfig {
       'background': storefrontColorToHex(backgroundColor),
       'surface': storefrontColorToHex(surfaceColor),
       'text': storefrontColorToHex(textColor),
+      'mode': mode.key,
     };
   }
 
@@ -68,11 +108,11 @@ class AdminThemeConfig {
       backgroundColor:
           storefrontColorFromHex(json['background'] as String? ?? '') ??
               const Color(0xfff7f2ea),
-      surfaceColor:
-          storefrontColorFromHex(json['surface'] as String? ?? '') ??
-              const Color(0xffffffff),
+      surfaceColor: storefrontColorFromHex(json['surface'] as String? ?? '') ??
+          const Color(0xffffffff),
       textColor: storefrontColorFromHex(json['text'] as String? ?? '') ??
           const Color(0xff173f32),
+      mode: AdminThemeMode.fromKey(json['mode'] as String?),
     );
   }
 
@@ -99,7 +139,8 @@ class AdminThemeConfig {
           other.primaryColor == primaryColor &&
           other.backgroundColor == backgroundColor &&
           other.surfaceColor == surfaceColor &&
-          other.textColor == textColor;
+          other.textColor == textColor &&
+          other.mode == mode;
 
   @override
   int get hashCode => Object.hash(
@@ -107,6 +148,7 @@ class AdminThemeConfig {
         backgroundColor,
         surfaceColor,
         textColor,
+        mode,
       );
 }
 
@@ -255,7 +297,7 @@ final adminShellStorefrontThemeProvider = Provider<ThemeData?>((ref) {
 });
 
 ThemeData adminThemeData(AdminThemeConfig config) {
-  final base = AppTheme.light;
+  final base = config.isDark ? AppTheme.dark : AppTheme.light;
   final onPrimary = _bestOnColor(
     config.primaryColor,
     preferredDark: config.textColor,
@@ -292,6 +334,7 @@ ThemeData adminThemeData(AdminThemeConfig config) {
   );
 
   return base.copyWith(
+    brightness: config.isDark ? Brightness.dark : Brightness.light,
     scaffoldBackgroundColor: config.backgroundColor,
     colorScheme: scheme,
     textTheme: textTheme,

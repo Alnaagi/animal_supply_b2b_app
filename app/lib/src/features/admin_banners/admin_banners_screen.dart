@@ -181,6 +181,64 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
           final archivedCount =
               allBanners.where((item) => item.isArchived).length;
           final canReorder = _filter == _BannerFilter.all;
+          final wideLayout = MediaQuery.sizeOf(context).width >= 980;
+          final bannerListChildren = <Widget>[
+            _AdminBannersToolbar(
+              totalCount: managedBanners.length,
+              activeCount: activeCount,
+              archivedCount: archivedCount,
+              filter: _filter,
+              onFilterChanged: (filter) => setState(() => _filter = filter),
+              onNewBanner: () => _showBannerForm(),
+              onPreviewStore: () => _openStorePreview(),
+            ),
+            const SizedBox(height: 12),
+            if (!canReorder) _ReorderDisabledHint(filter: _filter),
+            const SizedBox(height: 10),
+            if (banners.isEmpty)
+              const _EmptyBanners()
+            else
+              ReorderableListView.builder(
+                key: const ValueKey('admin-banners-reorder-list'),
+                buildDefaultDragHandles: false,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: banners.length,
+                proxyDecorator: (child, index, animation) => Material(
+                  elevation: 8,
+                  color: Colors.transparent,
+                  child: child,
+                ),
+                onReorder: canReorder ? _onReorder : (_, __) {},
+                itemBuilder: (context, index) {
+                  final banner = banners[index];
+                  return Padding(
+                    key: ValueKey('banner-card-${banner.id}'),
+                    padding: EdgeInsets.only(
+                        bottom: index == banners.length - 1 ? 0 : 8),
+                    child: _BannerCard(
+                      banner: banner,
+                      itemIndex: index,
+                      busy: _busyBannerIds.contains(banner.id),
+                      reorderEnabled: canReorder,
+                      destinationLabel: _resolvedDestinationLabel(banner),
+                      onQuickPreview: () =>
+                          _openStorePreview(focusBanner: banner),
+                      onEdit: () => _showBannerForm(banner),
+                      onToggleActive: (value) => _toggleActive(banner, value),
+                      onDuplicate: () => _duplicateBanner(banner),
+                      onArchive: banner.isArchived
+                          ? null
+                          : () => _archiveBanner(banner),
+                      onRestore: banner.isArchived
+                          ? () => _restoreBanner(banner)
+                          : null,
+                      onDelete: () => _deleteBanner(banner),
+                    ),
+                  );
+                },
+              ),
+          ];
 
           return ShopRefreshIndicator(
             onRefresh: _reload,
@@ -202,63 +260,53 @@ class _AdminBannersScreenState extends ConsumerState<AdminBannersScreen> {
                     const _DemoBannerNotice(),
                     const SizedBox(height: 12),
                   ],
-                  _AdminBannersToolbar(
-                    totalCount: managedBanners.length,
-                    activeCount: activeCount,
-                    archivedCount: archivedCount,
-                    filter: _filter,
-                    onFilterChanged: (filter) =>
-                        setState(() => _filter = filter),
-                    onNewBanner: () => _showBannerForm(),
-                    onPreviewStore: () => _openStorePreview(),
-                  ),
-                  const SizedBox(height: 12),
-                  if (!canReorder) _ReorderDisabledHint(filter: _filter),
-                  const SizedBox(height: 10),
-                  if (banners.isEmpty)
-                    const _EmptyBanners()
-                  else
-                    ReorderableListView.builder(
-                      key: const ValueKey('admin-banners-reorder-list'),
-                      buildDefaultDragHandles: false,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: banners.length,
-                      proxyDecorator: (child, index, animation) => Material(
-                        elevation: 8,
-                        color: Colors.transparent,
-                        child: child,
-                      ),
-                      onReorder: canReorder ? _onReorder : (_, __) {},
-                      itemBuilder: (context, index) {
-                        final banner = banners[index];
-                        return Padding(
-                          key: ValueKey('banner-card-${banner.id}'),
-                          padding: EdgeInsets.only(
-                              bottom: index == banners.length - 1 ? 0 : 8),
-                          child: _BannerCard(
-                            banner: banner,
-                            itemIndex: index,
-                            busy: _busyBannerIds.contains(banner.id),
-                            reorderEnabled: canReorder,
-                            destinationLabel: _resolvedDestinationLabel(banner),
-                            onQuickPreview: () =>
-                                _openStorePreview(focusBanner: banner),
-                            onEdit: () => _showBannerForm(banner),
-                            onToggleActive: (value) =>
-                                _toggleActive(banner, value),
-                            onDuplicate: () => _duplicateBanner(banner),
-                            onArchive: banner.isArchived
-                                ? null
-                                : () => _archiveBanner(banner),
-                            onRestore: banner.isArchived
-                                ? () => _restoreBanner(banner)
-                                : null,
-                            onDelete: () => _deleteBanner(banner),
+                  if (wideLayout)
+                    Row(
+                      key: const Key('admin-banners-split-workspace'),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 5,
+                          child: _StorePreviewPanel(banners: allBanners),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          flex: 7,
+                          child: Container(
+                            key: const Key('admin-banners-list-pane'),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest
+                                  .withValues(alpha: .28),
+                              borderRadius: BorderRadius.circular(22),
+                              border: Border.all(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .outlineVariant,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                const Text(
+                                  'قائمة البانرات',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                ...bannerListChildren,
+                              ],
+                            ),
                           ),
-                        );
-                      },
-                    ),
+                        ),
+                      ],
+                    )
+                  else
+                    ...bannerListChildren,
                 ],
               ),
             ),
@@ -1039,10 +1087,8 @@ class _BannerEditorDialogState extends ConsumerState<_BannerEditorDialog> {
           DecoratedBox(
             key: const ValueKey('banner-upload-advice'),
             decoration: BoxDecoration(
-              color: Theme.of(context)
-                  .colorScheme
-                  .primary
-                  .withValues(alpha: .06),
+              color:
+                  Theme.of(context).colorScheme.primary.withValues(alpha: .06),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: Theme.of(context)
@@ -1517,10 +1563,8 @@ class _StorePreviewPanelState extends ConsumerState<_StorePreviewPanel> {
         ),
         boxShadow: [
           BoxShadow(
-            color: Theme.of(context)
-                .colorScheme
-                .onSurface
-                .withValues(alpha: .06),
+            color:
+                Theme.of(context).colorScheme.onSurface.withValues(alpha: .06),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -1639,10 +1683,8 @@ class _CustomerBannerPreviewStage extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: Theme.of(context)
-                .colorScheme
-                .onSurface
-                .withValues(alpha: .06),
+            color:
+                Theme.of(context).colorScheme.onSurface.withValues(alpha: .06),
             blurRadius: mobile ? 10 : 14,
             offset: const Offset(0, 4),
           ),
@@ -1982,10 +2024,7 @@ class _StatusChip extends StatelessWidget {
       backgroundColor: archived
           ? Colors.blueGrey.withValues(alpha: .12)
           : active
-              ? Theme.of(context)
-                  .colorScheme
-                  .primary
-                  .withValues(alpha: .10)
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: .10)
               : Colors.grey.withValues(alpha: .12),
       visualDensity: VisualDensity.compact,
     );

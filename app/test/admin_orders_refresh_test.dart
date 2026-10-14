@@ -7,6 +7,7 @@ import 'package:animal_supply_b2b/src/core/utils/formatters.dart';
 import 'package:animal_supply_b2b/src/core/widgets/product_image_placeholder.dart';
 import 'package:animal_supply_b2b/src/data/models/app_notification.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
+import 'package:animal_supply_b2b/src/data/models/admin_order_pricing.dart';
 import 'package:animal_supply_b2b/src/data/models/order.dart';
 import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:animal_supply_b2b/src/data/repositories/notifications_repository.dart';
@@ -393,6 +394,19 @@ void main() {
       _expectHorizontallyWithinViewport(tester, filterPanel, surfaceSize);
       _expectHorizontallyWithinViewport(tester, card, surfaceSize);
       expect(details, findsNothing);
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-item-peek-invoice-order'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-item-peek-image-invoice-order-0'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('x3'), findsOneWidget);
 
       final overflowMenu = find.byKey(
         const ValueKey('admin-order-menu-invoice-order'),
@@ -431,6 +445,22 @@ void main() {
           const ValueKey('admin-order-items-compact-invoice-order'),
         ),
         findsNothing,
+      );
+      final editPricing = find.byKey(
+        const ValueKey('admin-order-edit-pricing-invoice-order'),
+      );
+      expect(editPricing, findsOneWidget);
+      expect(
+        tester.getRect(editPricing).top,
+        greaterThanOrEqualTo(
+          tester
+              .getRect(
+                find.byKey(
+                  const ValueKey('admin-order-items-wide-invoice-order'),
+                ),
+              )
+              .bottom,
+        ),
       );
       expect(find.descendant(of: invoice, matching: find.text('الصنف')),
           findsOneWidget);
@@ -1375,6 +1405,48 @@ void main() {
     expect(find.text('تم اعتماد تسعير الفاتورة.'), findsOneWidget);
   });
 
+  testWidgets('invoice pricing accepts percentage discounts', (tester) async {
+    const surfaceSize = Size(390, 844);
+    await tester.binding.setSurfaceSize(surfaceSize);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final orders = _MutableOrdersRepository([_invoiceOrder()]);
+    await _pumpOrdersScreen(
+      tester,
+      orders: orders,
+      notifications: _MutableNotificationsRepository(const []),
+      sound: _FakeNewOrderAlertSound(),
+      autoRefreshInterval: Duration.zero,
+    );
+    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+    );
+    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey('admin-order-edit-pricing-invoice-order')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('نسبة'));
+    await tester.enterText(
+      find.byKey(const ValueKey('admin-order-discount-invoice-order')),
+      '2',
+    );
+    await tester.pump();
+    expect(find.text('نسبة الخصم'), findsOneWidget);
+    expect(find.textContaining('0.75'), findsWidgets);
+
+    await tester.tap(
+      find.byKey(const ValueKey('admin-order-save-pricing-invoice-order')),
+    );
+    await tester.pumpAndSettle();
+    expect(orders.lastPricing, isNotNull);
+    expect(orders.lastPricing!.discountAmount, 0.75);
+  });
+
   testWidgets(
     'inline next-status buttons update without a dialog',
     (tester) async {
@@ -1725,13 +1797,20 @@ class _MutableOrdersRepository extends OrdersRepository {
   @override
   Future<Order> updateOrderPricing({
     required String orderId,
-    required List<double> unitPrices,
+    List<double>? unitPrices,
+    List<AdminOrderEditItem>? items,
     required double deliveryFee,
     required double discountAmount,
+    String? adminNote,
     DateTime? expectedUpdatedAt,
   }) async {
+    final prices = unitPrices ??
+        [
+          for (final item in items ?? const <AdminOrderEditItem>[])
+            item.unitPrice,
+        ];
     lastPricing = (
-      unitPrices: unitPrices,
+      unitPrices: prices,
       deliveryFee: deliveryFee,
       discountAmount: discountAmount,
     );
@@ -1745,11 +1824,20 @@ class _MutableOrdersRepository extends OrdersRepository {
               for (var index = 0; index < order.items.length; index++)
                 if (order.items[index] is OrderItem)
                   (order.items[index] as OrderItem).copyWith(
-                    unitPrice: unitPrices[index],
+                    product: items?[index].product,
+                    productId: items?[index].product.id,
+                    productName: items?[index].product.name,
+                    productSku: items?[index].product.sku,
+                    unitSize: items?[index].product.unitSize,
+                    packageLabel: items?[index].product.effectivePackageSize,
+                    unitsPerBox: items?[index].product.unitsPerBox,
+                    quantity: items?[index].quantity,
+                    unitPrice: prices[index],
                   )
                 else
                   order.items[index],
             ],
+            adminNote: adminNote ?? order.adminNote,
           )
         else
           order,

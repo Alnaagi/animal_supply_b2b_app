@@ -158,6 +158,35 @@ void main() {
     }
     expect(find.textContaining('مؤسسة النور للأعلاف'), findsWidgets);
     expect(find.textContaining('لوحة العمليات'), findsWidgets);
+    final sidebar = find.byKey(const Key('admin-wide-sidebar'));
+    final toolbar = find.byKey(const Key('admin-wide-toolbar'));
+    expect(sidebar, findsOneWidget);
+    expect(toolbar, findsOneWidget);
+    expect(tester.getTopLeft(sidebar).dy, 0);
+    expect(tester.getTopLeft(toolbar).dy, 0);
+    expect(
+      tester.getRect(toolbar).right,
+      lessThanOrEqualTo(tester.getRect(sidebar).left),
+    );
+
+    await tester.tap(find.byKey(const Key('admin-appearance-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('admin-appearance-sheet')), findsOneWidget);
+    expect(
+      find.byKey(const Key('admin-appearance-mode-selector')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const Key('admin-appearance-preset-midnight')),
+    );
+    await tester.pumpAndSettle();
+    final themedScaffold = tester.element(find.byType(Scaffold).first);
+    expect(Theme.of(themedScaffold).brightness, Brightness.dark);
+    expect(
+      find.byKey(const Key('admin-appearance-separate-toggle')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('store settings card previews the logo and upload action',

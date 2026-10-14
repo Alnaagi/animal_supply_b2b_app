@@ -195,22 +195,32 @@ class OrderItem extends OrderLine {
 
   OrderItem copyWith({
     String? id,
+    String? productId,
+    String? productName,
+    String? productSku,
+    String? unitSize,
+    String? packageLabel,
+    int? unitsPerBox,
+    bool clearUnitsPerBox = false,
+    int? quantity,
     double? unitPrice,
     double? lineTotal,
+    Product? product,
   }) {
     final nextPrice = unitPrice ?? this.unitPrice;
+    final nextQuantity = quantity ?? this.quantity;
     return OrderItem(
       id: id ?? this.id,
-      productId: productId,
-      productName: productName,
-      productSku: productSku,
-      unitSize: unitSize,
-      packageLabel: packageLabel,
-      unitsPerBox: unitsPerBox,
-      quantity: quantity,
+      productId: productId ?? this.productId,
+      productName: productName ?? this.productName,
+      productSku: productSku ?? this.productSku,
+      unitSize: unitSize ?? this.unitSize,
+      packageLabel: packageLabel ?? this.packageLabel,
+      unitsPerBox: clearUnitsPerBox ? null : unitsPerBox ?? this.unitsPerBox,
+      quantity: nextQuantity,
       unitPrice: nextPrice,
-      lineTotal: lineTotal ?? nextPrice * quantity,
-      product: product,
+      lineTotal: lineTotal ?? nextPrice * nextQuantity,
+      product: product ?? this.product,
     );
   }
 }

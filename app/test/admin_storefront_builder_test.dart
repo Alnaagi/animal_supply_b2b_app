@@ -177,6 +177,8 @@ void main() {
     expect(find.text('حفظ المسودة'), findsNothing);
     expect(find.text('إعادة ضبط'), findsOneWidget);
     expect(find.byKey(const Key('storefront-reset-button')), findsOneWidget);
+    expect(find.byKey(const Key('storefront-guest-preview-button')),
+        findsOneWidget);
     expect(find.text('نشر التغييرات'), findsOneWidget);
     expect(find.text('معاينة المنشور'), findsOneWidget);
     expect(
@@ -212,6 +214,28 @@ void main() {
       find.text('وضع المعاينة — لا تُنفَّذ إجراءات السلة أو الطلبات'),
       findsOneWidget,
     );
+    await _flushAsync(tester);
+  });
+
+  testWidgets('preview sections highlight and open color controls',
+      (tester) async {
+    await _pumpBuilder(tester, width: 1400, height: 900);
+    final selectable = find.byKey(
+      const Key('storefront-preview-section-header'),
+    );
+    expect(selectable, findsOneWidget);
+
+    await tester.tap(selectable);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final element = tester.element(find.byType(AdminStorefrontScreen));
+    final container = ProviderScope.containerOf(element);
+    final state = container.read(adminStorefrontControllerProvider);
+    expect(state.selectedSection, StorefrontSectionType.header);
+    expect(state.sidebarMode, StorefrontSidebarMode.design);
+    expect(find.byKey(const Key('storefront-design-panel')), findsOneWidget);
+    expect(find.text('الألوان'), findsOneWidget);
     await _flushAsync(tester);
   });
 
@@ -300,8 +324,7 @@ void main() {
     await _flushAsync(tester);
   });
 
-  testWidgets(
-      'storefront builder has no empty AppBar above the demo notice',
+  testWidgets('storefront builder has no empty AppBar above the demo notice',
       (tester) async {
     await _pumpBuilder(
       tester,
@@ -498,7 +521,8 @@ void main() {
       await _flushAsync(tester);
     });
 
-    testWidgets('device switcher offers only phone and desktop', (tester) async {
+    testWidgets('device switcher offers only phone and desktop',
+        (tester) async {
       await _pumpBuilder(tester, width: 1400, height: 900);
       expect(StorefrontPreviewDevice.values, hasLength(2));
       expect(

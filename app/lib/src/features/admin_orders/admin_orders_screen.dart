@@ -32,6 +32,7 @@ import '../../data/local/admin_order_workflow_store.dart';
 import '../../data/local/admin_orders_filter_store.dart';
 import '../../data/models/admin_order_pricing.dart';
 import '../../data/models/order.dart';
+import '../../data/repositories/catalog_repository.dart';
 import '../../data/repositories/notifications_repository.dart';
 import '../../data/repositories/orders_repository.dart';
 import '../admin_dashboard/admin_shell.dart';
@@ -1168,15 +1169,19 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen>
       context: context,
       order: order,
       demoData: AppConfig.isDemoMode,
+      productsFuture: ref.read(catalogRepositoryProvider).products(
+            includeInactive: true,
+          ),
     );
     if (result == null || !mounted) return;
     setState(() => updatingOrderId = order.id);
     try {
       await ref.read(ordersRepositoryProvider).updateOrderPricing(
             orderId: order.id,
-            unitPrices: result.unitPrices,
+            items: result.items,
             deliveryFee: result.deliveryFee,
             discountAmount: result.discountAmount,
+            adminNote: result.adminNote,
             expectedUpdatedAt: order.updatedAt,
           );
       if (!mounted) return;
@@ -2379,8 +2384,141 @@ class _AdminOrderSummary extends StatelessWidget {
               ),
             ],
           ),
+          if (order.items.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _AdminOrderItemPeek(
+              orderId: order.id,
+              items: order.items,
+            ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _AdminOrderItemPeek extends StatelessWidget {
+  const _AdminOrderItemPeek({
+    required this.orderId,
+    required this.items,
+  });
+
+  final String orderId;
+  final List<OrderLine> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final showSwipeHint = items.length > 4;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(
+              Icons.shopping_basket_outlined,
+              size: 15,
+              color: scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              'الأصناف المطلوبة',
+              style: TextStyle(
+                color: scheme.onSurfaceVariant,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            if (showSwipeHint) ...[
+              const Spacer(),
+              Icon(
+                Icons.swipe_outlined,
+                size: 14,
+                color: scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 3),
+              Text(
+                'اسحب لرؤية المزيد',
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 7),
+        SizedBox(
+          key: ValueKey('admin-order-item-peek-$orderId'),
+          height: 52,
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              scrollbars: false,
+            ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var index = 0; index < items.length; index++)
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(end: 8),
+                      child: Semantics(
+                        container: true,
+                        label:
+                            '${items[index].productName}، الكمية ${items[index].quantity}',
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            ProductImagePlaceholder(
+                              key: ValueKey(
+                                'admin-order-item-peek-image-$orderId-$index',
+                              ),
+                              category: items[index].product.category,
+                              productId: items[index].productId,
+                              imageUrl: items[index].product.imageUrl,
+                              semanticLabel: 'صورة ${items[index].productName}',
+                              size: 48,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            PositionedDirectional(
+                              end: -4,
+                              bottom: -4,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: scheme.primary,
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: scheme.surface,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: Text(
+                                  'x${items[index].quantity}',
+                                  textDirection: TextDirection.ltr,
+                                  style: TextStyle(
+                                    color: scheme.onPrimary,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w900,
+                                    height: 1,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -3707,16 +3845,6 @@ class _AdminOrderInvoice extends StatelessWidget {
               ],
             ),
           ),
-          if (onEditPricing != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-              child: OutlinedButton.icon(
-                key: ValueKey('admin-order-edit-pricing-${order.id}'),
-                onPressed: onEditPricing,
-                icon: const Icon(Icons.edit_outlined, size: 18),
-                label: const Text('تعديل التسعير والرسوم'),
-              ),
-            ),
           if (order.items.isEmpty)
             const Padding(
               padding: EdgeInsets.all(14),
@@ -3744,6 +3872,16 @@ class _AdminOrderInvoice extends StatelessWidget {
                         items: order.items,
                       );
               },
+            ),
+          if (onEditPricing != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              child: OutlinedButton.icon(
+                key: ValueKey('admin-order-edit-pricing-${order.id}'),
+                onPressed: onEditPricing,
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                label: const Text('تعديل التسعير والرسوم'),
+              ),
             ),
           Divider(height: 1, color: scheme.outlineVariant),
           Padding(

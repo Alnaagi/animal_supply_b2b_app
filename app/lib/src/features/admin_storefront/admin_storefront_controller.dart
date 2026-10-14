@@ -66,6 +66,7 @@ class StorefrontBuilderState {
     this.hasUnsavedChanges = false,
     this.syncStatus = StorefrontDraftSyncStatus.idle,
     this.previewPublished = false,
+    this.previewAsGuest = false,
     this.selectedSection,
     this.previewDevice = StorefrontPreviewDevice.phone,
     this.pricePreviewMode = StorefrontPricePreviewMode.basePrice,
@@ -89,6 +90,7 @@ class StorefrontBuilderState {
   final bool hasUnsavedChanges;
   final StorefrontDraftSyncStatus syncStatus;
   final bool previewPublished;
+  final bool previewAsGuest;
   final StorefrontSectionType? selectedSection;
   final StorefrontPreviewDevice previewDevice;
   final StorefrontPricePreviewMode pricePreviewMode;
@@ -111,8 +113,7 @@ class StorefrontBuilderState {
     if (syncStatus == StorefrontDraftSyncStatus.error) {
       return 'خطأ في الحفظ';
     }
-    if (hasUnsavedChanges ||
-        syncStatus == StorefrontDraftSyncStatus.pending) {
+    if (hasUnsavedChanges || syncStatus == StorefrontDraftSyncStatus.pending) {
       return 'مسودة غير محفوظة';
     }
     if (hasUnpublishedChanges) {
@@ -135,6 +136,7 @@ class StorefrontBuilderState {
     bool? hasUnsavedChanges,
     StorefrontDraftSyncStatus? syncStatus,
     bool? previewPublished,
+    bool? previewAsGuest,
     StorefrontSectionType? selectedSection,
     bool clearSelectedSection = false,
     StorefrontPreviewDevice? previewDevice,
@@ -159,6 +161,7 @@ class StorefrontBuilderState {
       hasUnsavedChanges: hasUnsavedChanges ?? this.hasUnsavedChanges,
       syncStatus: syncStatus ?? this.syncStatus,
       previewPublished: previewPublished ?? this.previewPublished,
+      previewAsGuest: previewAsGuest ?? this.previewAsGuest,
       selectedSection:
           clearSelectedSection ? null : selectedSection ?? this.selectedSection,
       previewDevice: previewDevice ?? this.previewDevice,
@@ -219,6 +222,7 @@ class AdminStorefrontController extends StateNotifier<StorefrontBuilderState> {
         hasUnsavedChanges: false,
         syncStatus: StorefrontDraftSyncStatus.idle,
         previewPublished: false,
+        previewAsGuest: false,
         selectedSection: adminState.draftConfig.sections.first.type,
       );
     } catch (error) {
@@ -293,6 +297,13 @@ class AdminStorefrontController extends StateNotifier<StorefrontBuilderState> {
 
   void togglePreviewPublished(bool value) {
     state = state.copyWith(previewPublished: value);
+  }
+
+  void setPreviewAsGuest(bool value) {
+    state = state.copyWith(
+      previewAsGuest: value,
+      mobileTab: StorefrontBuilderTab.preview,
+    );
   }
 
   void setPreviewDevice(StorefrontPreviewDevice device) {
@@ -520,9 +531,7 @@ class AdminStorefrontController extends StateNotifier<StorefrontBuilderState> {
       final stale = error is StaleWriteException;
       state = state.copyWith(
         publishing: false,
-        syncStatus: stale
-            ? StorefrontDraftSyncStatus.error
-            : state.syncStatus,
+        syncStatus: stale ? StorefrontDraftSyncStatus.error : state.syncStatus,
         staleWrite: stale,
         errorMessage: mutationFailureMessageAr(
           error,
