@@ -12,7 +12,7 @@ import '../localization/arabic_copy.dart';
 class PawTrail extends StatelessWidget {
   const PawTrail({
     required this.progress,
-    this.width = 96,
+    this.width = 128,
     this.color,
     super.key,
   });
@@ -25,7 +25,7 @@ class PawTrail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
-      size: Size(width, width * 5 / 3),
+      size: Size(width, width * 2.2),
       painter: _PawTrailPainter(
         progress: progress,
         color: color ?? Theme.of(context).colorScheme.primary,
@@ -37,16 +37,16 @@ class PawTrail extends StatelessWidget {
 class _PawTrailPainter extends CustomPainter {
   _PawTrailPainter({required this.progress, required this.color});
 
-  static const _count = 4;
-  static const _stagger = 0.2;
-  static const _stepLength = 0.2;
+  static const _count = 6;
+  static const _stagger = 0.13;
+  static const _stepLength = 0.16;
 
   final double progress;
   final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paw = size.width * 0.36;
+    final paw = size.width * 0.42;
     for (var i = 0; i < _count; i++) {
       final local =
           ((progress - i * _stagger) / _stepLength).clamp(0.0, 1.0).toDouble();
@@ -54,8 +54,8 @@ class _PawTrailPainter extends CustomPainter {
       // First print starts on the right (RTL lead foot), then alternates.
       final rightFoot = i.isEven;
       final center = Offset(
-        size.width * (rightFoot ? 0.68 : 0.32),
-        size.height * (0.86 - i * 0.24),
+        size.width * (rightFoot ? 0.70 : 0.30),
+        size.height * (0.90 - i * 0.145),
       );
       final scale = local < 0.6
           ? Curves.easeOut.transform(local / 0.6) * 1.12
@@ -110,7 +110,7 @@ class AppLoadingIntro extends ConsumerStatefulWidget {
   const AppLoadingIntro({
     required this.child,
     this.enabled = !kIsWeb,
-    this.duration = const Duration(milliseconds: 1600),
+    this.duration = const Duration(milliseconds: 1900),
     super.key,
   });
 

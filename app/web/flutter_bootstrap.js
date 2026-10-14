@@ -57,6 +57,7 @@ _flutter.loader.load({
     await (window.firebaseSdkReady ?? Promise.resolve());
     const appRunner = await engineInitializer.initializeEngine();
     await appRunner.runApp();
+    window.animalSupplyHideLoader?.();
     window.animalSupplyPwaInstall?.markAppReady();
 
     if (document.readyState === 'complete') {

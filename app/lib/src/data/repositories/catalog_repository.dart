@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -545,7 +547,7 @@ class CatalogRepository {
         final rows = await _catalogRows();
         final products =
             rows.map<Product>((row) => Product.fromSupabase(row)).toList();
-        await _saveRemoteProducts(products);
+        unawaited(_saveRemoteProducts(products));
         return _filterProducts(
           products,
           query: query,
@@ -837,13 +839,12 @@ class CatalogRepository {
     final client = supabaseClient;
     if (client != null) {
       try {
-        final categoryRows = await client
-            .from('categories')
-            .select(_categorySelect)
-            .order('name');
-        final productRows = await client
-            .from('products')
-            .select('category_id,archived_by_category_id');
+        final fetched = await Future.wait<dynamic>([
+          client.from('categories').select(_categorySelect).order('name'),
+          client.from('products').select('category_id,archived_by_category_id'),
+        ]);
+        final categoryRows = fetched[0];
+        final productRows = fetched[1];
         final productCounts = <String, int>{};
         final archivedByCategoryCounts = <String, int>{};
         for (final rawRow in productRows) {
@@ -1237,6 +1238,26 @@ class CatalogRepository {
       updated,
       ownerProfileId: ownerProfileId,
     );
+  }
+
+  /// Last locally saved catalog, if any. Does not hit the network.
+  Future<List<Product>> peekCachedProducts({
+    String query = '',
+    String? category,
+    bool includeInactive = false,
+  }) async {
+    try {
+      final cached = await _cachedRemoteProducts();
+      if (cached.isEmpty) return const [];
+      return _filterProducts(
+        cached,
+        query: query,
+        category: category,
+        includeInactive: includeInactive,
+      );
+    } catch (_) {
+      return const [];
+    }
   }
 
   Future<List<Product>> _cachedRemoteProducts() async {
