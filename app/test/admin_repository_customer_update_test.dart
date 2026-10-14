@@ -77,7 +77,8 @@ void main() {
     expect(payload, isNot(contains('password')));
   });
 
-  test('customer create payload includes an admin-chosen password only when set',
+  test(
+      'customer create payload includes an admin-chosen password only when set',
       () {
     final payload = AdminRepository.customerCreatePayload(
       customer,

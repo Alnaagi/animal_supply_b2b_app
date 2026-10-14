@@ -10,14 +10,17 @@ import 'src/core/config/app_runtime_mode.dart';
 import 'src/core/config/shop_branding.dart';
 import 'src/core/config/shop_branding_cache.dart';
 import 'src/core/config/shop_document_title.dart';
+import 'src/core/config/storefront_theme_cache.dart';
 import 'src/core/notifications/push_notifications.dart';
 import 'src/core/refresh/stale_tab_reloader.dart';
 import 'src/core/routing/app_router.dart';
 import 'src/core/routing/deep_link_service.dart';
-import 'src/core/theme/app_theme.dart';
 import 'src/core/updates/app_update_gate.dart';
+import 'src/core/widgets/paw_trail_loader.dart';
 import 'src/data/repositories/notifications_repository.dart';
+import 'src/data/repositories/storefront_repository.dart';
 import 'src/features/auth/auth_controller.dart';
+import 'src/features/storefront/storefront_theme_scope.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,6 +28,7 @@ Future<void> main() async {
   await AppRuntimeMode.load();
   await AppConfig.tryInitializeSupabase();
   await ShopBrandingCache.load();
+  await StorefrontThemeCache.load();
   runApp(const ProviderScope(child: AnimalSupplyApp()));
 }
 
@@ -142,7 +146,11 @@ class _AnimalSupplyAppState extends ConsumerState<AnimalSupplyApp> {
   Widget build(BuildContext context) {
     final router = ref.watch(appRouterProvider);
     final shopName = ref.watch(shopBrandingProvider).shopName;
+    final publishedStorefront =
+        ref.watch(publishedStorefrontConfigProvider).valueOrNull ??
+            StorefrontThemeCache.fallbackConfig();
     applyShopDocumentTitle(shopName);
+    applyShopWebTheme(publishedStorefront.theme.toJson());
     return MaterialApp.router(
       title: shopName,
       debugShowCheckedModeBanner: false,
@@ -154,12 +162,16 @@ class _AnimalSupplyAppState extends ConsumerState<AnimalSupplyApp> {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      theme: AppTheme.light,
+      // The published storefront palette is the app-wide visual source of
+      // truth. Route-level draft scopes still override this for admin previews.
+      theme: storefrontThemeData(publishedStorefront),
       routerConfig: router,
       builder: (context, child) => Directionality(
         textDirection: TextDirection.rtl,
-        child: StaleTabReloader(
-          child: AppUpdateGate(child: child ?? const SizedBox.shrink()),
+        child: AppLoadingIntro(
+          child: StaleTabReloader(
+            child: AppUpdateGate(child: child ?? const SizedBox.shrink()),
+          ),
         ),
       ),
     );

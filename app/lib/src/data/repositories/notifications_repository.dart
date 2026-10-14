@@ -65,9 +65,7 @@ class NotificationsRepository {
     }
 
     final rows = await _inboxRows(client, limit);
-    return rows
-        .map(AppNotification.fromSupabase)
-        .toList(growable: false);
+    return rows.map(AppNotification.fromSupabase).toList(growable: false);
   }
 
   Future<int> unreadCount() async {
@@ -122,10 +120,8 @@ class NotificationsRepository {
           .where((id) => id.isNotEmpty)
           .toList(growable: false);
       if (ids.isEmpty) return 0;
-      await client
-          .from('notifications')
-          .update({'read_at': DateTime.now().toIso8601String()}).inFilter(
-              'id', ids);
+      await client.from('notifications').update(
+          {'read_at': DateTime.now().toIso8601String()}).inFilter('id', ids);
       return ids.length;
     }
 
@@ -162,9 +158,8 @@ class NotificationsRepository {
     if (userId != null && userId.isNotEmpty) {
       query = query.eq('recipient_profile_id', userId);
     }
-    final rows = await query
-        .order('created_at', ascending: false)
-        .limit(clampedLimit);
+    final rows =
+        await query.order('created_at', ascending: false).limit(clampedLimit);
     return [
       for (final row in rows) Map<String, dynamic>.from(row),
     ];
@@ -207,6 +202,7 @@ class NotificationsRepository {
     required String token,
     required String platform,
     required String appVersion,
+    String? installationId,
     String? deviceId,
     String? deviceLabel,
   }) async {
@@ -218,6 +214,8 @@ class NotificationsRepository {
       body: {
         'token': token,
         'platform': platform,
+        if (installationId != null && installationId.isNotEmpty)
+          'installation_id': installationId,
         if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
         'device_label': deviceLabel,
         'app_version': appVersion,
@@ -342,7 +340,8 @@ class NotificationsRepository {
       final data = response.data;
       if (data is! Map || data['ok'] != true) {
         throw NotificationCampaignException(
-          campaignFailureMessageAr(data ?? 'Campaign delivery was not accepted.'),
+          campaignFailureMessageAr(
+              data ?? 'Campaign delivery was not accepted.'),
         );
       }
       return (data['recipient_count'] as num?)?.toInt() ?? 0;
@@ -395,10 +394,11 @@ class NotificationsRepository {
         'تعذر الإرسال من هذا الموقع. راجع إعداد النطاق المسموح.',
       'NO_CAMPAIGN_RECIPIENTS' => 'لا يوجد مستلمون مطابقون لهذا الجمهور.',
       'RATE_LIMITED' => 'تم تجاوز حد الإرسال. حاول بعد قليل.',
-      'AUTH_REQUIRED' || 'INVALID_SESSION' || 'ADMIN_AUTH_REQUIRED' =>
+      'AUTH_REQUIRED' ||
+      'INVALID_SESSION' ||
+      'ADMIN_AUTH_REQUIRED' =>
         'انتهت الجلسة أو لا توجد صلاحية إرسال. أعد تسجيل الدخول.',
-      'CAMPAIGN_PRODUCT_UNAVAILABLE' =>
-        'المنتج المختار غير متاح أو مؤرشف.',
+      'CAMPAIGN_PRODUCT_UNAVAILABLE' => 'المنتج المختار غير متاح أو مؤرشف.',
       'SERVER_CONFIGURATION_ERROR' =>
         'إعداد الخادم ناقص. الإشعارات داخل التطبيق تتطلب نشر دالة الإرسال.',
       _ => _looksLikeBrowserCors(error)

@@ -8,6 +8,38 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  group('public order reference normalization', () {
+    test('normalizes canonical, lowercase, and prefix-less forms', () {
+      expect(normalizePublicOrderReference('AS-K7M4Q2P'), 'AS-K7M4Q2P');
+      expect(normalizePublicOrderReference('as-k7m4q2p'), 'AS-K7M4Q2P');
+      expect(normalizePublicOrderReference('K7M4Q2P'), 'AS-K7M4Q2P');
+      expect(normalizePublicOrderReference(' as k7m4q2p '), 'AS-K7M4Q2P');
+    });
+
+    test('rejects invalid length and ambiguous characters', () {
+      expect(normalizePublicOrderReference('AS-ABCDEFGH'), isNull);
+      expect(normalizePublicOrderReference('AS-ABCD0EF'), isNull);
+      expect(normalizePublicOrderReference('AS-ABCD1EF'), isNull);
+      expect(normalizePublicOrderReference('AS-ABCDIEF'), isNull);
+      expect(normalizePublicOrderReference(''), isNull);
+    });
+
+    test('keeps legacy sequential references canonical for lookup', () {
+      expect(
+        normalizePublicOrderReference('AS-20260819-000001'),
+        'AS-20260819-000001',
+      );
+      expect(
+        normalizePublicOrderReference('as-20260819-000001'),
+        'AS-20260819-000001',
+      );
+      expect(
+        normalizePublicOrderReference('20260819000001'),
+        'AS-20260819-000001',
+      );
+    });
+  });
+
   group('SupabaseOrdersRemoteGateway order embed', () {
     test('pins products to the active category FK, not archive FK', () {
       expect(
@@ -256,6 +288,43 @@ void main() {
       );
     });
 
+    test(
+        'maps opaque order-create failures to Arabic cart-preserved copy',
+        () async {
+      final gateway = _FakeGateway(
+        placeResponses: const [
+          OrdersFunctionResponse(
+            status: 500,
+            data: {
+              'ok': false,
+              'error': {
+                'code': 'ORDER_CREATE_FAILED',
+                'message': 'The order could not be created.',
+              },
+            },
+          ),
+        ],
+      );
+      final repository = OrdersRepository(remote: gateway, demoSeed: const []);
+
+      expect(
+        () => repository.placeOrder(
+          clientRequestId: 'request-1',
+          customerId: 'customer-1',
+          items: [CartItem(product: _product(price: 20), quantity: 1)],
+        ),
+        throwsA(
+          isA<OrdersRepositoryException>()
+              .having((error) => error.code, 'code', 'ORDER_CREATE_FAILED')
+              .having(
+                (error) => error.message,
+                'message',
+                'تعذر إكمال عملية الطلب حالياً. لم يتم مسح السلة، ويمكنك المحاولة مجدداً.',
+              ),
+        ),
+      );
+    });
+
     test('classifies a transport failure as retryable', () async {
       final repository = OrdersRepository(
         remote: _TransportFailureGateway(),
@@ -467,8 +536,7 @@ class _FakeGateway implements OrdersRemoteGateway {
   }
 
   @override
-  Future<OrdersFunctionResponse> updateOrderPricing(
-      Map<String, dynamic> body) {
+  Future<OrdersFunctionResponse> updateOrderPricing(Map<String, dynamic> body) {
     throw UnimplementedError();
   }
 }

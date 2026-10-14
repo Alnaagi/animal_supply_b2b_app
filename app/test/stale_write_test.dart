@@ -61,7 +61,7 @@ void main() {
 
   test('demo order status rejects a stale updated_at', () async {
     final repository = OrdersRepository.demo(seed: const []);
-    final product = Product(
+    const product = Product(
       id: 'product-1',
       nameAr: 'علف',
       sku: 'FEED-1',
@@ -76,7 +76,7 @@ void main() {
     final placed = await repository.placeOrder(
       clientRequestId: 'stale-1',
       customerId: 'customer-1',
-      items: [CartItem(product: product, quantity: 1)],
+      items: const [CartItem(product: product, quantity: 1)],
     );
     expect(
       () => repository.transitionOrderStatus(

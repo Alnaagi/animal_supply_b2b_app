@@ -11,7 +11,8 @@ const defaultCustomerInviteTemplate = '''مرحباً {business_name} 👋
 
 يمكنكم تسجيل الدخول باستخدام اسم المستخدم وكلمة المرور الظاهرة هنا.''';
 
-const defaultCustomerInviteTemplateWithoutPassword = '''مرحباً {business_name} 👋
+const defaultCustomerInviteTemplateWithoutPassword =
+    '''مرحباً {business_name} 👋
 
 أهلاً بكم في {shop_name}. يسعدنا انضمام نشاطكم إلى منصة طلبات الجملة.
 
@@ -70,9 +71,8 @@ String renderCustomerInviteTemplate({
 }) {
   final knownPassword = password?.trim() ?? '';
   final safeLoginUrl = sanitizeInviteLoginUrl(loginUrl);
-  var source = template.trim().isEmpty
-      ? defaultCustomerInviteTemplate
-      : template;
+  var source =
+      template.trim().isEmpty ? defaultCustomerInviteTemplate : template;
   if (knownPassword.isEmpty && _isDefaultPasswordTemplate(source)) {
     source = defaultCustomerInviteTemplateWithoutPassword;
   }
@@ -123,12 +123,10 @@ String stripSecretsFromInviteUrls(String message, String password) {
       final raw = match.group(0) ?? '';
       final uri = Uri.tryParse(raw);
       if (uri == null) return raw;
-      final keys = uri.queryParameters.keys
-          .map((key) => key.toLowerCase())
-          .toSet();
+      final keys =
+          uri.queryParameters.keys.map((key) => key.toLowerCase()).toSet();
       final hasSecretQuery = keys.any(_passwordUrlKeys.contains);
-      final embedsPassword =
-          password.isNotEmpty && raw.contains(password);
+      final embedsPassword = password.isNotEmpty && raw.contains(password);
       if (!hasSecretQuery && !embedsPassword && uri.userInfo.isEmpty) {
         return raw;
       }

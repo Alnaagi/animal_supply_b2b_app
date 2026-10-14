@@ -57,7 +57,8 @@ void main() {
     expect(result.whatsappMessage, isNot(contains('invite')));
   });
 
-  test('login reminder includes a session-known password without putting it in the URL',
+  test(
+      'login reminder includes a session-known password without putting it in the URL',
       () {
     final result = AdminRepository().composeLoginReminder(
       const BusinessCustomer(
@@ -73,7 +74,8 @@ void main() {
     expect(result.whatsappMessage, isNot(contains('password=test')));
   });
 
-  testWidgets('login overlay appears while verifying credentials', (tester) async {
+  testWidgets('login overlay appears while verifying credentials',
+      (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [

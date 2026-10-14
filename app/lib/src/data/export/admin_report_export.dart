@@ -27,6 +27,7 @@ class AdminReportExportRequest {
     required this.datasets,
     required this.demoData,
     this.shopName = AppConfig.shopName,
+    this.logoBytes,
   });
 
   final AdminReportData report;
@@ -34,6 +35,7 @@ class AdminReportExportRequest {
   final Set<AdminReportExportDataset> datasets;
   final bool demoData;
   final String shopName;
+  final Uint8List? logoBytes;
 
   String get brandedShopName {
     final trimmed = shopName.trim();
@@ -47,7 +49,7 @@ class AdminReportCsvExport {
   static Uint8List build(AdminReportExportRequest request) {
     final lines = <String>[
       _csvRow([request.brandedShopName]),
-          _csvRow(['تقرير تشغيلي', westernDigits(request.periodLabel)]),
+      _csvRow(['تقرير تشغيلي', westernDigits(request.periodLabel)]),
       if (request.demoData)
         _csvRow(['بيانات تجريبية', 'غير تشغيلية - للاطلاع المحلي فقط']),
       '',
@@ -74,7 +76,8 @@ class AdminReportCsvExport {
           _csvRow(['المؤشر', 'القيمة']),
           _csvRow(['مبيعات الفترة', reportMoney(report.salesTotal)]),
           _csvRow(['طلبات مسلّمة', reportCount(report.deliveredOrderCount)]),
-          _csvRow(['متوسط الطلب المسلّم', reportMoney(report.averageOrderValue)]),
+          _csvRow(
+              ['متوسط الطلب المسلّم', reportMoney(report.averageOrderValue)]),
           _csvRow(['طلبات بكل الحالات', reportCount(report.periodOrderCount)]),
           _csvRow(['طلبات ملغاة', reportCount(report.cancelledOrderCount)]),
         ];
@@ -126,8 +129,7 @@ class AdminReportCsvExport {
     }
   }
 
-  static String _csvRow(List<String> cells) =>
-      cells.map(_csvCell).join(',');
+  static String _csvRow(List<String> cells) => cells.map(_csvCell).join(',');
 
   static String _csvCell(String value) {
     final escaped = westernDigits(value).replaceAll('"', '""');
@@ -253,10 +255,10 @@ class AdminReportHtmlExport {
     if (rows.isEmpty) {
       return '<section><h2>$title</h2><div class="empty">${_escape.convert(_emptyMessage(dataset))}</div></section>';
     }
-    final head = headers.map((cell) => '<th>${_escape.convert(cell)}</th>').join();
+    final head =
+        headers.map((cell) => '<th>${_escape.convert(cell)}</th>').join();
     final body = [
-      for (final row in rows)
-        '<tr>${row.map(_htmlCell).join()}</tr>',
+      for (final row in rows) '<tr>${row.map(_htmlCell).join()}</tr>',
     ].join();
     return '<section><h2>$title</h2><table><thead><tr>$head</tr></thead><tbody>$body</tbody></table></section>';
   }
@@ -307,7 +309,8 @@ class AdminReportPdfExport {
               decoration: pw.BoxDecoration(
                 color: _demo,
                 borderRadius: pw.BorderRadius.circular(8),
-                border: pw.Border.all(color: const PdfColor.fromInt(0xffffcc80)),
+                border:
+                    pw.Border.all(color: const PdfColor.fromInt(0xffffcc80)),
               ),
               child: pw.Text(
                 'بيانات تجريبية غير تشغيلية - للتصدير المحلي فقط.',
@@ -335,45 +338,73 @@ class AdminReportPdfExport {
     pw.Context context,
   ) {
     final compact = context.pageNumber > 1;
+    final hasLogo =
+        request.logoBytes != null && request.logoBytes!.isNotEmpty;
     return pw.Container(
       width: double.infinity,
       margin: const pw.EdgeInsets.only(bottom: 12),
-      padding: pw.EdgeInsets.fromLTRB(16, compact ? 8 : 12, 16, compact ? 8 : 12),
+      padding:
+          pw.EdgeInsets.fromLTRB(16, compact ? 8 : 12, 16, compact ? 8 : 12),
       decoration: const pw.BoxDecoration(
         color: _darkGreen,
         borderRadius: pw.BorderRadius.all(pw.Radius.circular(12)),
       ),
-      child: pw.Column(
-        mainAxisSize: pw.MainAxisSize.min,
-        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: pw.CrossAxisAlignment.center,
         children: [
-            pw.Text(
-              request.brandedShopName,
-              style: pw.TextStyle(
-                font: font,
-                fontSize: compact ? 13 : 16,
-                color: _white,
-                fontFallback: [pw.Font.helvetica()],
-              ),
-              textAlign: pw.TextAlign.right,
-              textDirection: pw.TextDirection.rtl,
+          pw.Expanded(
+            child: pw.Column(
+              mainAxisSize: pw.MainAxisSize.min,
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Text(
+                  request.brandedShopName,
+                  style: pw.TextStyle(
+                    font: font,
+                    fontSize: compact ? 13 : 16,
+                    color: _white,
+                    fontFallback: [pw.Font.helvetica()],
+                  ),
+                  textAlign: pw.TextAlign.right,
+                  textDirection: pw.TextDirection.rtl,
+                ),
+                if (!compact) ...[
+                  pw.SizedBox(height: 3),
+                  pw.Text(
+                    'التقارير التشغيلية',
+                    style:
+                        pw.TextStyle(font: font, fontSize: 11, color: _sand),
+                    textAlign: pw.TextAlign.right,
+                    textDirection: pw.TextDirection.rtl,
+                  ),
+                ],
+                pw.SizedBox(height: 3),
+                _pdfMixedText(
+                  font,
+                  request.periodLabel,
+                  fontSize: 10,
+                  color: _sand,
+                ),
+              ],
             ),
-          if (!compact) ...[
-            pw.SizedBox(height: 3),
-            pw.Text(
-              'التقارير التشغيلية',
-              style: pw.TextStyle(font: font, fontSize: 11, color: _sand),
-              textAlign: pw.TextAlign.right,
-              textDirection: pw.TextDirection.rtl,
+          ),
+          if (hasLogo) ...[
+            pw.SizedBox(width: 12),
+            pw.Container(
+              width: compact ? 32 : 44,
+              height: compact ? 32 : 44,
+              decoration: const pw.BoxDecoration(
+                color: _white,
+                borderRadius: pw.BorderRadius.all(pw.Radius.circular(8)),
+              ),
+              padding: const pw.EdgeInsets.all(3),
+              child: pw.Image(
+                pw.MemoryImage(request.logoBytes!),
+                fit: pw.BoxFit.contain,
+              ),
             ),
           ],
-          pw.SizedBox(height: 3),
-          _pdfMixedText(
-            font,
-            request.periodLabel,
-            fontSize: 10,
-            color: _sand,
-          ),
         ],
       ),
     );
@@ -559,7 +590,8 @@ class AdminReportPdfExport {
     );
   }
 
-  static pw.Widget _tableCell(pw.Font font, String value, {required bool header}) {
+  static pw.Widget _tableCell(pw.Font font, String value,
+      {required bool header}) {
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 7),
       child: _pdfMixedText(
@@ -636,8 +668,17 @@ List<String> rtlVisualRow(List<String> logical) =>
 List<String> _headers(AdminReportExportDataset dataset) {
   return switch (dataset) {
     AdminReportExportDataset.sales => ['المؤشر', 'القيمة'],
-    AdminReportExportDataset.customers => ['العميل', 'طلبات مسلّمة', 'المبيعات'],
-    AdminReportExportDataset.products => ['المنتج', 'الرمز', 'الكمية', 'المبيعات'],
+    AdminReportExportDataset.customers => [
+        'العميل',
+        'طلبات مسلّمة',
+        'المبيعات'
+      ],
+    AdminReportExportDataset.products => [
+        'المنتج',
+        'الرمز',
+        'الكمية',
+        'المبيعات'
+      ],
     AdminReportExportDataset.inventory => ['المنتج', 'الرمز', 'الكمية المتاحة'],
   };
 }

@@ -25,8 +25,7 @@ class AdminOrderWorkflowStore {
 
   static Set<OrderStatus> get allSteps => {
         for (final status in OrderStatus.values)
-          for (final next in allowedOrderTransitions(status))
-            next,
+          for (final next in allowedOrderTransitions(status)) next,
       };
 
   final SharedPreferences? _prefsOverride;

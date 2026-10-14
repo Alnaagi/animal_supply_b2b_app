@@ -20,7 +20,8 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('customer banner requests browser permission once', (tester) async {
+  testWidgets('customer banner requests browser permission once',
+      (tester) async {
     final browser = _FakeBrowserLocalNotifications();
     await tester.pumpWidget(
       ProviderScope(
@@ -38,7 +39,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('تفعيل إشعارات المتجر'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('allow-browser-notifications-button')));
+    await tester
+        .tap(find.byKey(const Key('allow-browser-notifications-button')));
     await tester.pumpAndSettle();
 
     expect(browser.requests, 1);
@@ -67,7 +69,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('تنبيهات الطلبات الجديدة'), findsOneWidget);
-    expect(find.byKey(const Key('allow-browser-notifications-button')), findsNothing);
+    expect(find.byKey(const Key('allow-browser-notifications-button')),
+        findsNothing);
     await tester.tap(find.text('إخفاء'));
     await tester.pumpAndSettle();
     expect(find.text('تنبيهات الطلبات الجديدة'), findsNothing);

@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/concurrency/stale_write.dart';
 import '../../core/constants/order_status.dart';
 import '../../core/localization/arabic_copy.dart';
+import '../../core/support/order_whatsapp_copy.dart';
 import '../models/admin_order_pricing.dart';
 import '../models/order.dart';
 import '../models/product.dart';
@@ -60,8 +61,7 @@ abstract interface class OrdersRemoteGateway {
   Future<OrdersFunctionResponse> transitionOrderStatus(
       Map<String, dynamic> body);
 
-  Future<OrdersFunctionResponse> updateOrderPricing(
-      Map<String, dynamic> body);
+  Future<OrdersFunctionResponse> updateOrderPricing(Map<String, dynamic> body);
 }
 
 /// Optional bounded read capability for remote order gateways.
@@ -199,8 +199,17 @@ class SupabaseOrdersRemoteGateway
     String orderId, {
     String? customerId,
   }) async {
-    dynamic query =
-        client.from('orders').select(orderSelect).eq('id', orderId);
+    final trimmedLookup = orderId.trim();
+    if (trimmedLookup.isEmpty) return null;
+    final normalizedReference = normalizePublicOrderReference(trimmedLookup);
+    dynamic query = client.from('orders').select(orderSelect);
+    if (_isUuid(trimmedLookup)) {
+      query = query.eq('id', trimmedLookup);
+    } else if (normalizedReference != null) {
+      query = query.eq('order_number', normalizedReference);
+    } else {
+      return null;
+    }
     if (customerId != null && customerId.isNotEmpty) {
       query = query.eq('customer_id', customerId);
     }
@@ -407,6 +416,8 @@ class OrdersRepository {
   }) async {
     final normalizedOrderId = orderId.trim();
     if (normalizedOrderId.isEmpty) return null;
+    final normalizedReference =
+        normalizePublicOrderReference(normalizedOrderId);
     final normalizedCustomerId = _nonEmptyOrNull(customerId);
     final remote = _remote;
 
@@ -434,7 +445,11 @@ class OrdersRepository {
                 .ordersForCustomer(normalizedCustomerId)
                 .then((rows) => rows.map(Order.fromSupabase).toList());
     for (final order in source) {
-      if (order.id == normalizedOrderId &&
+      final matchesLookup = order.id == normalizedOrderId ||
+          (normalizedReference != null &&
+              normalizePublicOrderReference(order.orderNumber) ==
+                  normalizedReference);
+      if (matchesLookup &&
           (normalizedCustomerId == null ||
               order.customerId == normalizedCustomerId)) {
         return order;
@@ -673,9 +688,11 @@ class OrdersRepository {
 
   Future<Order> updateOrderPricing({
     required String orderId,
-    required List<double> unitPrices,
+    List<double>? unitPrices,
+    List<AdminOrderEditItem>? items,
     required double deliveryFee,
     required double discountAmount,
+    String? adminNote,
     DateTime? expectedUpdatedAt,
   }) async {
     final remote = _remote;
@@ -692,21 +709,31 @@ class OrdersRepository {
         current: current.updatedAt,
         expected: expectedUpdatedAt,
       );
-      final priced = AdminOrderPricing.apply(
-        order: current,
-        unitPrices: unitPrices,
-        deliveryFee: deliveryFee,
-        discountAmount: discountAmount,
-      );
-      final items = <Map<String, dynamic>>[
+      final priced = items != null
+          ? AdminOrderPricing.applyOrderEdit(
+              order: current,
+              items: items,
+              deliveryFee: deliveryFee,
+              discountAmount: discountAmount,
+              adminNote: adminNote,
+            )
+          : AdminOrderPricing.apply(
+              order: current,
+              unitPrices: unitPrices ?? const [],
+              deliveryFee: deliveryFee,
+              discountAmount: discountAmount,
+            ).copyWith(adminNote: adminNote ?? current.adminNote);
+      final payloadItems = <Map<String, dynamic>>[
         for (final item in priced.items)
           if (item is OrderItem && (item.id ?? '').isNotEmpty)
             {
               'id': item.id,
+              'product_id': item.productId,
+              'quantity': item.quantity,
               'unit_price': item.unitPrice,
             },
       ];
-      if (items.length != current.items.length) {
+      if (payloadItems.length != current.items.length || priced.items.isEmpty) {
         throw const OrdersRepositoryException(
           code: 'ORDER_ITEM_MISMATCH',
           message: 'بنود الفاتورة غير مكتملة للتحديث.',
@@ -718,7 +745,8 @@ class OrdersRepository {
         'order_id': orderId,
         'delivery_fee': priced.deliveryFee,
         'discount_amount': priced.discountAmount,
-        'items': items,
+        'items': payloadItems,
+        if (adminNote != null) 'admin_note': adminNote,
         if (expected != null) 'expected_updated_at': expected,
       });
       final saved = _orderFromFunction(response);
@@ -746,12 +774,20 @@ class OrdersRepository {
         current: _orders[index].updatedAt,
         expected: expectedUpdatedAt,
       );
-      final updated = AdminOrderPricing.apply(
-        order: _orders[index],
-        unitPrices: unitPrices,
-        deliveryFee: deliveryFee,
-        discountAmount: discountAmount,
-      );
+      final updated = items != null
+          ? AdminOrderPricing.applyOrderEdit(
+              order: _orders[index],
+              items: items,
+              deliveryFee: deliveryFee,
+              discountAmount: discountAmount,
+              adminNote: adminNote,
+            )
+          : AdminOrderPricing.apply(
+              order: _orders[index],
+              unitPrices: unitPrices ?? const [],
+              deliveryFee: deliveryFee,
+              discountAmount: discountAmount,
+            ).copyWith(adminNote: adminNote ?? _orders[index].adminNote);
       _orders[index] = updated;
       return updated;
     } on AdminOrderPricingException catch (error) {
@@ -764,31 +800,11 @@ class OrdersRepository {
   }
 
   String whatsappSummary(Order order, String fallbackBusinessName) {
-    final businessName = order.businessName.trim().isNotEmpty
-        ? order.businessName.trim()
-        : fallbackBusinessName.trim();
-    final lines = <String>[
-      'طلب من: ${businessName.isEmpty ? 'عميل B2B' : businessName}',
-      'رقم الطلب: ${order.displayNumber}',
-      'الحالة: ${order.status.label}',
-      '',
-      'المنتجات:',
-      for (var i = 0; i < order.items.length; i++)
-        '${i + 1}. ${order.items[i].productName} × ${order.items[i].quantity} — ${order.items[i].lineTotal.toStringAsFixed(2)} د.ل',
-      '',
-      'الإجمالي الفرعي: ${order.subtotal.toStringAsFixed(2)} د.ل',
-      if (order.discountAmount > 0)
-        'الخصم: ${order.discountAmount.toStringAsFixed(2)} د.ل',
-      if (order.deliveryFee > 0)
-        'التوصيل: ${order.deliveryFee.toStringAsFixed(2)} د.ل',
-      if (order.handlingFee > 0)
-        'المناولة: ${order.handlingFee.toStringAsFixed(2)} د.ل',
-      'الإجمالي المعتمد: ${order.total.toStringAsFixed(2)} د.ل',
-      if (order.effectiveDeliveryAddress.isNotEmpty)
-        'عنوان التسليم: ${order.effectiveDeliveryAddress}',
-      'ملاحظة العميل: ${order.customerNote.isEmpty ? 'لا توجد' : order.customerNote}',
-    ];
-    return lines.join('\n');
+    return renderOrderWhatsappTemplate(
+      template: defaultOrderWhatsappTemplate,
+      order: order,
+      fallbackBusinessName: fallbackBusinessName,
+    );
   }
 
   static void _validateOrderRequest({
@@ -1079,6 +1095,27 @@ Map<String, dynamic>? _asMap(Object? value) {
     return value.map((key, item) => MapEntry(key.toString(), item));
   }
   return null;
+}
+
+String? normalizePublicOrderReference(String value) {
+  final cleaned =
+      value.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+  if (cleaned.isEmpty) return null;
+  final token = cleaned.startsWith('AS') ? cleaned.substring(2) : cleaned;
+  // Legacy sequential references stay canonical for lookup: AS-YYYYMMDD-NNNNNN.
+  if (RegExp(r'^\d{14}$').hasMatch(token)) {
+    return 'AS-${token.substring(0, 8)}-${token.substring(8)}';
+  }
+  if (token.length != 7) return null;
+  if (!RegExp(r'^[A-HJ-NP-Z2-9]{7}$').hasMatch(token)) return null;
+  return 'AS-$token';
+}
+
+bool _isUuid(String value) {
+  return RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+    caseSensitive: false,
+  ).hasMatch(value.trim());
 }
 
 bool _containsArabic(String value) =>

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/order_status.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/order.dart';
 import '../../data/repositories/orders_repository.dart';
@@ -89,14 +90,17 @@ class _AdminReportDetailSheetState
 
   Future<List<Order>> _loadOrders() {
     final until = (widget.to ?? DateTime.now()).add(const Duration(seconds: 1));
-    return ref.read(ordersRepositoryProvider).ordersPage(
+    return ref
+        .read(ordersRepositoryProvider)
+        .ordersPage(
           statuses: widget.kind == AdminReportDetailKind.cancelled
               ? const [OrderStatus.cancelled]
               : const [OrderStatus.delivered],
           createdFrom: widget.from,
           createdUntil: until,
           pageSize: 100,
-        ).then((page) => page.orders);
+        )
+        .then((page) => page.orders);
   }
 
   @override
@@ -160,7 +164,10 @@ class _AdminReportDetailSheetState
         future: ordersFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const ShopSkeleton(
+              semanticLabel: 'جارٍ تحميل تفاصيل التقرير...',
+              child: ShopOrderListSkeleton(itemCount: 3),
+            );
           }
           if (snapshot.hasError) {
             return const _DetailEmpty(
@@ -225,9 +232,11 @@ class _SummaryBanner extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.green.withValues(alpha: .08),
+        color: Theme.of(context).colorScheme.primary.withValues(alpha: .08),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.green.withValues(alpha: .22)),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: .22),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -259,7 +268,8 @@ class _SummaryBanner extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(color: Colors.grey.shade700, fontSize: 12)),
+          Text(label,
+              style: TextStyle(color: Colors.grey.shade700, fontSize: 12)),
           const SizedBox(height: 2),
           Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
         ],
@@ -311,11 +321,13 @@ class _OrdersList extends StatelessWidget {
           ),
           children: [
             if (phone.isNotEmpty)
-              _metaRow(Icons.call_outlined, 'الهاتف', phone),
+              _metaRow(context, Icons.call_outlined, 'الهاتف', phone),
             if (address.isNotEmpty)
-              _metaRow(Icons.place_outlined, 'التسليم', address),
+              _metaRow(context, Icons.place_outlined, 'التسليم', address),
             if (order.customerNote.trim().isNotEmpty)
-              _metaRow(Icons.notes_outlined, 'ملاحظة', order.customerNote.trim()),
+              _metaRow(
+                  context,
+                  Icons.notes_outlined, 'ملاحظة', order.customerNote.trim()),
             for (final item in order.items)
               ListTile(
                 dense: true,
@@ -337,11 +349,20 @@ class _OrdersList extends StatelessWidget {
     );
   }
 
-  Widget _metaRow(IconData icon, String label, String value) {
+  Widget _metaRow(
+    BuildContext context,
+    IconData icon,
+    String label,
+    String value,
+  ) {
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
-      leading: Icon(icon, size: 18, color: AppTheme.green),
+      leading: Icon(
+        icon,
+        size: 18,
+        color: Theme.of(context).colorScheme.primary,
+      ),
       title: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
       subtitle: Text(value),
     );

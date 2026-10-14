@@ -18,6 +18,7 @@ import '../models/database_usage.dart';
 import '../models/order.dart';
 import '../models/product.dart';
 import '../remote/supabase_clients.dart';
+import 'product_images_repository.dart';
 
 final adminRepositoryProvider =
     Provider<AdminRepository>((ref) => AdminRepository());
@@ -33,7 +34,8 @@ typedef AdminEdgeFunctionInvoker = Future<Object?> Function(
 
 const adminCustomersDefaultPageSize = 50;
 const adminCustomersMaximumPageSize = 100;
-const _customerSelect = '*, profiles(username)';
+const _customerSelect =
+    '*, profiles(username, last_seen_at, last_login_at, last_active_at:customer_last_active_at)';
 const _supportedCustomerStatuses = <String>{
   'active',
   'suspended',
@@ -73,19 +75,18 @@ class AdminRemoteErrorInfo {
   AdminRemoteException asException() {
     final resolvedCode =
         code.trim().isEmpty ? 'CUSTOMER_UPDATE_FAILED' : code.trim();
-    final resolvedMessage =
-        resolvedCode == 'STALE_WRITE' ||
-                resolvedCode == 'CUSTOMER_UPDATE_CONFLICT' ||
-                resolvedCode == 'RESET_IN_PROGRESS'
-            ? mutationFailureMessageAr(
-                AdminRemoteException(
-                  code: resolvedCode,
-                  message: '',
-                  status: status,
-                ),
-                fallback: ArabicCopy.staleWrite,
-              )
-            : message.trim();
+    final resolvedMessage = resolvedCode == 'STALE_WRITE' ||
+            resolvedCode == 'CUSTOMER_UPDATE_CONFLICT' ||
+            resolvedCode == 'RESET_IN_PROGRESS'
+        ? mutationFailureMessageAr(
+            AdminRemoteException(
+              code: resolvedCode,
+              message: '',
+              status: status,
+            ),
+            fallback: ArabicCopy.staleWrite,
+          )
+        : message.trim();
     return AdminRemoteException(
       code: resolvedCode,
       message: resolvedMessage,
@@ -578,6 +579,7 @@ AppBanner _validatedBanner(AppBanner banner) {
       'Banner order must be between 0 and 100000.',
     );
   }
+  // aspectMode is an enum; parse() already normalizes unknown DB values to wide.
 
   switch (targetType) {
     case 'catalog':
@@ -625,7 +627,7 @@ class AdminRepository {
   final AdminEdgeFunctionInvoker? _edgeFunctionInvoker;
 
   final List<BusinessCustomer> _customers = [
-    const BusinessCustomer(
+    BusinessCustomer(
       id: 'customer-1',
       profileId: 'customer-user-1',
       businessName: 'شركة طرابلس للحيوانات الأليفة',
@@ -638,8 +640,9 @@ class AdminRepository {
       discountPercent: 12.5,
       creditLimit: 2500,
       outstandingBalance: 420,
+      lastActiveAt: DateTime.now().subtract(const Duration(hours: 3)),
     ),
-    const BusinessCustomer(
+    BusinessCustomer(
       id: 'customer-2',
       businessName: 'شركة بنغازي للتوريدات',
       username: 'benghazi-supplies',
@@ -647,6 +650,7 @@ class AdminRepository {
       phone: '+218920000002',
       city: 'بنغازي',
       area: 'الهواري',
+      lastActiveAt: DateTime.now().subtract(const Duration(days: 1, hours: 2)),
     ),
     const BusinessCustomer(
       id: 'customer-3',
@@ -1041,9 +1045,7 @@ class AdminRepository {
       );
       _customers[index] = normalized.copyWith(updatedAt: DateTime.now());
     }
-    return index == -1
-        ? normalized
-        : _customers[index];
+    return index == -1 ? normalized : _customers[index];
   }
 
   static Map<String, dynamic> customerUpdatePayload(
@@ -1061,9 +1063,8 @@ class AdminRepository {
       'address': customer.address,
       'discount_percent':
           validatedCustomerDiscountPercent(customer.discountPercent),
-      'account_status':
-          _validatedCustomerStatus(customer.accountStatus) ??
-              customer.accountStatus,
+      'account_status': _validatedCustomerStatus(customer.accountStatus) ??
+          customer.accountStatus,
       'credit_limit': _accountAmount(customer.creditLimit),
       'outstanding_balance': _accountAmount(customer.outstandingBalance),
       if (expected != null) 'expected_updated_at': expected,
@@ -1160,8 +1161,9 @@ class AdminRepository {
     final id = customer.id == 'new' ? const Uuid().v4() : customer.id;
     final saved = customer.copyWith(id: id, accountStatus: 'active');
     await saveCustomer(saved);
-    final temporaryPassword =
-        (password?.trim().isNotEmpty ?? false) ? password!.trim() : 'Temp-92841!';
+    final temporaryPassword = (password?.trim().isNotEmpty ?? false)
+        ? password!.trim()
+        : 'Temp-92841!';
     final token = 'inv_${const Uuid().v4().substring(0, 8)}';
     final inviteLink =
         'animalsupplyb2b://invite?token=$token&client=${Uri.encodeComponent(saved.username)}';
@@ -1198,7 +1200,8 @@ class AdminRepository {
     };
   }
 
-  Future<Object?> _invokeCustomerPasswordReset(Map<String, dynamic> body) async {
+  Future<Object?> _invokeCustomerPasswordReset(
+      Map<String, dynamic> body) async {
     final client = supabaseClient;
     if (_edgeFunctionInvoker != null) {
       return _edgeFunctionInvoker(
@@ -1231,8 +1234,8 @@ class AdminRepository {
     }
     final root = _stringKeyedMap(responseData);
     final nested = _stringKeyedMap(root['data']);
-    final updated = root['password_updated'] == true ||
-        nested['password_updated'] == true;
+    final updated =
+        root['password_updated'] == true || nested['password_updated'] == true;
     if (!updated) {
       throw StateError('The customer password was not updated on the server.');
     }
@@ -1376,29 +1379,38 @@ class AdminRepository {
     _settings = settings.copyWith(updatedAt: DateTime.now());
   }
 
-  Future<List<AppBanner>> banners() => _loadBanners(includeInactive: false);
+  Future<List<AppBanner>> banners() => _loadBanners(
+        includeInactive: false,
+        includeArchived: false,
+      );
 
-  Future<List<AppBanner>> allBanners() => _loadBanners(includeInactive: true);
+  Future<List<AppBanner>> allBanners() => _loadBanners(
+        includeInactive: true,
+        includeArchived: true,
+      );
 
-  Future<List<AppBanner>> _loadBanners({required bool includeInactive}) async {
+  Future<List<AppBanner>> _loadBanners({
+    required bool includeInactive,
+    required bool includeArchived,
+  }) async {
     final client = supabaseClient;
     if (client != null) {
-      final rows = includeInactive
-          ? await client
-              .from('banners')
-              .select()
-              .order('sort_order')
-              .order('created_at')
-          : await client
-              .from('banners')
-              .select()
-              .eq('active', true)
-              .order('sort_order')
-              .order('created_at');
+      var query = client.from('banners').select();
+      if (!includeInactive) {
+        query = query.eq('active', true);
+      }
+      if (!includeArchived) {
+        query = query.isFilter('archived_at', null);
+      }
+      final rows = await query.order('sort_order').order('created_at');
       return rows.map<AppBanner>((row) => AppBanner.fromSupabase(row)).toList();
     }
     final result = _banners
-        .where((banner) => includeInactive || banner.active)
+        .where((banner) {
+          if (!includeInactive && !banner.active) return false;
+          if (!includeArchived && banner.isArchived) return false;
+          return true;
+        })
         .toList(growable: false)
       ..sort((a, b) {
         final order = a.sortOrder.compareTo(b.sortOrder);
@@ -1429,7 +1441,8 @@ class AdminRepository {
             throw const StaleWriteException();
           }
           throwIfStaleWrite(
-            current: DateTime.tryParse(existing['updated_at']?.toString() ?? ''),
+            current:
+                DateTime.tryParse(existing['updated_at']?.toString() ?? ''),
             expected: normalized.updatedAt,
           );
           saved = await client
@@ -1471,6 +1484,68 @@ class AdminRepository {
     required bool active,
   }) {
     return saveBanner(banner.copyWith(active: active));
+  }
+
+  Future<AppBanner> archiveBanner(AppBanner banner) {
+    return saveBanner(
+      banner.copyWith(
+        active: false,
+        archivedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  Future<AppBanner> restoreBanner(AppBanner banner) {
+    return saveBanner(
+      banner.copyWith(
+        active: false,
+        clearArchivedAt: true,
+      ),
+    );
+  }
+
+  /// Permanently deletes a banner. Best-effort storage cleanup runs only when
+  /// the image URL maps to `product-images/banners/...` and no other banner
+  /// still references the same URL.
+  Future<void> deleteBanner(
+    AppBanner banner, {
+    ProductImagesRepository? imagesRepository,
+  }) async {
+    final client = supabaseClient;
+    final imageUrl = banner.imageUrl.trim();
+    if (client != null) {
+      await client.from('banners').delete().eq('id', banner.id);
+    } else {
+      final index = _banners.indexWhere((item) => item.id == banner.id);
+      if (index == -1) {
+        throw StateError('Banner not found.');
+      }
+      _banners.removeAt(index);
+    }
+
+    if (imageUrl.isEmpty) return;
+    final stillUsed = client != null
+        ? ((await client
+                    .from('banners')
+                    .select('id')
+                    .eq('image_url', imageUrl)
+                    .limit(1))
+                as List)
+            .isNotEmpty
+        : _banners.any((item) => item.imageUrl.trim() == imageUrl);
+    if (stillUsed) return;
+
+    final storagePath =
+        ProductImagesRepository.bannerStoragePathFromPublicUrl(imageUrl);
+    if (storagePath == null) return;
+    final images = imagesRepository ??
+        (client == null ? null : ProductImagesRepository());
+    if (images == null) return;
+    try {
+      await images.removeByStoragePath(storagePath);
+    } catch (_) {
+      // Keep row deletion successful even if storage cleanup fails.
+    }
   }
 
   Future<AppVersionInfo> latestVersion({String platform = 'android'}) async {

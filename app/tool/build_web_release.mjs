@@ -46,10 +46,19 @@ if (!prepareOnly) {
   const flutterBinary = process.env.FLUTTER_BIN || 'flutter';
   const result = spawnSync(
     flutterBinary,
-    ['build', 'web', ...flutterArguments],
+    [
+      'build',
+      'web',
+      '--no-wasm-dry-run',
+      ...flutterArguments,
+    ],
     {
       cwd: appDirectory,
       stdio: 'inherit',
+      env: {
+        ...process.env,
+        DART_VM_OPTIONS: '--old_gen_heap_size=4096',
+      },
     },
   );
   if (result.error) {

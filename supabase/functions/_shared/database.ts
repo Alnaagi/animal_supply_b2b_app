@@ -65,6 +65,7 @@ const statusByCode: Record<string, number> = {
   INVALID_CAMPAIGN_ROLE: 422,
   NO_CAMPAIGN_RECIPIENTS: 422,
   INVALID_DEVICE_TOKEN: 422,
+  DEVICE_BINDING_RESET_FAILED: 500,
 };
 
 export function databaseError(
@@ -164,6 +165,8 @@ function humanMessage(code: string): string {
     INVALID_CAMPAIGN_ROLE: "The campaign role is invalid.",
     NO_CAMPAIGN_RECIPIENTS: "No active recipients match this audience.",
     INVALID_DEVICE_TOKEN: "The device token registration is invalid.",
+    DEVICE_BINDING_RESET_FAILED:
+      "The customer device binding could not be reset.",
   };
   return messages[code] ?? "The request could not be completed.";
 }

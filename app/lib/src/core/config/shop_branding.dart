@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/admin_models.dart';
@@ -25,8 +26,22 @@ class ShopBranding {
   }
 }
 
+Future<Uint8List?> fetchShopLogoBytes(String? logoUrl) async {
+  if (logoUrl == null || logoUrl.trim().isEmpty) return null;
+  final uri = safeHttpsUpdateUri(logoUrl.trim());
+  if (uri == null) return null;
+  try {
+    final byteData = await NetworkAssetBundle(uri).load('');
+    final bytes = byteData.buffer.asUint8List();
+    return bytes.isNotEmpty ? bytes : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 final shopBrandingProvider = Provider<ShopBranding>(
   (ref) => ShopBrandingCache.resolve(
     ref.watch(appSettingsProvider).value,
   ),
 );
+

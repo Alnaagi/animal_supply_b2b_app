@@ -21,3 +21,14 @@ Future<bool> showBrowserLocalNotification({
 }) async {
   return false;
 }
+
+Future<void> scheduleBrowserCartReminder({
+  required Duration delay,
+  required String title,
+  required String body,
+  String? tag,
+  String? target,
+}) async {}
+
+Future<void> cancelBrowserCartReminders() async {}
+

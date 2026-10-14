@@ -7,7 +7,7 @@ import '../../core/config/shop_branding.dart';
 import '../../core/refresh/screen_reload.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
-import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../core/widgets/shop_refresh_indicator.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/models/order.dart';
@@ -83,7 +83,10 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
         future: reportFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const ShopLoading.page();
+            return const ShopSkeleton(
+              semanticLabel: 'جارٍ تحميل التقارير...',
+              child: ShopReportsSkeleton(),
+            );
           }
           if (snapshot.hasError || snapshot.data == null) {
             return _ReportsLoadError(onRetry: _refresh);
@@ -148,12 +151,16 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                     ),
                     FilledButton.tonalIcon(
                       key: const Key('admin-reports-export-button'),
-                      onPressed: () => showAdminReportExportSheet(
-                        context: context,
-                        report: report,
-                        periodLabel: period.label,
-                        shopName: ref.read(shopBrandingProvider).shopName,
-                      ),
+                      onPressed: () {
+                        final branding = ref.read(shopBrandingProvider);
+                        showAdminReportExportSheet(
+                          context: context,
+                          report: report,
+                          periodLabel: period.label,
+                          shopName: branding.shopName,
+                          logoUrl: branding.logoUrl,
+                        );
+                      },
                       icon: const Icon(Icons.ios_share_outlined),
                       label: const Text('تصدير'),
                     ),
@@ -188,7 +195,7 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                           subtitle:
                               '${report.deliveredOrderCount} طلبات مسلّمة',
                           icon: Icons.payments_outlined,
-                          color: AppTheme.green,
+                          color: Theme.of(context).colorScheme.primary,
                           onTap: () => _openDetail(
                             AdminReportDetailKind.sales,
                             report,
@@ -202,7 +209,7 @@ class _AdminReportsScreenState extends ConsumerState<AdminReportsScreen> {
                           subtitle:
                               '${report.periodOrderCount} طلبات بكل الحالات',
                           icon: Icons.analytics_outlined,
-                          color: AppTheme.darkGreen,
+                          color: Theme.of(context).colorScheme.onSurface,
                           onTap: () => _openDetail(
                             AdminReportDetailKind.averageOrder,
                             report,
@@ -446,7 +453,7 @@ class _ReportMetricCard extends StatelessWidget {
                 Text(
                   'اضغط لعرض التفاصيل',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: AppTheme.green,
+                        color: Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.w800,
                       ),
                 ),
@@ -486,7 +493,7 @@ class _ReportPanel extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Icon(icon, color: AppTheme.green),
+                  Icon(icon, color: Theme.of(context).colorScheme.primary),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -500,7 +507,7 @@ class _ReportPanel extends StatelessWidget {
                   Text(
                     'التفاصيل',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: AppTheme.green,
+                          color: Theme.of(context).colorScheme.primary,
                           fontWeight: FontWeight.w800,
                         ),
                   ),

@@ -22,7 +22,8 @@ void main() {
         OrderStatus.cancelled,
       },
     );
-    expect(AdminOrderWorkflowStore.allSteps.contains(OrderStatus.pending), isFalse);
+    expect(AdminOrderWorkflowStore.allSteps.contains(OrderStatus.pending),
+        isFalse);
     for (final status in OrderStatus.values) {
       for (final next in allowedOrderTransitions(status)) {
         expect(AdminOrderWorkflowStore.allSteps.contains(next), isTrue);

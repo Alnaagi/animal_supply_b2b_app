@@ -7,6 +7,7 @@ import 'package:animal_supply_b2b/src/core/utils/formatters.dart';
 import 'package:animal_supply_b2b/src/core/widgets/product_image_placeholder.dart';
 import 'package:animal_supply_b2b/src/data/models/app_notification.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
+import 'package:animal_supply_b2b/src/data/models/admin_order_pricing.dart';
 import 'package:animal_supply_b2b/src/data/models/order.dart';
 import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:animal_supply_b2b/src/data/repositories/notifications_repository.dart';
@@ -393,6 +394,31 @@ void main() {
       _expectHorizontallyWithinViewport(tester, filterPanel, surfaceSize);
       _expectHorizontallyWithinViewport(tester, card, surfaceSize);
       expect(details, findsNothing);
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-item-peek-invoice-order'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-item-peek-image-invoice-order-0'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('x3'), findsOneWidget);
+
+      final overflowMenu = find.byKey(
+        const ValueKey('admin-order-menu-invoice-order'),
+      );
+      expect(overflowMenu, findsOneWidget);
+      final overflowRect = tester.getRect(overflowMenu);
+      expect(overflowRect.width, greaterThanOrEqualTo(44));
+      expect(overflowRect.height, greaterThanOrEqualTo(44));
+      expect(
+        overflowRect.left,
+        greaterThanOrEqualTo(tester.getRect(card).left + 4),
+      );
 
       await _tapVisible(tester, summary);
       await tester.pumpAndSettle();
@@ -419,6 +445,22 @@ void main() {
           const ValueKey('admin-order-items-compact-invoice-order'),
         ),
         findsNothing,
+      );
+      final editPricing = find.byKey(
+        const ValueKey('admin-order-edit-pricing-invoice-order'),
+      );
+      expect(editPricing, findsOneWidget);
+      expect(
+        tester.getRect(editPricing).top,
+        greaterThanOrEqualTo(
+          tester
+              .getRect(
+                find.byKey(
+                  const ValueKey('admin-order-items-wide-invoice-order'),
+                ),
+              )
+              .bottom,
+        ),
       );
       expect(find.descendant(of: invoice, matching: find.text('الصنف')),
           findsOneWidget);
@@ -596,6 +638,18 @@ void main() {
       _expectHorizontallyWithinViewport(tester, filterPanel, surfaceSize);
       _expectHorizontallyWithinViewport(tester, card, surfaceSize);
       expect(details, findsNothing);
+
+      final overflowMenu = find.byKey(
+        const ValueKey('admin-order-menu-invoice-order'),
+      );
+      expect(overflowMenu, findsOneWidget);
+      final overflowRect = tester.getRect(overflowMenu);
+      expect(overflowRect.width, greaterThanOrEqualTo(44));
+      expect(overflowRect.height, greaterThanOrEqualTo(44));
+      expect(
+        overflowRect.left,
+        greaterThanOrEqualTo(tester.getRect(card).left + 4),
+      );
 
       await _tapVisible(tester, summary);
       await tester.pumpAndSettle();
@@ -1028,10 +1082,227 @@ void main() {
         ),
         findsOneWidget,
       );
+      expect(find.text('إرسال عبر واتساب'), findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey('admin-order-whatsapp-gear-invoice-order'),
+        ),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('admin-order-copy-summary-invoice-order')),
         findsOneWidget,
       );
+      expect(
+        find.byKey(const ValueKey('admin-order-whatsapp-gear-invoice-order')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('admin-orders-whatsapp-template-gear')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'order kebab menu copies the number and expands details without clipping',
+    (tester) async {
+      const surfaceSize = Size(390, 844);
+      await tester.binding.setSurfaceSize(surfaceSize);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: _MutableOrdersRepository([_invoiceOrder()]),
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+
+      final card = find.byKey(
+        const ValueKey('admin-order-card-invoice-order'),
+      );
+      final menu = find.byKey(
+        const ValueKey('admin-order-menu-invoice-order'),
+      );
+      expect(menu, findsOneWidget);
+      final cardRect = tester.getRect(card);
+      final menuRect = tester.getRect(menu);
+      expect(menuRect.width, greaterThanOrEqualTo(44));
+      expect(menuRect.height, greaterThanOrEqualTo(44));
+      expect(menuRect.left, greaterThanOrEqualTo(cardRect.left + 4));
+      expect(menuRect.right, lessThanOrEqualTo(cardRect.right - 4));
+
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+
+      expect(find.text('عرض التفاصيل'), findsOneWidget);
+      expect(find.text('نسخ رقم الطلب'), findsOneWidget);
+      expect(find.text('نسخ ملخص الطلب'), findsOneWidget);
+      expect(find.text('نسخ رقم الهاتف'), findsOneWidget);
+      expect(find.text('إرسال عبر واتساب'), findsOneWidget);
+      expect(find.text('تعديل رسالة واتساب'), findsOneWidget);
+      expect(find.text('واتساب العميل'), findsOneWidget);
+      expect(find.text('اتصال'), findsOneWidget);
+      expect(find.text('طباعة الفاتورة'), findsOneWidget);
+      expect(find.text('تعديل التسعير'), findsOneWidget);
+      expect(find.text('إلى مؤكد'), findsOneWidget);
+      expect(find.text('إلى ملغي'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(
+            const ValueKey('admin-order-menu-copy-number-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('تم نسخ رقم الطلب'), findsOneWidget);
+
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('admin-order-menu-toggle-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('admin-order-details-invoice-order')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'per-order WhatsApp gear saves an override used when copying the summary',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: _MutableOrdersRepository([_invoiceOrder()]),
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-whatsapp-gear-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('رسالة واتساب للطلب AS-K7M4Q2P'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('admin-order-whatsapp-override-field')),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-order-whatsapp-override-field')),
+        'رسالة خاصة للطلب AS-K7M4Q2P',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('admin-order-whatsapp-override-save')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('تم حفظ رسالة واتساب لهذا الطلب.'), findsOneWidget);
+
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-copy-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      expect(copied, 'رسالة خاصة للطلب AS-K7M4Q2P');
+    },
+  );
+
+  testWidgets(
+    'global WhatsApp gear saves a template applied to orders without overrides',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await _pumpOrdersScreen(
+        tester,
+        orders: _MutableOrdersRepository([_invoiceOrder()]),
+        notifications: _MutableNotificationsRepository(const []),
+        sound: _FakeNewOrderAlertSound(),
+        autoRefreshInterval: Duration.zero,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('admin-orders-whatsapp-template-gear')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('قالب رسائل واتساب للطلبات'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const ValueKey('admin-order-whatsapp-template-field')),
+        'قالب {store_name} رقم {order_number}',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'حفظ للطلبات'));
+      await tester.pumpAndSettle();
+      expect(find.text('تم حفظ قالب واتساب على هذا الجهاز.'), findsOneWidget);
+
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('admin-order-copy-summary-invoice-order')),
+      );
+      await tester.pumpAndSettle();
+      expect(copied, 'قالب متجر الاختبار رقم AS-K7M4Q2P');
     },
   );
 
@@ -1067,7 +1338,8 @@ void main() {
     },
   );
 
-  testWidgets('invoice pricing sheet recalculates and saves through the repository',
+  testWidgets(
+      'invoice pricing sheet recalculates and saves through the repository',
       (tester) async {
     const surfaceSize = Size(390, 844);
     await tester.binding.setSurfaceSize(surfaceSize);
@@ -1131,6 +1403,48 @@ void main() {
     expect(orders.lastPricing!.deliveryFee, 4);
     expect(orders.lastPricing!.discountAmount, 1.5);
     expect(find.text('تم اعتماد تسعير الفاتورة.'), findsOneWidget);
+  });
+
+  testWidgets('invoice pricing accepts percentage discounts', (tester) async {
+    const surfaceSize = Size(390, 844);
+    await tester.binding.setSurfaceSize(surfaceSize);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final orders = _MutableOrdersRepository([_invoiceOrder()]);
+    await _pumpOrdersScreen(
+      tester,
+      orders: orders,
+      notifications: _MutableNotificationsRepository(const []),
+      sound: _FakeNewOrderAlertSound(),
+      autoRefreshInterval: Duration.zero,
+    );
+    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey('admin-order-summary-invoice-order')),
+    );
+    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey('admin-order-edit-pricing-invoice-order')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('نسبة'));
+    await tester.enterText(
+      find.byKey(const ValueKey('admin-order-discount-invoice-order')),
+      '2',
+    );
+    await tester.pump();
+    expect(find.text('نسبة الخصم'), findsOneWidget);
+    expect(find.textContaining('0.75'), findsWidgets);
+
+    await tester.tap(
+      find.byKey(const ValueKey('admin-order-save-pricing-invoice-order')),
+    );
+    await tester.pumpAndSettle();
+    expect(orders.lastPricing, isNotNull);
+    expect(orders.lastPricing!.discountAmount, 0.75);
   });
 
   testWidgets(
@@ -1430,8 +1744,11 @@ class _MutableOrdersRepository extends OrdersRepository {
   OrderStatus? lastStatus;
   List<OrderStatus>? lastStatuses;
   OrderStatus? lastTransition;
-  ({List<double> unitPrices, double deliveryFee, double discountAmount})?
-      lastPricing;
+  ({
+    List<double> unitPrices,
+    double deliveryFee,
+    double discountAmount
+  })? lastPricing;
 
   @override
   Future<OrdersPage> ordersPage({
@@ -1480,13 +1797,20 @@ class _MutableOrdersRepository extends OrdersRepository {
   @override
   Future<Order> updateOrderPricing({
     required String orderId,
-    required List<double> unitPrices,
+    List<double>? unitPrices,
+    List<AdminOrderEditItem>? items,
     required double deliveryFee,
     required double discountAmount,
+    String? adminNote,
     DateTime? expectedUpdatedAt,
   }) async {
+    final prices = unitPrices ??
+        [
+          for (final item in items ?? const <AdminOrderEditItem>[])
+            item.unitPrice,
+        ];
     lastPricing = (
-      unitPrices: unitPrices,
+      unitPrices: prices,
       deliveryFee: deliveryFee,
       discountAmount: discountAmount,
     );
@@ -1500,11 +1824,20 @@ class _MutableOrdersRepository extends OrdersRepository {
               for (var index = 0; index < order.items.length; index++)
                 if (order.items[index] is OrderItem)
                   (order.items[index] as OrderItem).copyWith(
-                    unitPrice: unitPrices[index],
+                    product: items?[index].product,
+                    productId: items?[index].product.id,
+                    productName: items?[index].product.name,
+                    productSku: items?[index].product.sku,
+                    unitSize: items?[index].product.unitSize,
+                    packageLabel: items?[index].product.effectivePackageSize,
+                    unitsPerBox: items?[index].product.unitsPerBox,
+                    quantity: items?[index].quantity,
+                    unitPrice: prices[index],
                   )
                 else
                   order.items[index],
             ],
+            adminNote: adminNote ?? order.adminNote,
           )
         else
           order,
@@ -1617,7 +1950,7 @@ Order _invoiceOrder({
   );
   return Order(
     id: 'invoice-order',
-    orderNumber: 'INV-1001',
+    orderNumber: 'AS-K7M4Q2P',
     customerId: 'customer-test',
     businessName: 'متجر الاختبار',
     contactPerson: 'أحمد الفيتوري',

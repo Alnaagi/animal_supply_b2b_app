@@ -9,11 +9,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/config/shop_branding.dart';
-import '../../core/theme/app_theme.dart';
 import '../../core/updates/download_page_links.dart';
 import '../../core/updates/update_link.dart';
 import '../../core/widgets/shop_brand_logo.dart';
-import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
 
@@ -127,7 +126,10 @@ class AppDownloadScreen extends ConsumerWidget {
       ),
       body: SafeArea(
         child: data.when(
-          loading: () => const ShopLoading.page(),
+          loading: () => const ShopSkeleton(
+            semanticLabel: 'جارٍ تحميل صفحة التطبيق...',
+            child: ShopDownloadSkeleton(),
+          ),
           error: (_, __) => _DownloadLoadError(
             onRetry: () => ref.invalidate(downloadPageDataProvider),
           ),
@@ -182,8 +184,10 @@ class _DownloadPageContent extends StatelessWidget {
                   child: ShopBrandLogo(
                     logoUrl: branding.logoUrl,
                     size: 72,
-                    backgroundColor: const Color(0xffe3f3eb),
-                    fallbackIconColor: AppTheme.green,
+                    backgroundColor:
+                        Theme.of(context).colorScheme.primaryContainer,
+                    fallbackIconColor:
+                        Theme.of(context).colorScheme.primary,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -255,15 +259,18 @@ class _DownloadPageContent extends StatelessWidget {
                   shopName: branding.shopName,
                 ),
                 const SizedBox(height: 20),
-                const Card(
+                Card(
                   child: Padding(
-                    padding: EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(16),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(Icons.security_outlined, color: AppTheme.green),
-                        SizedBox(width: 10),
-                        Expanded(
+                        Icon(
+                          Icons.security_outlined,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 10),
+                        const Expanded(
                           child: Text(
                             'تنبيه أمني: المتجر لا يرسل كلمة المرور داخل رابط '
                             'أو QR. رابط الدعوة يحتوي رمزاً لمرة واحدة فقط، '
@@ -314,8 +321,12 @@ class _PlatformDownloadCard extends StatelessWidget {
             Row(
               children: [
                 CircleAvatar(
-                  backgroundColor: AppTheme.green.withValues(alpha: .12),
-                  child: Icon(icon, color: AppTheme.green),
+                  backgroundColor:
+                      Theme.of(context).colorScheme.primary.withValues(alpha: .12),
+                  child: Icon(
+                    icon,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(

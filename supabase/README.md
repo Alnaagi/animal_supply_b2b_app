@@ -265,6 +265,7 @@ supabase functions deploy place-order
 supabase functions deploy transition-order-status
 supabase functions deploy register-device-token
 supabase functions deploy unregister-device-token
+supabase functions deploy admin-reset-customer-device-binding
 supabase functions deploy send-notification-campaign
 supabase functions deploy dispatch-notification-outbox
 supabase functions deploy send-admin-notification

@@ -14,18 +14,20 @@ class ShopBrandingCache {
   static const namePrefsKey = 'shop_branding.shop_name.v1';
   static const logoPrefsKey = 'shop_branding.logo_url.v1';
 
-  static ShopBranding _current = ShopBranding(shopName: AppConfig.shopName);
+  static ShopBranding _current =
+      const ShopBranding(shopName: AppConfig.shopName);
   static bool _optimistic = false;
 
   static ShopBranding get current => _current;
 
   static void resetForTest() {
-    _current = ShopBranding(shopName: AppConfig.shopName);
+    _current = const ShopBranding(shopName: AppConfig.shopName);
     _optimistic = false;
   }
 
   static Future<void> load() async {
     final fromDocument = readCachedShopDocumentTitle()?.trim() ?? '';
+    final fromDocLogo = readCachedShopLogo()?.trim() ?? '';
     String? name;
     String? logo;
     try {
@@ -37,12 +39,15 @@ class ShopBrandingCache {
     final resolvedName = (name != null && name.isNotEmpty)
         ? name
         : (fromDocument.isNotEmpty ? fromDocument : AppConfig.shopName);
-    final resolvedLogo = (logo == null || logo.isEmpty)
+    final rawLogo = (logo != null && logo.isNotEmpty)
+        ? logo
+        : (fromDocLogo.isNotEmpty ? fromDocLogo : null);
+    final resolvedLogo = (rawLogo == null || rawLogo.isEmpty)
         ? null
-        : safeHttpsUpdateUri(logo)?.toString();
+        : safeHttpsUpdateUri(rawLogo)?.toString();
     _current = ShopBranding(shopName: resolvedName, logoUrl: resolvedLogo);
     _optimistic = false;
-    applyShopDocumentTitle(_current.shopName);
+    applyShopWebBranding(_current.shopName, _current.logoUrl);
   }
 
   static void rememberSaved(ShopBranding branding) {
@@ -70,10 +75,10 @@ class ShopBrandingCache {
         ? AppConfig.shopName
         : branding.shopName.trim();
     final next = ShopBranding(shopName: nextName, logoUrl: branding.logoUrl);
-    final changed = next.shopName != _current.shopName ||
-        next.logoUrl != _current.logoUrl;
+    final changed =
+        next.shopName != _current.shopName || next.logoUrl != _current.logoUrl;
     _current = next;
-    applyShopDocumentTitle(_current.shopName);
+    applyShopWebBranding(_current.shopName, _current.logoUrl);
     if (changed) unawaited(_persist());
   }
 

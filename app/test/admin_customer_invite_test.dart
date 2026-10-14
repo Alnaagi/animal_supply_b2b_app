@@ -95,7 +95,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('admin-customers-invite-template-gear')));
+    await tester
+        .tap(find.byKey(const Key('admin-customers-invite-template-gear')));
     await tester.pumpAndSettle();
     expect(find.text('نص دعوة واتساب الافتراضي'), findsOneWidget);
 
@@ -108,7 +109,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.textContaining('تم حفظ نص الدعوة'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('admin-customer-menu-customer-invite')));
+    await tester
+        .tap(find.byKey(const ValueKey('admin-customer-menu-customer-invite')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('رسالة ترحيب ورابط الدخول عبر واتساب'));
@@ -153,7 +155,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('admin-customer-menu-customer-invite')));
+    await tester
+        .tap(find.byKey(const ValueKey('admin-customer-menu-customer-invite')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('رسالة ترحيب ورابط الدخول عبر واتساب'));

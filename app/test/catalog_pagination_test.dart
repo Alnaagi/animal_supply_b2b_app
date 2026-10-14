@@ -1,6 +1,11 @@
+import 'dart:async';
+
+import 'package:animal_supply_b2b/src/core/widgets/customer_product_summary.dart';
 import 'package:animal_supply_b2b/src/data/local/local_cache.dart';
+import 'package:animal_supply_b2b/src/data/local/catalog_view_mode_store.dart';
 import 'package:animal_supply_b2b/src/data/models/app_user.dart';
 import 'package:animal_supply_b2b/src/data/models/product.dart';
+import 'package:animal_supply_b2b/src/data/models/product_category.dart';
 import 'package:animal_supply_b2b/src/data/repositories/catalog_repository.dart';
 import 'package:animal_supply_b2b/src/features/admin_products/admin_products_screen.dart';
 import 'package:animal_supply_b2b/src/features/auth/auth_controller.dart';
@@ -167,6 +172,50 @@ void main() {
     });
   });
 
+  testWidgets('catalog initial loading uses an RTL skeleton at 338px',
+      (tester) async {
+    tester.view.physicalSize = const Size(338, 838);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _PendingCatalogRepository();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          catalogRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(disableAnimations: true),
+            child: Directionality(
+              textDirection: TextDirection.rtl,
+              child: Scaffold(body: CatalogScreen()),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final skeleton = find.byKey(const ValueKey('catalog-initial-skeleton'));
+    expect(skeleton, findsOneWidget);
+    expect(find.byKey(const Key('shop-skeleton')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('catalog-skeleton-card-0')),
+      findsOneWidget,
+    );
+    expect(
+      Directionality.of(tester.element(skeleton)),
+      TextDirection.rtl,
+    );
+    expect(tester.takeException(), isNull);
+
+    repository.complete();
+    await tester.pump();
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('customer catalog loads more in Arabic with one snapshot',
       (tester) async {
     final repository = _ScreenCatalogRepository(
@@ -245,8 +294,155 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('بيع الوحدة المقترح'), findsOneWidget);
+    expect(find.text('سعر الجملة'), findsOneWidget);
+    expect(find.textContaining(CustomerProductCardCopy.retail), findsOneWidget);
+    expect(find.textContaining('متوفر'), findsNothing);
     expect(find.textContaining('50.00'), findsNothing);
+  });
+
+  testWidgets('catalog view mode switch persists locally', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      CatalogViewModeStore.compactStorageKey: CatalogViewMode.grid.storageValue,
+    });
+    final repository = _ScreenCatalogRepository(
+      firstPage: [
+        _product(id: 'persist-1', name: 'منتج حفظ النمط'),
+      ],
+      secondPage: const [],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          catalogRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Scaffold(body: CatalogScreen()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('catalog-grid-view')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('catalog-view-mode-compact')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('catalog-compact-view')), findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getString(CatalogViewModeStore.compactStorageKey),
+      CatalogViewMode.compact.storageValue,
+    );
+  });
+
+  test('catalog view preferences stay separate across phone and desktop',
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+    final store = CatalogViewModeStore(prefs: prefs);
+
+    expect(
+      await store.save(
+        CatalogViewMode.comfortable,
+        scope: CatalogViewModeScope.compact,
+      ),
+      isTrue,
+    );
+    expect(
+      await store.save(
+        CatalogViewMode.grid,
+        scope: CatalogViewModeScope.expanded,
+      ),
+      isTrue,
+    );
+
+    expect(
+      await store.load(
+        fallbackMode: CatalogViewMode.grid,
+        scope: CatalogViewModeScope.compact,
+      ),
+      CatalogViewMode.comfortable,
+    );
+    expect(
+      await store.load(
+        fallbackMode: CatalogViewMode.comfortable,
+        scope: CatalogViewModeScope.expanded,
+      ),
+      CatalogViewMode.grid,
+    );
+  });
+
+  testWidgets('desktop catalog groups controls and uses four product columns',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({
+      CatalogViewModeStore.expandedStorageKey:
+          CatalogViewMode.grid.storageValue,
+    });
+    final prefs = await SharedPreferences.getInstance();
+    final viewModeStore = CatalogViewModeStore(prefs: prefs);
+    final repository = _ScreenCatalogRepository(
+      firstPage: [
+        for (var index = 0; index < 4; index++)
+          _product(
+            id: 'desktop-$index',
+            name: 'منتج سطح المكتب $index',
+          ),
+      ],
+      secondPage: const [],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          catalogRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Scaffold(
+              body: CatalogScreen(viewModeStore: viewModeStore),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('catalog-toolbar-desktop')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('catalog-toolbar-mobile')),
+      findsNothing,
+    );
+    expect(
+      MediaQuery.sizeOf(tester.element(find.byType(CatalogScreen))).width,
+      1280,
+    );
+    expect(
+      find.byKey(const ValueKey('catalog-grid-view')),
+      findsOneWidget,
+      reason:
+          'comfortable=${find.byKey(const ValueKey('catalog-comfortable-view')).evaluate().length}, '
+          'compact=${find.byKey(const ValueKey('catalog-compact-view')).evaluate().length}, '
+          'count=${find.byKey(const ValueKey('catalog-visible-product-count')).evaluate().length}',
+    );
+    final grid = tester.widget<GridView>(
+      find.byKey(const ValueKey('catalog-grid-view')),
+    );
+    final delegate =
+        grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
+    expect(delegate.crossAxisCount, 4);
+    expect(find.byType(ProductGridCard), findsNWidgets(4));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('admin product list pages inactive-capable results safely',
@@ -477,6 +673,58 @@ class _ScreenCatalogRepository extends CatalogRepository {
       brands: ['المورد'],
       animalTypes: ['أغنام'],
       unitSizes: ['25 كجم'],
+    );
+  }
+}
+
+class _PendingCatalogRepository extends CatalogRepository {
+  _PendingCatalogRepository() : super.demo(seed: const []);
+
+  final Completer<CatalogPage> _page = Completer<CatalogPage>();
+
+  @override
+  Future<CatalogPage> productsPage({
+    String query = '',
+    String? category,
+    String? brand,
+    String? animalType,
+    String? unitSize,
+    double? minimumPrice,
+    double? maximumPrice,
+    String availability = 'all',
+    bool includeInactive = false,
+    DateTime? snapshotAt,
+    int offset = 0,
+    int pageSize = CatalogRepository.defaultPageSize,
+  }) {
+    return _page.future;
+  }
+
+  @override
+  Future<List<ProductCategory>> productCategories({
+    bool includeArchived = false,
+  }) async {
+    return const [];
+  }
+
+  @override
+  Future<CatalogFilterOptions> filterOptions({
+    bool includeInactive = false,
+  }) async {
+    return const CatalogFilterOptions();
+  }
+
+  void complete() {
+    if (_page.isCompleted) return;
+    _page.complete(
+      CatalogPage(
+        products: const [],
+        hasMore: false,
+        nextOffset: 0,
+        snapshotAt: DateTime.utc(2026, 8, 25),
+        source: CatalogPageSource.remote,
+        offlineSnapshotCount: 0,
+      ),
     );
   }
 }

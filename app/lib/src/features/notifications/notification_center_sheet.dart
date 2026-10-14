@@ -10,7 +10,7 @@ import '../../core/notifications/browser_local_notifications.dart';
 import '../../core/notifications/notification_day_groups.dart';
 import '../../core/notifications/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/widgets/shop_loading.dart';
+import '../../core/widgets/shop_skeleton.dart';
 import '../../data/models/app_notification.dart';
 import '../../data/repositories/notifications_repository.dart';
 import '../auth/auth_controller.dart';
@@ -150,11 +150,13 @@ class _NotificationCenterSheetState
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
-            child: Row(
-              children: [
-                const Icon(Icons.notifications_active_outlined,
-                    color: AppTheme.green),
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+              child: Row(
+                children: [
+                Icon(
+                  Icons.notifications_active_outlined,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -195,7 +197,46 @@ class _NotificationCenterSheetState
                 if (snapshot.connectionState == ConnectionState.waiting &&
                     !snapshot.hasData &&
                     !snapshot.hasError) {
-                  return const ShopLoading.section();
+                  return ShopSkeleton(
+                    semanticLabel: 'جارٍ تحميل الإشعارات...',
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          for (var i = 0; i < 4; i++)
+                            const ShopSkeletonCard(
+                              margin: EdgeInsets.only(bottom: 10),
+                              padding: EdgeInsets.all(12),
+                              child: Row(
+                                children: [
+                                  ShopSkeletonCircle(size: 36),
+                                  SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        ShopSkeletonBox(
+                                          width: 120,
+                                          height: 14,
+                                          borderRadius: 5,
+                                        ),
+                                        SizedBox(height: 6),
+                                        ShopSkeletonBox(
+                                          width: double.infinity,
+                                          height: 12,
+                                          borderRadius: 4,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
                 }
                 if (snapshot.hasError && snapshot.data == null) {
                   return _NotificationMessage(
@@ -240,13 +281,12 @@ class _NotificationCenterSheetState
                         padding: const EdgeInsets.fromLTRB(4, 8, 4, 2),
                         child: Text(
                           entry,
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleSmall
-                              ?.copyWith(
-                                color: AppTheme.darkGreen,
-                                fontWeight: FontWeight.w900,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.titleSmall?.copyWith(
+                                    color:
+                                        Theme.of(context).colorScheme.onSurface,
+                                    fontWeight: FontWeight.w900,
+                                  ),
                         ),
                       );
                     }
@@ -254,14 +294,17 @@ class _NotificationCenterSheetState
                     return Card(
                       color: notification.isRead
                           ? Colors.white
-                          : AppTheme.green.withValues(alpha: .08),
+                          : Theme.of(context)
+                              .colorScheme
+                              .primary
+                              .withValues(alpha: .08),
                       child: ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: _colorFor(notification.type)
+                          backgroundColor: _colorFor(context, notification.type)
                               .withValues(alpha: .12),
                           child: Icon(
                             _iconFor(notification.type),
-                            color: _colorFor(notification.type),
+                            color: _colorFor(context, notification.type),
                           ),
                         ),
                         title: Text(
@@ -293,19 +336,23 @@ class _NotificationCenterSheetState
   }
 
   IconData _iconFor(String type) => switch (type) {
-        'new_order' || 'order_status' || 'order_status_changed' =>
+        'new_order' ||
+        'order_status' ||
+        'order_status_changed' =>
           Icons.receipt_long_outlined,
         'product_campaign' || 'promotion' => Icons.local_offer_outlined,
         'account' => Icons.manage_accounts_outlined,
         _ => Icons.notifications_outlined,
       };
 
-  Color _colorFor(String type) => switch (type) {
-        'new_order' || 'order_status' || 'order_status_changed' =>
-          AppTheme.green,
+  Color _colorFor(BuildContext context, String type) => switch (type) {
+        'new_order' ||
+        'order_status' ||
+        'order_status_changed' =>
+          Theme.of(context).colorScheme.primary,
         'product_campaign' || 'promotion' => AppTheme.orange,
         'account' => AppTheme.brown,
-        _ => AppTheme.darkGreen,
+        _ => Theme.of(context).colorScheme.onSurface,
       };
 }
 
@@ -330,7 +377,11 @@ class _NotificationMessage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 56, color: AppTheme.green),
+            Icon(
+              icon,
+              size: 56,
+              color: Theme.of(context).colorScheme.primary,
+            ),
             const SizedBox(height: 12),
             Text(
               title,

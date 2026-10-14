@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../config/shop_branding.dart';
 import '../localization/arabic_copy.dart';
-import '../theme/app_theme.dart';
 import 'shop_brand_logo.dart';
 
 enum ShopLoadingLayout { page, section, compact, banner }
@@ -79,7 +78,7 @@ class ShopLoading extends StatelessWidget {
         key: const Key('shop-loading-compact'),
         child: ShopPawSpinner(
           size: size ?? 18,
-          color: color ?? (light ? Colors.white : AppTheme.green),
+          color: color ?? (light ? Colors.white : null),
           showBrandMark: false,
           light: light,
         ),
@@ -116,7 +115,8 @@ class _ShopLoadingBranded extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final branding = ref.watch(shopBrandingProvider);
-    final tone = color ?? (light ? Colors.white : AppTheme.green);
+    final scheme = Theme.of(context).colorScheme;
+    final tone = color ?? (light ? Colors.white : scheme.primary);
     final spinner = ShopPawSpinner(
       size: size ??
           switch (layout) {
@@ -139,13 +139,14 @@ class _ShopLoadingBranded extends ConsumerWidget {
           ShopLoadingLayout.compact =>
             ArabicCopy.sectionLoading,
         };
-    final nameColor = light ? Colors.white : AppTheme.darkGreen;
-    final copyColor = light ? const Color(0xffd7efe4) : AppTheme.darkGreen;
+    final nameColor = light ? Colors.white : scheme.onSurface;
+    final copyColor =
+        light ? scheme.onPrimary.withValues(alpha: .82) : scheme.onSurfaceVariant;
 
     if (layout == ShopLoadingLayout.banner) {
       return Material(
         key: const Key('shop-loading-banner'),
-        color: AppTheme.green.withValues(alpha: 0.10),
+        color: scheme.primary.withValues(alpha: 0.10),
         elevation: 0,
         borderRadius: BorderRadius.circular(22),
         child: Padding(
@@ -217,7 +218,7 @@ class _ShopLoadingBranded extends ConsumerWidget {
 class ShopPawSpinner extends StatefulWidget {
   const ShopPawSpinner({
     this.size = 56,
-    this.color = AppTheme.green,
+    this.color,
     this.logoUrl,
     this.showBrandMark = true,
     this.light = false,
@@ -225,7 +226,7 @@ class ShopPawSpinner extends StatefulWidget {
   });
 
   final double size;
-  final Color color;
+  final Color? color;
   final String? logoUrl;
   final bool showBrandMark;
   final bool light;
@@ -237,6 +238,7 @@ class ShopPawSpinner extends StatefulWidget {
 class _ShopPawSpinnerState extends State<ShopPawSpinner>
     with SingleTickerProviderStateMixin {
   late final AnimationController _motion;
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -244,7 +246,25 @@ class _ShopPawSpinnerState extends State<ShopPawSpinner>
     _motion = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
-    )..repeat();
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context) ||
+        MediaQuery.accessibleNavigationOf(context);
+    if (reduceMotion == _reduceMotion && _motion.isAnimating == !reduceMotion) {
+      return;
+    }
+    _reduceMotion = reduceMotion;
+    if (reduceMotion) {
+      _motion
+        ..stop()
+        ..value = 0;
+    } else if (!_motion.isAnimating) {
+      _motion.repeat();
+    }
   }
 
   @override
@@ -256,6 +276,7 @@ class _ShopPawSpinnerState extends State<ShopPawSpinner>
   @override
   Widget build(BuildContext context) {
     final size = widget.size;
+    final tone = widget.color ?? Theme.of(context).colorScheme.primary;
     final markSize = size >= 56 ? size * 0.58 : size * 0.72;
     return Semantics(
       label: ArabicCopy.screenLoading,
@@ -263,6 +284,7 @@ class _ShopPawSpinnerState extends State<ShopPawSpinner>
         child: SizedBox.square(
           dimension: size,
           child: AnimatedBuilder(
+            key: const Key('shop-paw-spinner-motion'),
             animation: _motion,
             builder: (context, child) {
               final t = _motion.value;
@@ -277,7 +299,7 @@ class _ShopPawSpinnerState extends State<ShopPawSpinner>
                       size: Size.square(size),
                       painter: _PawOrbitPainter(
                         progress: t,
-                        color: widget.color,
+                        color: tone,
                       ),
                     ),
                   ),
@@ -294,13 +316,13 @@ class _ShopPawSpinnerState extends State<ShopPawSpinner>
                     size: markSize,
                     backgroundColor: widget.light
                         ? Colors.white.withValues(alpha: 0.12)
-                        : const Color(0xffe3f3eb),
+                        : Theme.of(context).colorScheme.primaryContainer,
                     fallbackIconColor:
-                        widget.light ? Colors.white : widget.color,
+                        widget.light ? Colors.white : tone,
                   )
                 : CustomPaint(
                     size: Size.square(markSize),
-                    painter: _PawPrintPainter(color: widget.color),
+                    painter: _PawPrintPainter(color: tone),
                   ),
           ),
         ),

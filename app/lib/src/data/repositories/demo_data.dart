@@ -28,6 +28,7 @@ bool matchesDemoLoginCredentials(String identifier, String password) {
           (demoPhone != null && demoPhone == customerPhone)) &&
       password == demoCustomerPassword;
 }
+
 const demoCustomer = AppUser(
   id: 'customer-user-1',
   username: 'tripoli-pets',
@@ -956,6 +957,9 @@ final demoProducts = _demoProductsRaw
     .map(
       (product) => product.copyWith(
         effectivePrice: _demoCustomerPrice(product.basePrice),
+        // Demo effective prices already include the customer discount.
+        // Keep product offers disabled here to avoid applying a second discount.
+        discountPercent: 0,
         retailUnitPrice: _suggestedDemoRetailPrice(product.basePrice),
       ),
     )
@@ -963,40 +967,40 @@ final demoProducts = _demoProductsRaw
 
 final demoOrders = <Order>[
   Order(
-      id: 'o1001',
-      customerId: 'customer-1',
-      status: OrderStatus.pending,
-      items: [
-        CartItem(product: demoProducts[0], quantity: 2),
-        CartItem(product: demoProducts[1], quantity: 4)
-      ],
-      createdAt: DateTime.now().subtract(const Duration(days: 1)),
-      customerNote: 'يفضل التسليم صباحاً.',
-      customerDefaultAddress: Order.composeCustomerAddress(
-        city: demoCustomer.city,
-        area: demoCustomer.area,
-        address: demoCustomer.address,
-      ),
-      contactPhone: demoCustomer.phone ?? '',
-      businessName: demoCustomer.businessName ?? '',
-      contactPerson: demoCustomer.fullName ?? '',
+    id: 'o1001',
+    customerId: 'customer-1',
+    status: OrderStatus.pending,
+    items: [
+      CartItem(product: demoProducts[0], quantity: 2),
+      CartItem(product: demoProducts[1], quantity: 4)
+    ],
+    createdAt: DateTime.now().subtract(const Duration(days: 1)),
+    customerNote: 'يفضل التسليم صباحاً.',
+    customerDefaultAddress: Order.composeCustomerAddress(
+      city: demoCustomer.city,
+      area: demoCustomer.area,
+      address: demoCustomer.address,
+    ),
+    contactPhone: demoCustomer.phone ?? '',
+    businessName: demoCustomer.businessName ?? '',
+    contactPerson: demoCustomer.fullName ?? '',
   ),
   Order(
-      id: 'o1002',
-      customerId: 'customer-1',
-      status: OrderStatus.delivered,
-      items: [
-        CartItem(product: demoProducts[5], quantity: 2),
-        CartItem(product: demoProducts[6], quantity: 6)
-      ],
-      createdAt: DateTime.now().subtract(const Duration(days: 7)),
-      customerDefaultAddress: Order.composeCustomerAddress(
-        city: demoCustomer.city,
-        area: demoCustomer.area,
-        address: demoCustomer.address,
-      ),
-      contactPhone: demoCustomer.phone ?? '',
-      businessName: demoCustomer.businessName ?? '',
-      contactPerson: demoCustomer.fullName ?? '',
+    id: 'o1002',
+    customerId: 'customer-1',
+    status: OrderStatus.delivered,
+    items: [
+      CartItem(product: demoProducts[5], quantity: 2),
+      CartItem(product: demoProducts[6], quantity: 6)
+    ],
+    createdAt: DateTime.now().subtract(const Duration(days: 7)),
+    customerDefaultAddress: Order.composeCustomerAddress(
+      city: demoCustomer.city,
+      area: demoCustomer.area,
+      address: demoCustomer.address,
+    ),
+    contactPhone: demoCustomer.phone ?? '',
+    businessName: demoCustomer.businessName ?? '',
+    contactPerson: demoCustomer.fullName ?? '',
   ),
 ];

@@ -154,6 +154,45 @@ bool _showViaNotificationConstructor(
   }
 }
 
+Future<void> scheduleBrowserCartReminder({
+  required Duration delay,
+  required String title,
+  required String body,
+  String? tag,
+  String? target,
+}) async {
+  if (readBrowserLocalNotificationPermission() !=
+      BrowserNotificationPermission.granted) {
+    return;
+  }
+  final safeTag = (tag ?? '').trim();
+  final safeTarget = _safeTarget(target);
+  try {
+    if (!web.window.navigator.has('serviceWorker')) return;
+    final worker = web.window.navigator.serviceWorker.controller;
+    if (worker == null) return;
+    final message = JSObject()
+      ..setProperty('type'.toJS, 'SCHEDULE_CART_REMINDER'.toJS)
+      ..setProperty('delayMs'.toJS, delay.inMilliseconds.toJS)
+      ..setProperty('title'.toJS, title.toJS)
+      ..setProperty('body'.toJS, body.toJS)
+      ..setProperty('tag'.toJS, safeTag.toJS)
+      ..setProperty('target'.toJS, safeTarget.toJS);
+    worker.postMessage(message);
+  } catch (_) {}
+}
+
+Future<void> cancelBrowserCartReminders() async {
+  try {
+    if (!web.window.navigator.has('serviceWorker')) return;
+    final worker = web.window.navigator.serviceWorker.controller;
+    if (worker == null) return;
+    final message = JSObject()
+      ..setProperty('type'.toJS, 'CANCEL_CART_REMINDERS'.toJS);
+    worker.postMessage(message);
+  } catch (_) {}
+}
+
 String _safeTarget(String? value) {
   final target = (value ?? '').trim();
   if (target.isEmpty ||

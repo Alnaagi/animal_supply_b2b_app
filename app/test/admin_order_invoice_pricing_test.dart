@@ -7,7 +7,8 @@ import 'package:animal_supply_b2b/src/data/models/product.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('invoice HTML uses the effective delivery address and customer note', () {
+  test('invoice HTML uses the effective delivery address and customer note',
+      () {
     final html = AdminOrderInvoiceHtml.build(
       order: _order(deliveryAddress: ''),
       shopName: 'متجر الأعلاف',
@@ -64,6 +65,82 @@ void main() {
         discountAmount: 0,
       ),
       throwsA(isA<AdminOrderPricingException>()),
+    );
+  });
+
+  test('full order edit changes product, quantity, price, and admin note', () {
+    const replacement = Product(
+      id: 'hay',
+      nameAr: 'تبن مضغوط',
+      sku: 'HAY-1',
+      category: 'أعلاف',
+      animalType: 'أغنام',
+      brand: 'اختبار',
+      unitSize: '25 كجم',
+      basePrice: 14,
+      stockQuantity: 50,
+      minOrderQty: 2,
+    );
+    final edited = AdminOrderPricing.applyOrderEdit(
+      order: _order(),
+      items: const [
+        AdminOrderEditItem(
+          id: 'line-1',
+          product: replacement,
+          quantity: 4,
+          unitPrice: 18,
+        ),
+      ],
+      deliveryFee: 6,
+      discountAmount: 4,
+      adminNote: 'تم تعديل الكمية من الإدارة',
+    );
+
+    expect(edited.items.single.productId, 'hay');
+    expect(edited.items.single.productName, 'تبن مضغوط');
+    expect(edited.items.single.quantity, 4);
+    expect(edited.items.single.lineTotal, 72);
+    expect(edited.subtotal, 72);
+    expect(edited.deliveryFee, 6);
+    expect(edited.discountAmount, 4);
+    expect(edited.total, 79);
+    expect(edited.adminNote, 'تم تعديل الكمية من الإدارة');
+  });
+
+  test('full order edit enforces replacement product minimum quantity', () {
+    const replacement = Product(
+      id: 'hay',
+      nameAr: 'تبن مضغوط',
+      sku: 'HAY-1',
+      category: 'أعلاف',
+      animalType: 'أغنام',
+      brand: 'اختبار',
+      unitSize: '25 كجم',
+      basePrice: 14,
+      stockQuantity: 50,
+      minOrderQty: 5,
+    );
+    expect(
+      () => AdminOrderPricing.applyOrderEdit(
+        order: _order(),
+        items: const [
+          AdminOrderEditItem(
+            id: 'line-1',
+            product: replacement,
+            quantity: 2,
+            unitPrice: 18,
+          ),
+        ],
+        deliveryFee: 0,
+        discountAmount: 0,
+      ),
+      throwsA(
+        isA<AdminOrderPricingException>().having(
+          (error) => error.code,
+          'code',
+          'MINIMUM_QUANTITY_NOT_MET',
+        ),
+      ),
     );
   });
 }

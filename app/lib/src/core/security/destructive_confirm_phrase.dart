@@ -4,8 +4,7 @@
 class DestructiveConfirmPhrase {
   static const requiredPhrase = 'RESET';
 
-  static const instructionsAr =
-      'اكتب RESET بأحرف إنجليزية كبيرة (CAPS). '
+  static const instructionsAr = 'اكتب RESET بأحرف إنجليزية كبيرة (CAPS). '
       'كلمة reset الصغيرة غير مقبولة، والعربية لا تملك أحرفاً كبيرة.';
 
   static const mismatchAr =

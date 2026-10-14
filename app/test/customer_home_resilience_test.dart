@@ -107,10 +107,20 @@ void main() {
     );
     await tester.pumpAndSettle();
     final homeScroll = find.byKey(const Key('customer-home-scroll'));
-    await tester.drag(homeScroll, const Offset(0, -700));
+    await tester.drag(homeScroll, const Offset(0, -1200));
     await tester.pumpAndSettle();
+    final reorder = find.byKey(const Key('customer-home-reorder-action'));
+    await tester.ensureVisible(reorder);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: reorder,
+        matching: find.byIcon(Icons.add_shopping_cart_rounded),
+      ),
+      findsOneWidget,
+    );
 
-    await tester.tap(find.text('إعادة الطلب'));
+    await tester.tap(reorder);
     await tester.pumpAndSettle();
 
     expect(find.text('صفحة السلة'), findsOneWidget);
@@ -154,11 +164,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.drag(
       find.byKey(const Key('customer-home-scroll')),
-      const Offset(0, -700),
+      const Offset(0, -1200),
     );
     await tester.pumpAndSettle();
+    final reorder = find.byKey(const Key('customer-home-reorder-action'));
+    await tester.ensureVisible(reorder);
+    await tester.pumpAndSettle();
 
-    await tester.tap(find.text('إعادة الطلب'));
+    await tester.tap(reorder);
     await tester.pumpAndSettle();
 
     expect(container.read(cartControllerProvider), isEmpty);

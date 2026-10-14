@@ -53,7 +53,20 @@ export default {
       );
     }
 
-    let response = await env.ASSETS.fetch(request);
+    const androidManifestRequest =
+      request.method === 'GET' &&
+      url.pathname === '/manifest.json' &&
+      isAndroidRequest(request);
+    const assetRequest = androidManifestRequest
+      ? withoutConditionalHeaders(request)
+      : request;
+    let response = await env.ASSETS.fetch(assetRequest);
+    if (
+      androidManifestRequest &&
+      response.ok
+    ) {
+      response = await androidBrowserOnlyManifest(response);
+    }
     if (response.status === 404 && isClientRoute(request, url)) {
       const indexUrl = new URL('/', url);
       response = await env.ASSETS.fetch(
@@ -74,6 +87,39 @@ function isLocalHostname(hostname) {
     hostname === '127.0.0.1' ||
     hostname === '[::1]'
   );
+}
+
+function isAndroidRequest(request) {
+  return /\bAndroid\b/i.test(request.headers.get('User-Agent') ?? '');
+}
+
+function withoutConditionalHeaders(request) {
+  const headers = new Headers(request.headers);
+  headers.delete('If-Modified-Since');
+  headers.delete('If-None-Match');
+  return new Request(request, { headers });
+}
+
+async function androidBrowserOnlyManifest(response) {
+  try {
+    const manifest = await response.json();
+    manifest.display = 'browser';
+    manifest.icons = [];
+    manifest.prefer_related_applications = false;
+
+    const headers = new Headers(response.headers);
+    headers.delete('ETag');
+    headers.set('Content-Type', 'application/manifest+json; charset=utf-8');
+    headers.set('Vary', 'User-Agent');
+    headers.set('X-Android-Install-Mode', 'browser-only');
+    return new Response(JSON.stringify(manifest), {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  } catch {
+    return response;
+  }
 }
 
 function isClientRoute(request, url) {

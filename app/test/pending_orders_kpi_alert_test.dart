@@ -49,7 +49,8 @@ void main() {
     expect(state.shouldHighlight, isTrue);
   });
 
-  test('opening orders before the first count still calms the next observe', () {
+  test('opening orders before the first count still calms the next observe',
+      () {
     var state = logic.acknowledge(const PendingOrdersKpiAlertState());
     expect(state.ackOnNextObserve, isTrue);
     expect(state.shouldHighlight, isFalse);
@@ -128,7 +129,8 @@ void main() {
       TextDirection.rtl,
     );
 
-    await tester.tap(find.byKey(const Key('admin-dashboard-pending-orders-card')));
+    await tester
+        .tap(find.byKey(const Key('admin-dashboard-pending-orders-card')));
     await tester.pumpAndSettle();
 
     expect(find.text('إدارة الطلبات'), findsOneWidget);

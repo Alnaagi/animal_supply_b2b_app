@@ -16,6 +16,5 @@ class ArabicCopy {
   static const sessionRestore = 'جار التحقق من جلسة الدخول...';
   static const contactAdminForPassword =
       'يرجى التواصل مع إدارة المتجر لإعادة تعيين كلمة المرور.';
-  static const staleWrite =
-      'تم تحديث هذا العنصر من جهاز آخر. أعد التحميل.';
+  static const staleWrite = 'تم تحديث هذا العنصر من جهاز آخر. أعد التحميل.';
 }

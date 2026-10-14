@@ -12,7 +12,11 @@ import {
   stringField,
   successResponse,
 } from "../_shared/http.ts";
-import { consumeRateLimit } from "../_shared/security.ts";
+import {
+  consumeRateLimit,
+  sha256Hex,
+  validatedInstallationId,
+} from "../_shared/security.ts";
 
 serve(async (req) => {
   try {
@@ -41,6 +45,23 @@ serve(async (req) => {
       );
     }
     const deviceId = optionalStringField(body, "device_id", 200);
+    const installationIdRaw = Object.prototype.hasOwnProperty.call(
+        body,
+        "installation_id",
+      )
+      ? validatedInstallationId(body.installation_id)
+      : null;
+    if (caller.role === "customer" && !installationIdRaw) {
+      throw new HttpError(
+        422,
+        "VALIDATION_ERROR",
+        "installation_id is required for customer device binding.",
+        { field: "installation_id" },
+      );
+    }
+    const installationIdHash = installationIdRaw
+      ? await sha256Hex(installationIdRaw)
+      : null;
     const deviceLabel = optionalStringField(body, "device_label", 200);
     const appVersion = optionalStringField(body, "app_version", 50);
     const locale = optionalStringField(body, "locale", 20) ?? "ar_LY";
@@ -61,10 +82,11 @@ serve(async (req) => {
         p_token: token,
         p_platform: platform,
         p_device_id: deviceId,
+        p_installation_id_hash: installationIdHash,
         p_device_label: deviceLabel,
         p_app_version: appVersion,
         p_locale: locale,
-        p_max_active: 8,
+        p_max_active: caller.role === "customer" ? 1 : 8,
       },
     );
     if (error) {
