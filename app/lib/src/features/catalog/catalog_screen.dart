@@ -155,16 +155,19 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen> {
 
   Future<void> _reloadCatalogBody({bool refreshMetadata = false}) async {
     final revision = ++loadRevision;
+    final keepVisibleResults = products.isNotEmpty;
     if (mounted) {
       setState(() {
-        initialLoading = true;
+        initialLoading = !keepVisibleResults;
         loadingMore = false;
         loadError = null;
-        products = const [];
-        hasMore = false;
-        nextOffset = 0;
-        snapshotAt = null;
-        offlineSnapshotCount = 0;
+        if (!keepVisibleResults) {
+          products = const [];
+          hasMore = false;
+          nextOffset = 0;
+          snapshotAt = null;
+          offlineSnapshotCount = 0;
+        }
       });
     }
 

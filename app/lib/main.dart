@@ -25,10 +25,12 @@ import 'src/features/storefront/storefront_theme_scope.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   usePathUrlStrategy();
-  await AppRuntimeMode.load();
-  await AppConfig.tryInitializeSupabase();
-  await ShopBrandingCache.load();
-  await StorefrontThemeCache.load();
+  await Future.wait([
+    AppRuntimeMode.load(),
+    AppConfig.tryInitializeSupabase(),
+    ShopBrandingCache.load(),
+    StorefrontThemeCache.load(),
+  ]);
   runApp(const ProviderScope(child: AnimalSupplyApp()));
 }
 
