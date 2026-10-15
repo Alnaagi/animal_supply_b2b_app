@@ -7,6 +7,9 @@
 /app_service_worker.js
   Cache-Control: no-cache, no-store, must-revalidate
 
+/app_loader.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
 /pwa_install.js
   Cache-Control: no-cache, no-store, must-revalidate
 

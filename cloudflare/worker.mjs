@@ -17,6 +17,7 @@ const CONTENT_SECURITY_POLICY = [
 ].join('; ');
 
 const NO_CACHE_PATHS = new Set([
+  '/app_loader.js',
   '/app_service_worker.js',
   '/firebase_bootstrap.js',
   '/flutter_bootstrap.js',

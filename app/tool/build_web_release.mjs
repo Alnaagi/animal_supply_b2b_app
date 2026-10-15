@@ -217,6 +217,7 @@ async function walk(directory, files) {
 function assertRequiredResources(resources) {
   for (const required of [
     'index.html',
+    'app_loader.js',
     'firebase_bootstrap.js',
     'flutter_bootstrap.js',
     'flutter.js',

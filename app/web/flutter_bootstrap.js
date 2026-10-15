@@ -54,16 +54,27 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
 
 _flutter.loader.load({
   onEntrypointLoaded: async (engineInitializer) => {
-    await (window.firebaseSdkReady ?? Promise.resolve());
-    const appRunner = await engineInitializer.initializeEngine();
-    await appRunner.runApp();
-    window.animalSupplyHideLoader?.();
-    window.animalSupplyPwaInstall?.markAppReady();
+    const progress = (value) => window.animalSupplyLoaderProgress?.(value);
+    try {
+      progress(22);
+      await (window.firebaseSdkReady ?? Promise.resolve());
+      progress(40);
+      const appRunner = await engineInitializer.initializeEngine();
+      progress(62);
+      await appRunner.runApp();
+      progress(94);
+      window.animalSupplyPwaInstall?.markAppReady();
 
-    if (document.readyState === 'complete') {
-      await registerAndCacheAppShell();
-    } else {
-      window.addEventListener('load', registerAndCacheAppShell, { once: true });
+      if (document.readyState === 'complete') {
+        await registerAndCacheAppShell();
+      } else {
+        window.addEventListener('load', registerAndCacheAppShell, {
+          once: true,
+        });
+      }
+    } finally {
+      // Finish the percentage trail, then fade the HTML loader away.
+      window.animalSupplyHideLoader?.();
     }
   },
 });

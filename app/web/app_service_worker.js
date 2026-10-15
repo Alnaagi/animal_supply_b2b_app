@@ -313,6 +313,7 @@ function normalizeResources(value) {
 function assertRequiredResources(resources) {
   for (const required of [
     'index.html',
+    'app_loader.js',
     'flutter_bootstrap.js',
     'flutter.js',
     'main.dart.js',
